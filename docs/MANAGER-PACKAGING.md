@@ -7,7 +7,7 @@
 清单要提供：
 
 - 活动 Core payload 根目录和明确的 Core 版本；版本名含 D13/D14 时直接拒绝。
-- 可选但推荐提供已验收 Core 原始包的 bytes、SHA-256、source commit 和 source-manifest SHA-256；当前本地验收输入是 D15 `a7f70ac22ebe86308e41b39d0f5be80f36c4d607`，包 SHA-256 为 `6d186408a7f443e8e030eef8cfbf6c3d12de62a5813a67050f511fefccfeb965`。
+- 可选但推荐提供已验收 Core 原始包的 bytes、SHA-256、source commit 和 source-manifest SHA-256；当前 canonical 输入是 D16 `7b056439a981b1392d66d40a746a9fbd2299ca94`，ZH 包为 1613306 bytes，SHA-256 为 `54b7928201f8e9a97d7779373a786650014f8006567da64d1ef931a5829f9b3b`。
 - 授权 runtime 根目录下的 RTX40、RTX50 `nvngx_dlssnr.dll`，各自的 bytes 和 SHA-256。两族各一份，RTX40 作为 RTX20/30/40 的共享安装族。
 - 官方 MFG 0.9 Addon，固定为 601088 bytes、`64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`。
 - Bridge 的登记信息来自 staging 清单；没有候选小组件时保留 `reserved`。当前清单提供带 importer manifest 的 `1.4.13-pre7` 候选，因此 stage 的 `resources/bridge-dlc/manifest.json` 记录为 `candidate-staged`，带候选 addon SHA 和文件摘要，但不会把候选宣称为兼容。独立验收完成后再更新状态和相应 pin。
@@ -45,7 +45,7 @@
 
 `resources` 入口不会恢复 `feeder-runtime`、`legacy-runtime` 或旧 FG/Vulkan runtime DLL；它只补齐现有业务代码实际读取的 profile/helper/REFramework 小资源，以及 Bridge/Vulkan 动态 provider 复用的 ReShade layer。当前 Vulkan ReShade allow-list 是 `LICENSE.md`、`recipe.json`、`ReShade64.dll`、`ReShade64.json` 四个文件。
 
-当前外部 staging 还登记了四个 `NRExternalProviderV1` 候选：stable AMD OF `0.15.1`（DX12/x64，默认候选）、preview OF `1.16.0-beta.1`（DX12/x64，可选）、修正后的 legacy host `0.15.1-d15-adapter-r2`（DX9/DX10/DX11/DX12，mixed，默认候选）和 Vulkan `vulkan-d15-r3`（Vulkan/x64，默认候选）。它们保留各自的 `component-manifest.json`、`external-provider-package.json`、许可证、shader/config 和 provenance；Core addon、同源 `nrchain_nvngx.dll`、`nr_before_sr.ini` 与大型 NR runtime 由当前 Core/Runtime 库存注入。provider 自有 `dlss5-feed.cfg` 或 `ReShadePreset.ini` 仍是路线配置，不是 Core 配置。所有版本仍保持候选状态，未因此宣称游戏兼容。
+当前外部 staging 还登记了四个 `NRExternalProviderV1` 候选：stable AMD OF `0.15.1`（DX12/x64，默认候选）、preview OF `1.16.0-beta.1`（DX12/x64，可选）、D16 legacy host `0.15.1-d16-adapter-r3`（DX9/DX10/DX11/DX12，mixed，默认候选）和 Vulkan `vulkan-d15-r3`（Vulkan/x64，默认候选）。它们保留各自的 `component-manifest.json`、`external-provider-package.json`、许可证、shader/config 和 provenance；Core addon、同源 `nrchain_nvngx.dll`、`nr_before_sr.ini` 与大型 NR runtime 由当前 Core/Runtime 库存注入。provider 自有 `dlss5-feed.cfg` 或 `ReShadePreset.ini` 仍是路线配置，不是 Core 配置。所有版本仍保持候选状态，未因此宣称游戏兼容。
 
 ## 两种 flavor
 
@@ -81,7 +81,7 @@ npm run build:offline:portable
 
 `build-manager.cjs` 会先从仓库根目录生成共享 CLI/Desktop contract，再生成 stage、运行图标生成和 Electron Builder。独立运行 `desktop` 的 `npm start` 也会先生成该 contract。它不调用旧的全量 `extraResources` 列表，因此不会把 `resources/feeder-runtime`、`resources/vulkan-runtime`、`resources/legacy-runtime` 中的 runtime 重复复制进包；基础包只复制上述四个 Vulkan ReShade layer 文件。输出目录写入 `packaging-report.json`，其中包含 flavor、Core 版本、MFG 摘要和最终 artifact 路径。
 
-当前实际构建的 base 与 offline 报告都记录同一个 D15 source package：`1730220` bytes、上述 SHA-256；这能追溯到 D15 验证包，不会把旧 D13/D14 目录误当作默认 Core。
+当前实际构建的 base 与 offline 报告都记录同一个 D16 source package：`1613306` bytes、上述 SHA-256；这能追溯到 D16 canonical 包，不会把旧 D13/D14/D15 目录误当作默认 Core。
 
 MFG provider pin 位于 `desktop/src/product/fg-mfgunlock-providers.json`，资源目录的 `manifest.json` 只负责声明当前 stage 的文件。运行时先用 provider pin 验证资源目录，再按 provider 读取 addon；因此官方 release 增加新 provider 时可以登记新 JSON 记录，不必把每个版本再写进 JS。
 

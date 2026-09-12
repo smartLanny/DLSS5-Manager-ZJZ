@@ -13,7 +13,7 @@ DLSS5 Manager 将神经渲染运行库按显卡族分开管理。RTX20、RTX30�
 
 ## 基础包和离线整合包
 
-基础 Manager 包含 Electron UI、默认 D15 Core、ReShade、NR chain、MFG Unlock 0.9、小组件登记目录，以及供 Vulkan/Bridge 动态 provider 复用的四文件 ReShade layer（`recipe.json`、`ReShade64.json`、`ReShade64.dll`、`LICENSE.md`）。它不内置上面两个大型 `nvngx_dlssnr.dll`，也不恢复旧 `vulkan-runtime` Core/chain/NR 运行池，适合通过 Manager 手动导入运行库。
+基础 Manager 包含 Electron UI、默认 D16 Core、ReShade、NR chain、MFG Unlock 0.9、小组件登记目录，以及供 Vulkan/Bridge 动态 provider 复用的四文件 ReShade layer（`recipe.json`、`ReShade64.json`、`ReShade64.dll`、`LICENSE.md`）。它不内置上面两个大型 `nvngx_dlssnr.dll`，也不恢复旧 `vulkan-runtime` Core/chain/NR 运行池，适合通过 Manager 手动导入运行库。
 
 离线整合包在基础包内容上各放一份 RTX20–40 族和 RTX50 族运行库，可在没有网络时完成组件选择。当前离线运行库 ZIP 只有两个条目：
 

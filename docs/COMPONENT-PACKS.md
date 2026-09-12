@@ -31,7 +31,7 @@ Manager 的组件库按文件 SHA-256 保存多版本候选。导入成功只表
 
 没有 `component-manifest.json` 时，组件库可以识别特定的 Core Acceptance 目录：目录同时包含 `build-info.json` 和 `SHA256.json`，其中 `build-info.json.schema` 必须是 `nr050-core-only-acceptance-v1`，`version` 必须是合法版本 ID，`binaries` 必须明确且只包含一个 `.addon64` 和 `nrchain_nvngx.dll`。`SHA256.json` 中每个文件的摘要、实际文件摘要、bytes 和 `build-info.json.binaries` 必须相互一致。
 
-适配器据此生成 Core 组件记录：`kind=core`、`architecture=x64`、接口为 `NGX-D3D12-Feature1`，组件 ID 由版本和 Addon 摘要前缀组成；只有 `processing_starts` 包含 `Present` 时才声明 `supportsPresent:true`。这条适配只识别上述固定 Acceptance schema，不代表任意 Core ZIP 都可导入；当前默认 D15 Core 仍要经过 staging 的版本和来源校验。
+适配器据此生成 Core 组件记录：`kind=core`、`architecture=x64`、接口为 `NGX-D3D12-Feature1`，组件 ID 由版本和 Addon 摘要前缀组成；只有 `processing_starts` 包含 `Present` 时才声明 `supportsPresent:true`。这条适配只识别上述固定 Acceptance schema，不代表任意 Core ZIP 都可导入；当前默认 D16 Core 仍要经过 staging 的版本和来源校验。
 
 ## 外部 Provider 包
 
@@ -47,7 +47,7 @@ Provider 清单使用精确 schema `dlss5-external-provider-package-v1`，顶层
 
 导入后 Provider 仍是候选。选择路线时，Manager 会要求当前 x64 Core 声明 `NRExternalProviderV1` 和清单要求的 capabilities，同时要求唯一同源 `nrchain_nvngx.dll`、当前 Core 的 `nr_before_sr.ini`、匹配显卡族的当前 NR runtime，以及库存中对应 SHA-256 文件。配置部署后允许按原事务修改；不匹配时可选路线保持不可用，不回退到旧 Core。
 
-当前 staging 的 Provider 候选包括 DX12 stable OF `0.15.1`、DX12 preview OF `1.16.0-beta.1`、已修正为 r2 的 DX9/DX10/DX11/DX12 legacy host，以及 Vulkan `vulkan-d15-r3`。preview 保留为可选候选；这些包仍是候选状态，不能当作最终游戏兼容结论。Provider 包保留内部清单、许可证、shader/config 和 provenance，Core/chain/NR runtime 由当前库存按 `currentCore`/`currentRuntime` 注入。
+当前 staging 的 Provider 候选包括 DX12 stable OF `0.15.1`、DX12 preview OF `1.16.0-beta.1`、D16 r3 的 DX9/DX10/DX11/DX12 legacy host，以及 Vulkan `vulkan-d15-r3`。preview 保留为可选候选；这些包仍是候选状态，不能当作最终游戏兼容结论。Provider 包保留内部清单、许可证、shader/config 和 provenance，Core/chain/NR runtime 由当前库存按 `currentCore`/`currentRuntime` 注入。
 
 ## MFG 与恢复
 

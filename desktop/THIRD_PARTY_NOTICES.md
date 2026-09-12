@@ -176,8 +176,8 @@ files only where they have a lawful right to do so.
 
 ## NR-before-SR runtime
 
-The manager treats the active D15 NR-before-SR add-on, chain and bridge as
+The manager treats the active D16 NR-before-SR add-on, chain and bridge as
 externally staged payload files with separate source and licensing. The current
-default source package is D15; older D13 and 0.4.7 Corefix8 candidates are not
+default source package is D16; older D13, D14, D15 and 0.4.7 Corefix8 candidates are not
 copied into the new base/offline package. Historical third-party notices remain
 in the verified source records and are not relicensed by the Manager.
