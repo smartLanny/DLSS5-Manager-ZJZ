@@ -6,6 +6,7 @@ import { OPTIONAL_MODULES, requireOptional, type OptionalModuleId } from "./opti
 import { loadPinManifest } from "./pin/load.js";
 import { getRecipe, listRecipes } from "./recipes/catalog.js";
 import { planInstall, planUninstall } from "./recipes/install.js";
+import { parseInstallArguments, readBridgeContext } from "./recipes/bridge-context.js";
 import { checkUpdates, refuseBinaryDownload } from "./updater/check.js";
 import { describeFetch } from "./updater/plan.js";
 
@@ -22,7 +23,7 @@ function usage(): string {
   dlss5-manager-zjz check [--live] [--game bg3]
   dlss5-manager-zjz discover
   dlss5-manager-zjz recipes
-  dlss5-manager-zjz install <recipe-id>
+  dlss5-manager-zjz install <recipe-id> [--bridge-context local.json]
   dlss5-manager-zjz uninstall <recipe-id>
   dlss5-manager-zjz optional
   dlss5-manager-zjz help
@@ -75,10 +76,12 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       print("配方", listRecipes(manifest));
       return 0;
     case "install": {
-      const id = rest[0];
-      if (!id || id.startsWith("-")) throw new ManagerError("RECIPE_UNKNOWN", "请指定配方 id。", usage());
-      print("安装（dry-run）", planInstall(getRecipe(manifest, id)));
-      return 0;
+      const request = parseInstallArguments(rest);
+      const recipe = getRecipe(manifest, request.recipeId);
+      const input = request.contextFile ? readBridgeContext(request.contextFile) : undefined;
+      const plan = planInstall(recipe, input?.value);
+      print("安装（dry-run）", { ...plan, ...(input ? { contextSha256: input.sha256 } : {}) });
+      return plan.bridge?.state === "blocked" ? 1 : 0;
     }
     case "uninstall": {
       const id = rest[0];
