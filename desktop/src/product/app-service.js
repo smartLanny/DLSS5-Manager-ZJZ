@@ -600,7 +600,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const core = bundle.versions?.[version], installedHash = installedBridgeHash(game);
     const registry = require('./component-registry');
     return { bridges: [...registry.bridgeCatalog(payloadDir, { coreHash: core?.files?.['nr-before-sr.zh-CN.addon64'], chainHash: core?.files?.['nrchain_nvngx.dll'], installedHash }),
-      ...registry.importedBridges(componentLibrary.root, { ...core, id: version }, installedHash)],
+      ...registry.importedBridges(componentLibrary.root, { ...core, id: version }, installedHash, registry.bridgeGameId(game))],
       selected: { bridge: registry.bridgeByHash(installedHash)?.id || registry.bridgeByHash(core?.files?.[INSTALLED_NAMES.carrier])?.id || null },
       currentCore: version, defaultCore: bundle.defaultVersion };
   }
@@ -645,6 +645,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     result.replacement = choice.replacement;
     return require('./component-registry').selectNativeComponents(payloadDir, result, { api: classifyApi(game.scan?.chosen),
       componentRoot: componentLibrary.root,
+      gameId: require('./component-registry').bridgeGameId(game),
       bridgeId: components.bridge || (requestedVersion === '0.4.7beta-bg3-bridge1411' ? 'nigos-1.4.11-nr' : undefined), installedHash: installedBridgeHash(game) });
   }
 

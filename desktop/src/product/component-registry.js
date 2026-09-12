@@ -18,7 +18,11 @@ const BRIDGES = Object.freeze([
     note: '保留已知回退；Core 可能提示版本差异，实际 NR 仍按游戏验收。' })
 ]);
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
-function importedBridges(root, core = {}, installedHash) {
+function bridgeGameId(game) {
+  const executable = game?.scan?.chosen?.path || game?.chosen?.path || '';
+  return String(game?.steamAppId || game?.appId || '') === '1086940' || /^bg3(?:_dx11)?\.exe$/i.test(path.basename(executable)) ? 'bg3' : 'manual-component';
+}
+function importedBridges(root, core = {}, installedHash, gameId = 'manual-component') {
   if (!root) return [];
   const { readCachedComponents, relativeName } = require('./component-library');
   const { planBridgeDlc } = require('./generated/bridge-contract.cjs');
@@ -33,7 +37,7 @@ function importedBridges(root, core = {}, installedHash) {
         gameApis: row.gameApis || ['dx11'], gameArchitectures: [row.architecture], consumerInterface: row.interface,
         compatibleCoreBuilds: [], compatibilityPolicy: 'interface', x64HostIncluded: false,
         licenseNoticeFiles: notices.length ? notices : row.source === 'catalog' ? ['THIRD_PARTY_NOTICES.md'] : [] }] };
-    const plan = planBridgeDlc({ pins: { bridge: row.version }, gameId: 'manual-component' }, context);
+    const plan = planBridgeDlc({ pins: { bridge: row.version }, gameId }, context);
     return { id: row.id, label: `${row.version} · ${row.variant || 'external'}`, upstreamVersion: row.version,
       filename: DX11_COMPAT_CARRIER, architecture: row.architecture, api: 'dx11', file, sha256: module.sha256,
       installed: installedHash === module.sha256, ready: fs.existsSync(file), compatible: plan.state === 'candidate' && row.validation !== 'blocked',
@@ -48,13 +52,13 @@ function bridgeCatalog(payloadDir, { coreHash = null, chainHash = null, installe
     compatible: coreHash === CORE && chainHash === CHAIN,
     ready: fs.existsSync(path.join(payloadDir, 'versions', row.sourceVersion, DX11_COMPAT_CARRIER)), runtimeVerified: false }));
 }
-function selectNativeComponents(payloadDir, payload, { api, bridgeId, installedHash, componentRoot } = {}) {
+function selectNativeComponents(payloadDir, payload, { api, bridgeId, installedHash, componentRoot, gameId = 'manual-component' } = {}) {
   if (api !== 'dx11') {
     if (bridgeId) fail('COMPONENT_BRIDGE_API', 'NIGos Bridge 仅适用于原生 DX11 路线；加载入口不会改变游戏 API。');
     return { ...payload, components: { bridge: null } };
   }
   const pinned = bridgeByHash(installedHash);
-  const imports = importedBridges(componentRoot, payload.versionInfo, installedHash);
+  const imports = importedBridges(componentRoot, payload.versionInfo, installedHash, gameId);
   const imported = bridgeId ? imports.find(row => row.id === bridgeId) : imports.find(row => row.installed) ||
     (!installedHash && imports.find(row => row.compatible && row.ready));
   if (imported) {
@@ -66,6 +70,8 @@ function selectNativeComponents(payloadDir, payload, { api, bridgeId, installedH
       components: { bridge: imported.id }, componentMetadata: { bridge: imported } };
   }
   const target = bridgeId ? BRIDGES.find(row => row.id === bridgeId) : pinned || bridgeByHash(payload.carrier?.actual);
+  if (gameId === 'bg3' && target?.upstreamVersion !== '1.4.11')
+    fail('COMPONENT_GAME_PIN', '此游戏保留 Bridge 1.4.11 例外配套；请导入与所选 Core 接口匹配的 1.4.11 组件。现有安装未修改。');
   if (!target) {
     if (bridgeId) fail('COMPONENT_BRIDGE_UNKNOWN', '找不到所选的适配版桥接器。');
     return payload; // Historical packages retain their own verified companion.
@@ -94,4 +100,4 @@ function knownPayloadComponents(payloadDir) {
   }
   return result;
 }
-module.exports = { BRIDGES, bridgeByHash, bridgeCatalog, importedBridges, selectNativeComponents, knownPayloadComponents };
+module.exports = { BRIDGES, bridgeGameId, bridgeByHash, bridgeCatalog, importedBridges, selectNativeComponents, knownPayloadComponents };
