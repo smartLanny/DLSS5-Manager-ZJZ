@@ -45,6 +45,8 @@
 
 `resources` 入口不会恢复 `feeder-runtime`、`legacy-runtime` 或旧 FG/Vulkan runtime DLL；它只补齐现有业务代码实际读取的 profile/helper/REFramework 小资源，以及 Bridge/Vulkan 动态 provider 复用的 ReShade layer。当前 Vulkan ReShade allow-list 是 `LICENSE.md`、`recipe.json`、`ReShade64.dll`、`ReShade64.json` 四个文件。
 
+当前外部 staging 还登记了四个 `NRExternalProviderV1` 候选：stable AMD OF `0.15.1`（DX12/x64，默认候选）、preview OF `1.16.0-beta.1`（DX12/x64，可选）、修正后的 legacy host `0.15.1-d15-adapter-r2`（DX9/DX10/DX11/DX12，mixed，默认候选）和 Vulkan `vulkan-d15-r3`（Vulkan/x64，默认候选）。它们保留各自的 `component-manifest.json`、`external-provider-package.json`、许可证、shader/config 和 provenance；Core addon、同源 `nrchain_nvngx.dll`、`nr_before_sr.ini` 与大型 NR runtime 由当前 Core/Runtime 库存注入。provider 自有 `dlss5-feed.cfg` 或 `ReShadePreset.ini` 仍是路线配置，不是 Core 配置。所有版本仍保持候选状态，未因此宣称游戏兼容。
+
 ## 两种 flavor
 
 | flavor | 包含 | 不包含 |

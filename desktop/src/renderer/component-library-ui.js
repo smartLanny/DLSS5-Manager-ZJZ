@@ -1,10 +1,18 @@
 'use strict';
 (function () {
   const $ = id => document.getElementById(id), message = $('componentLibraryMessage');
+  let startupUpdateCheck = false;
   const kindLabel = kind => ({ 'nr-runtime':'NR 运行库', core:'增强核心', bridge:'图形桥', feeder:'输入桥', mfg:'多帧生成组件', host:'跨位数宿主' })[kind] || kind;
   const unwrap = result => { if (result?.ok === false) throw new Error(result.error?.message || '组件操作失败'); return result?.ok === true ? result.value : result; };
   async function refreshComponents() {
     const data = unwrap(await window.manager.listComponents());
+    if (!startupUpdateCheck) {
+      startupUpdateCheck = true;
+      const checked = Date.parse(data.catalog.checkedAt || '');
+      if (!Number.isFinite(checked) || Date.now() - checked > 24 * 60 * 60 * 1000 || checked > Date.now()) {
+        void window.manager.checkComponentUpdates().then(unwrap).then(() => refreshComponents()).catch(() => {});
+      }
+    }
     if (data.warnings?.length) message.textContent = data.warnings.join('；');
     const host = $('componentLibraryRows'); host.replaceChildren();
     for (const item of data.packages.filter(row => !row.internal)) {
@@ -35,14 +43,19 @@
     }
     if ([...$('componentGameSelect').options].some(o => o.value === selectedGame)) $('componentGameSelect').value = selectedGame;
     await refreshBridgeChoices();
-    const providers = unwrap(await window.manager.inspectComponentProviders()), select = $('componentProviderSelect'); select.replaceChildren();
-    const none = document.createElement('option'); none.value = ''; none.textContent = '使用随包配套'; select.append(none);
+    const providers = unwrap(await window.manager.inspectComponentProviders()), select = $('componentProviderSelect');
+    const selectedPackage = select.value; select.replaceChildren();
+    const none = document.createElement('option'); none.value = ''; none.textContent = '恢复随包推荐配套'; select.append(none);
     for (const provider of providers.packages) {
       const option = document.createElement('option'); option.value = provider.id; option.disabled = !provider.selectable;
-      option.textContent = `${provider.version} · ${(provider.gameApis || []).join('/')} ${provider.reason || '（待游戏验证）'}`; select.append(option);
+      option.textContent = `${provider.version} · ${(provider.gameApis || []).join('/')} ${provider.selectedRouteKeys?.length ? '（已用于部分安装路线）' : ''}${provider.reason || '（待游戏验证）'}`; select.append(option);
     }
-    select.value = providers.selectedId || '';
-    $('componentProviderStatus').textContent = providers.reason || '新 Core、输入桥与运行库按接口配套；已有游戏保留原版本，可在游戏设置中先恢复后切换。MFG 版本在游戏的补帧组件设置中切换。';
+    select.value = providers.packages.some(row => row.id === selectedPackage) ? selectedPackage : providers.selectedId || '';
+    const defaults = Object.entries(providers.selectedByRoute || {}).map(([key,id]) => {
+      const [api,arch,backend] = key.split('|'), provider = providers.packages.find(row => row.id === id);
+      return `${api.toUpperCase()}／${arch === 'x86' ? '32' : '64'}位${backend === 'hoyoshade' ? '／米哈游' : ''}：${provider?.version || '来源缺失'}`;
+    });
+    $('componentProviderStatus').textContent = providers.reason || `${defaults.length ? '后续安装配套：' + defaults.join('；') + '。' : ''}选择只影响该包支持的 API、位数和加载方式；已有游戏保留原版本。MFG 在游戏补帧设置中切换。`;
   }
   function sourceChanged(result) {
     if (result?.state) window.dispatchEvent(new CustomEvent('manager-components-changed', { detail: result.state }));
@@ -86,7 +99,7 @@
   $('selectComponentProviderBtn').onclick = () => perform(async () => {
     unwrap(await window.manager.selectComponentProvider($('componentProviderSelect').value || null));
     window.dispatchEvent(new CustomEvent('manager-components-changed'));
-    return '输入桥候选已保存，已有游戏保持当前配套。';
+    return '已更新此包支持的 API／位数配套，其他路线与已有游戏保持当前选择。';
   });
   refreshComponents().catch(error => { message.textContent = error.message; });
 })();

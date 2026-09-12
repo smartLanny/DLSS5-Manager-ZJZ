@@ -47,6 +47,8 @@ Provider 清单使用精确 schema `dlss5-external-provider-package-v1`，顶层
 
 导入后 Provider 仍是候选。选择路线时，Manager 会要求当前 x64 Core 声明 `NRExternalProviderV1` 和清单要求的 capabilities，同时要求唯一同源 `nrchain_nvngx.dll`、当前 Core 的 `nr_before_sr.ini`、匹配显卡族的当前 NR runtime，以及库存中对应 SHA-256 文件。配置部署后允许按原事务修改；不匹配时可选路线保持不可用，不回退到旧 Core。
 
+当前 staging 的 Provider 候选包括 DX12 stable OF `0.15.1`、DX12 preview OF `1.16.0-beta.1`、已修正为 r2 的 DX9/DX10/DX11/DX12 legacy host，以及 Vulkan `vulkan-d15-r3`。preview 保留为可选候选；这些包仍是候选状态，不能当作最终游戏兼容结论。Provider 包保留内部清单、许可证、shader/config 和 provenance，Core/chain/NR runtime 由当前库存按 `currentCore`/`currentRuntime` 注入。
+
 ## MFG 与恢复
 
 MFG Unlock 的游戏设置选择器按 provider ID 切换已登记版本。当前内置 provider 以官方 0.9 为默认，0.7/0.6.1 作为固定回退；选择会经过预览、精确文件摘要校验和单游戏事务，再写入 ReShade 配置及 MFG 收据。收据保存 provider ID、安装后摘要和原组件快照，恢复时仍按这些摘要核对。

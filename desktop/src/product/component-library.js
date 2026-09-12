@@ -59,13 +59,16 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
   const root = path.join(userData, 'component-library'), inventoryFile = path.join(root, 'inventory.json');
   const releaseFile = path.join(root, 'release-catalog.json');
   function availableCatalog() {
-    let remote = [];
-    try { const stat = fs.lstatSync(releaseFile); if (stat.isFile() && !stat.isSymbolicLink() && stat.size < 1024 * 1024) remote = JSON.parse(fs.readFileSync(releaseFile,'utf8')).packages || []; } catch {}
+    let remote = [], checkedAt = null;
+    try { const stat = fs.lstatSync(releaseFile); if (stat.isFile() && !stat.isSymbolicLink() && stat.size < 1024 * 1024) {
+      const data = JSON.parse(fs.readFileSync(releaseFile,'utf8')); remote = data.packages || [];
+      if (typeof data.checkedAt === 'string' && Number.isFinite(Date.parse(data.checkedAt))) checkedAt = data.checkedAt;
+    } } catch {}
     if (!Array.isArray(remote)) remote = [];
     remote = remote.filter(p => p && validId(p.id) && HASH.test(p.sha256) && Number.isSafeInteger(p.bytes) && p.bytes > 0 && p.bytes <= MAX_FILE &&
       ['bridge','mfg','feeder'].includes(p.kind) && p.downloadUrl?.startsWith(`https://github.com/${p.repository}/releases/download/`) &&
       ['NIGos/dlss5-bridge','mavismmg/MFGAdaUnlock-RenoDx','jlrouzies-fr/DLSS5-Feeder'].includes(p.repository));
-    return { ...catalog, packages: [...catalog.packages, ...remote.filter(p => !catalog.packages.some(k => k.sha256 === p.sha256))] };
+    return { ...catalog, checkedAt, packages: [...catalog.packages, ...remote.filter(p => !catalog.packages.some(k => k.sha256 === p.sha256))] };
   }
   let queue = Promise.resolve();
   const serialize = fn => { const result = queue.then(fn); queue = result.catch(() => {}); return result; };

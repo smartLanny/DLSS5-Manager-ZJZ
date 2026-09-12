@@ -325,6 +325,7 @@ async function buildSmallComponents({ stageRoot, manifest, manifestFile, flavor 
       gameApis: Array.isArray(component.gameApis) ? component.gameApis : [],
       hardwareFamilies: Array.isArray(component.hardwareFamilies) ? component.hardwareFamilies : [],
       inputInterfaces: Array.isArray(component.inputInterfaces) ? component.inputInterfaces : [component.interface],
+      capabilities: Array.isArray(component.capabilities) ? component.capabilities : [],
       supportsPresent: component.supportsPresent === true,
       validation: component.validation || 'candidate',
       ...(typeof component.defaultEligible === 'boolean' ? { defaultEligible: component.defaultEligible } : {}),
