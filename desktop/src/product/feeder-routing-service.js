@@ -13,8 +13,8 @@ const fail = message => { throw Object.assign(new Error(message), { code: 'FEEDE
 function createFeederRoutingService(options) {
   const historical = options.historical || createFeederService(options), modern = options.modern || createLegacyService(options);
   const runtime = options.runtime || createLegacyRuntime(options);
-  function requireHardware(request = {}) {
-    const external = request.providerId || runtime.externalProviders?.selectedId?.();
+  function requireHardware(game, request = {}) {
+    const external = request.providerId || runtime.externalProviders?.selectedId?.(selection(game, request));
     if (external) {
       if (!['RTX40', 'RTX50'].includes(options.hardware?.family))
         throw Object.assign(new Error('所选外部 Provider 需要已识别的兼容硬件族。'), { code: 'LEGACY_HARDWARE_UNSUPPORTED' });
@@ -41,17 +41,19 @@ function createFeederRoutingService(options) {
       ...(request.providerId ? { providerId: request.providerId } : {}) };
   }
   function providerRoute(game, request = {}) {
-    const selectedId = request.providerId || runtime.externalProviders?.selectedId?.();
-    if (!selectedId) return { matched: false, declared: false, reason: '尚未选择外部 Provider 配套。' };
+    const api = request.api && request.api !== 'auto' ? request.api : classifyApi(game.scan?.chosen);
+    const wanted = { api,
+      architecture: Number(game.scan?.chosen?.bitness) === 32 ? 'x86' : Number(game.scan?.chosen?.bitness) === 64 ? 'x64' : null,
+      hardwareFamily: options.hardware?.family, ...(request.loadingBackend ? { loadingBackend: request.loadingBackend } : {}),
+      proxyEntry: request.proxyEntry || 'auto' };
+    const selectedId = request.providerId || runtime.externalProviders?.selectedId?.(wanted);
+    if (!selectedId) return { matched: false, declared: false, reason: `尚未为 ${api || '当前 API'} 选择外部 Provider 配套。` };
     const context = { currentCore: options.getCurrentCore?.() || options.currentCore,
       currentRuntime: options.getCurrentRuntime?.() || options.currentRuntime };
     const inventory = runtime.externalProviders.inspect(context);
     const provider = inventory.packages.find(row => row.id === selectedId);
     if (!provider || !provider.selectable) return { matched: false, declared: false, providerPackageId: selectedId,
       reason: provider?.reason || inventory.reason || '已选 Provider 当前不可用。' };
-    const wanted = { api: request.api || classifyApi(game.scan?.chosen),
-      architecture: Number(game.scan?.chosen?.bitness) === 32 ? 'x86' : Number(game.scan?.chosen?.bitness) === 64 ? 'x64' : null,
-      hardwareFamily: options.hardware?.family, proxyEntry: request.proxyEntry || 'auto' };
     const declared = (provider.routeDescriptors || []).filter(route => route.api === wanted.api &&
       route.architecture === wanted.architecture && route.hardwareFamilies.includes(wanted.hardwareFamily) &&
       (!request.providerRouteId || route.id === request.providerRouteId) &&
@@ -100,7 +102,7 @@ function createFeederRoutingService(options) {
         const external = chosen.profile?.(game)?.recipe?.externalProvider;
         return { ...state, generation: external ? 'external-provider-v1' : 'feeder-0151' };
       }
-      requireHardware(request);
+      requireHardware(game, request);
       const pkg = runtime.load(selection(game, request));
       return { ...state, available: true, packageId: pkg.recipe.id, providerPackageId: pkg.recipe.providerPackageId || null,
         coreVersion: pkg.recipe.coreVersion, api: pkg.recipe.gameApi,
@@ -110,7 +112,7 @@ function createFeederRoutingService(options) {
       reason: error.message, code: error.code, runtimeVerified: false }; }
   }
   const dispatch = method => (game, request, ...args) => { const selected = owner(game, request);
-    if (selected === modern && ['previewInstall', 'install'].includes(method)) requireHardware(request);
+    if (selected === modern && ['previewInstall', 'install'].includes(method)) requireHardware(game, request);
     return selected[method](game, request, ...args); };
   return {
     summary, selections: game => Object.fromEntries(['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].map(api => {
@@ -131,10 +133,12 @@ function createFeederRoutingService(options) {
     generation: game => {
       const chosen = owner(game); if (chosen !== modern) return 'historical-0131';
       const installed = chosen.profile?.(game)?.recipe?.externalProvider;
-      return installed || !chosen.summary(game).installed && runtime.externalProviders?.selectedId?.()
+      const api = classifyApi(game.scan?.chosen);
+      return installed || !chosen.summary(game).installed && runtime.externalProviders?.selectedId?.(selection(game, { api }))
         ? 'external-provider-v1' : 'feeder-0151';
     },
-    inspectProviders: context => runtime.externalProviders?.inspect(context) || { root: null, selectedId: null, packages: [], ready: true, runtimeVerified: false },
+    inspectProviders: context => runtime.externalProviders?.inspect(context) || { root: null, selectedId: null,
+      selectedByApi: {}, selectedByRoute: {}, packages: [], ready: true, runtimeVerified: false },
     providerRoute,
     vulkanProfilePackage,
     selectProvider: (id, context) => {

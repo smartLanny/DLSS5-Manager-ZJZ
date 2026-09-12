@@ -52,7 +52,9 @@ function fixture(t, alter = value => value) {
 test('a selected v1 provider injects the current ABI-compatible Core and shared runtime by exact digest', async t => {
   const f = fixture(t), before = f.packages.inspect();
   assert.equal(before.packages[0].selectable, true); assert.equal(before.packages[0].runtimeVerified, false);
-  assert.deepEqual(await f.packages.select('provider-v1-fixture'), { selectedId: 'provider-v1-fixture', changedGames: false, runtimeVerified: false });
+  assert.deepEqual(await f.packages.select('provider-v1-fixture'), { selectedId: 'provider-v1-fixture',
+    selectedByApi: { dx11: 'provider-v1-fixture' }, selectedByRoute: { 'dx11|x64|local': 'provider-v1-fixture' },
+    changedGames: false, runtimeVerified: false });
   const pkg = f.packages.load({ selection: { api: 'dx11', architecture: 'x64', hardwareFamily: 'RTX50', loadingBackend: 'local' } });
   assert.equal(pkg.recipe.coreVersion, 'D15'); assert.equal(pkg.recipe.coreVariant.genericCoreInterchangeable, true);
   assert.equal(pkg.recipe.files.find(row => row.role === 'core').sha256, f.currentCore.sha256);

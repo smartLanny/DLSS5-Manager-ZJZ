@@ -43,13 +43,42 @@ function createExternalProviderPackages(options = {}) {
     const data = regularJson(inventoryFile, 1024 * 1024);
     if (!data) return { schemaVersion: 1, packages: [], selected: {} };
     if (data.schemaVersion !== 1 || !Array.isArray(data.packages) || data.packages.length > 256 ||
-        !data.selected || typeof data.selected !== 'object' || Array.isArray(data.selected))
+        !data.selected || typeof data.selected !== 'object' || Array.isArray(data.selected) ||
+        data.selected.externalProviders !== undefined &&
+          (!data.selected.externalProviders || typeof data.selected.externalProviders !== 'object' || Array.isArray(data.selected.externalProviders) ||
+           Object.keys(data.selected.externalProviders).length > APIS.length ||
+           Object.entries(data.selected.externalProviders).some(([api, id]) => !APIS.includes(api) || !ID.test(id || ''))) ||
+        data.selected.externalProviderRoutes !== undefined &&
+          (!data.selected.externalProviderRoutes || typeof data.selected.externalProviderRoutes !== 'object' || Array.isArray(data.selected.externalProviderRoutes) ||
+           Object.keys(data.selected.externalProviderRoutes).length > APIS.length * ARCHITECTURES.length * BACKENDS.length ||
+           Object.entries(data.selected.externalProviderRoutes).some(([key, id]) => !/^(?:dx9|dx10|dx11|dx12|vulkan)\|(?:x86|x64)\|(?:local|hoyoshade|vulkan-profile)$/.test(key) || !ID.test(id || ''))))
       fail('EXTERNAL_PROVIDER_INVENTORY', '组件库存结构无效。');
     return data;
   }
   function providerRows(data = inventory()) {
     return data.packages.filter(row => row?.kind === 'feeder' &&
       row.files?.some(file => file?.name === MANIFEST_NAME));
+  }
+  function routeKey(selection) {
+    const api = selection?.api, architecture = selection?.architecture, loadingBackend = selection?.loadingBackend || 'local';
+    return APIS.includes(api) && ARCHITECTURES.includes(architecture) && BACKENDS.includes(loadingBackend)
+      ? `${api}|${architecture}|${loadingBackend}` : null;
+  }
+  function selectedRoutes(data = inventory()) { return { ...(data.selected.externalProviderRoutes || {}) }; }
+  function selectedByApi(data = inventory()) {
+    const result = { ...(data.selected.externalProviders || {}) };
+    const routes = selectedRoutes(data);
+    for (const api of APIS) {
+      const ids = [...new Set(Object.entries(routes).filter(([key]) => key.startsWith(`${api}|`)).map(([, id]) => id))];
+      if (!result[api] && ids.length === 1) result[api] = ids[0];
+    }
+    const legacy = data.selected.externalProvider;
+    if (ID.test(legacy || '')) {
+      const row = providerRows(data).find(value => value.id === legacy);
+      for (const api of Array.isArray(row?.gameApis) ? row.gameApis : [])
+        if (APIS.includes(api) && !result[api]) result[api] = legacy;
+    }
+    return result;
   }
   function inventoryFileRow(data, file, expectedSha, label) {
     const absolute = path.resolve(root, file || '');
@@ -273,7 +302,10 @@ function createExternalProviderPackages(options = {}) {
     return { root, recipe, fingerprint: fingerprint(recipe) };
   }
   function load(input = {}) {
-    const data = inventory(), selected = input.id || input.providerId || data.selected.externalProvider;
+    const data = inventory(), selection = input.selection || input;
+    const api = selection.api || input.gameApi, exact = routeKey(selection);
+    const selected = input.id || input.providerId || (exact && selectedRoutes(data)[exact]) ||
+      (api ? data.selected.externalProviders?.[api] || selectedByApi(data)[api] : data.selected.externalProvider);
     if (!selected) fail('EXTERNAL_PROVIDER_NOT_SELECTED', '尚未选择外部 Provider 配套。');
     const row = providerRows(data).find(value => value.id === selected);
     if (!row) fail('EXTERNAL_PROVIDER_SELECTION_INVALID', '已选 Provider 不在组件库存中，未回退到旧 Core。');
@@ -328,12 +360,15 @@ function createExternalProviderPackages(options = {}) {
     return recipe;
   }
   function inspect(supplied = {}) {
-    const data = inventory(), selectedId = data.selected.externalProvider || null;
+    const data = inventory(), selections = selectedByApi(data), routeSelections = selectedRoutes(data);
+    const selectedId = data.selected.externalProvider || Object.values(selections)[0] || null;
     const packages = providerRows(data).map(row => {
       try {
         const item = definition(data, row), core = contextValue('currentCore', supplied.currentCore);
         let compatible = false;
         if (core) { coreSources(data, core, item.manifest.interface); compatible = true; }
+        const selectedRouteKeys = Object.keys(routeSelections).filter(key => routeSelections[key] === row.id);
+        const selectedApis = [...new Set([...APIS.filter(api => selections[api] === row.id), ...selectedRouteKeys.map(key => key.split('|')[0])])];
         return { id: row.id, version: row.version, source: row.source, validation: row.validation,
           interface: CONTRACT.interface, interfaceVersion: CONTRACT.version,
           requiredCoreCapabilities: [...item.manifest.interface.requiredCoreCapabilities],
@@ -341,38 +376,64 @@ function createExternalProviderPackages(options = {}) {
           routeDescriptors: item.manifest.routes.map(route => ({ id: route.id, api: route.api,
             architecture: route.architecture, hardwareFamilies: [...route.hardwareFamilies],
             loadingBackend: route.loadingBackend, proxyEntries: [...route.proxyEntries],
-            hostRequired: route.hostRequired, transport: route.transport })),
-          selected: row.id === selectedId, compatible, selectable: row.validation !== 'blocked' && compatible,
+            hostRequired: route.hostRequired, transport: route.transport, selectionKey: routeKey(route) })),
+          selected: selectedApis.length > 0, selectedApis, selectedRouteKeys, compatible, selectable: row.validation !== 'blocked' && compatible,
           runtimeVerified: false, reason: row.validation === 'blocked' ? '配套已被标记为阻止使用。' :
             compatible ? null : '当前 Core 未声明所需 NRExternalProviderV1 能力。' };
       } catch (error) {
-        return { id: row?.id || null, version: row?.version || null, selected: row?.id === selectedId,
+        const selectedRouteKeys = Object.keys(routeSelections).filter(key => routeSelections[key] === row?.id);
+        const selectedApis = [...new Set([...APIS.filter(api => selections[api] === row?.id), ...selectedRouteKeys.map(key => key.split('|')[0])])];
+        return { id: row?.id || null, version: row?.version || null, selected: selectedApis.length > 0, selectedApis, selectedRouteKeys,
           compatible: false, selectable: false, runtimeVerified: false, reason: error.message, code: error.code };
       }
     });
-    const missing = selectedId && !packages.some(row => row.id === selectedId);
-    return { root, selectedId, packages, ready: !missing, runtimeVerified: false,
-      reason: missing ? '已选 Provider 不在组件库存中，未回退到旧 Core。' : null };
+    const selectedIds = [...new Set([...Object.values(selections), ...Object.values(routeSelections), data.selected.externalProvider].filter(value => ID.test(value || '')))];
+    const missing = selectedIds.filter(id => !packages.some(row => row.id === id));
+    return { root, selectedId, selectedByApi: selections, selectedByRoute: routeSelections, packages, ready: missing.length === 0, runtimeVerified: false,
+      reason: missing.length ? '已选 Provider 不在组件库存中，未回退到旧 Core。' : null };
   }
   async function select(id, supplied = {}) {
     const task = queue.then(async () => {
       const data = inventory();
-      if (id === null) delete data.selected.externalProvider;
+      if (id === null) {
+        delete data.selected.externalProvider;
+        delete data.selected.externalProviders;
+        delete data.selected.externalProviderRoutes;
+      }
       else {
         const row = providerRows(data).find(value => value.id === id);
         if (!row) fail('EXTERNAL_PROVIDER_SELECTION_INVALID', '所选 Provider 不在组件库存中。');
         const item = definition(data, row), core = contextValue('currentCore', supplied.currentCore);
         if (row.validation === 'blocked') fail('EXTERNAL_PROVIDER_BLOCKED', '所选 Provider 配套已被标记为阻止使用。');
         coreSources(data, core, item.manifest.interface);
-        data.selected.externalProvider = id;
+        const selections = selectedRoutes(data);
+        for (const route of item.manifest.routes) {
+          const key = routeKey(route);
+          if (supplied.onlyUnselected !== true || !selections[key]) selections[key] = id;
+        }
+        data.selected.externalProviderRoutes = selections;
+        if (!ID.test(data.selected.externalProvider || '')) data.selected.externalProvider = id;
       }
       await atomicJson(inventoryFile, data);
-      return { selectedId: data.selected.externalProvider || null, changedGames: false, runtimeVerified: false };
+      return { selectedId: id, selectedByApi: selectedByApi(data), selectedByRoute: selectedRoutes(data), changedGames: false, runtimeVerified: false };
     });
     queue = task.catch(() => {});
     return task;
   }
-  function selectedId() { return inventory().selected.externalProvider || null; }
+  function selectedId(selection) {
+    const data = inventory();
+    if (selection && typeof selection === 'object') {
+      if (!selection.loadingBackend && APIS.includes(selection.api) && ARCHITECTURES.includes(selection.architecture)) {
+        const ids = [...new Set(Object.entries(selectedRoutes(data))
+          .filter(([key]) => key.startsWith(`${selection.api}|${selection.architecture}|`)).map(([, id]) => id))];
+        if (ids.length === 1) return ids[0];
+        if (ids.length > 1) return null;
+      }
+      const exact = routeKey(selection);
+      return exact && selectedRoutes(data)[exact] || data.selected.externalProviders?.[selection.api] || selectedByApi(data)[selection.api] || null;
+    }
+    return selection ? selectedByApi(data)[selection] || null : data.selected.externalProvider || Object.values(selectedByApi(data))[0] || null;
+  }
 
   return Object.freeze({ root, inspect, select, load, validateRecipe, selectedId });
 }

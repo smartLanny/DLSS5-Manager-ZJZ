@@ -314,11 +314,31 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         registeredProviderContext = identity;
       }
       const context = providerContext(), state = feeder.inspectProviders(context);
-      if (state.selectedId || !selectDefault) return { registered: true, selectedId: state.selectedId || null };
+      if (!selectDefault) return { registered: true, selectedId: state.selectedId || null,
+        selectedByApi: state.selectedByApi || {}, selectedByRoute: state.selectedByRoute || {} };
       const compatibleBundled = state.packages.filter(row => (row.source === 'catalog' || bundledComponentIds.has(row.id)) && row.selectable === true);
-      if (compatibleBundled.length !== 1) return { registered: true, selectedId: null,
-        reason: compatibleBundled.length ? '存在多个兼容随包 Provider，需要明确选择。' : '没有兼容随包 Provider。' };
-      return { registered: true, ...await feeder.selectProvider(compatibleBundled[0].id, context) };
+      const selectedByApi = { ...(state.selectedByApi || {}) }, selectedByRoute = { ...(state.selectedByRoute || {}) };
+      const routes = compatibleBundled.flatMap(provider => /(?:alpha|beta|preview|(?:^|[.-])pre\d*)/i.test(provider.version || '') ? [] :
+        (provider.routeDescriptors || []).filter(route => route.hardwareFamilies?.includes(family))
+          .map(route => ({ provider, route, preference: route.transport === 'same-device-d3d12-external-v1' || route.loadingBackend === 'vulkan-profile'
+            ? 0 : route.hostRequired ? 2 : 1 })));
+      const defaults = [];
+      for (const key of [...new Set(routes.map(row => row.route.selectionKey).filter(Boolean))]) {
+        if (selectedByRoute[key]) continue;
+        const choices = routes.filter(row => row.route.selectionKey === key).sort((a, b) => a.preference - b.preference || a.provider.id.localeCompare(b.provider.id));
+        if (choices.length && (choices.length === 1 || choices[0].preference < choices[1].preference)) defaults.push(choices[0].provider.id);
+      }
+      const orderedDefaults = [...new Set(defaults)].sort((a, b) => {
+        const rank = id => Math.min(...routes.filter(row => row.provider.id === id).map(row => row.preference));
+        return rank(a) - rank(b) || a.localeCompare(b);
+      });
+      for (const id of orderedDefaults) {
+        const selected = await feeder.selectProvider(id, { ...context, onlyUnselected: true });
+        Object.assign(selectedByApi, selected.selectedByApi || {});
+        Object.assign(selectedByRoute, selected.selectedByRoute || {});
+      }
+      return { registered: true, selectedId: state.selectedId || orderedDefaults[0] || null, selectedByApi, selectedByRoute,
+        ...(!Object.keys(selectedByApi).length ? { reason: compatibleBundled.length ? '没有唯一的稳定随包 Provider 默认项。' : '没有兼容随包 Provider。' } : {}) };
     } catch (error) {
       // A missing or incomplete runtime never blocks Manager startup or a Core
       // source switch. Provider selection remains unchanged until a complete

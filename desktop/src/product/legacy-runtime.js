@@ -82,7 +82,8 @@ function createLegacyRuntime(options = {}) {
     return { root, recipe, fingerprint: fingerprint(recipe) };
   }
   function load(input = {}) {
-    const providerId = input?.providerId || externalProviders.selectedId();
+    const selection = input?.selection || input;
+    const providerId = input?.providerId || externalProviders.selectedId(selection);
     if (!providerId) return loadBundled(input);
     return externalProviders.load({ ...input, id: providerId, selection: input.selection || input });
   }
