@@ -41,7 +41,7 @@ function fixture(t, options = {}) {
   const calls = { vulkan: [], installer: [], scans: [] };
   let feederInstalled = options.feederInstalled === true;
   const feeder = options.feeder === true ? {
-    summary() { return { available: true, installed: feederInstalled, coreVersion: '0.4.7beta', packageId: 'nr-feeder-dx12-047-sdr-20260909', provenance: 'Synthetic', ready: false }; },
+    summary() { return { available: true, installed: feederInstalled, coreVersion: '0.4.7beta', packageId: 'nr-feeder-dx12-047-sdr-20260909', api: 'dx12', provenance: 'Synthetic', ready: false }; },
     configDir(_game, kind) { return kind === 'nr' ? addons : configDir; },
     async inspect() { return { ...this.summary(), ready: feederInstalled, loaded: 'unknown', processed: 'unknown', runtimeVerified: false }; },
     async install(game, value) { (calls.feeder ||= []).push(['install', game.id, value]); feederInstalled = true; return { installed: true }; },

@@ -19,6 +19,10 @@ const policy = require('../../src/product/launch-settings-policy');
 const pe = require('../../src/core/pe');
 
 const PROJECT = path.resolve(__dirname, '../..');
+// Optional integration assets live outside the lightweight source checkout.
+// Production readers still validate their pinned manifests and file hashes.
+const COMPONENT_RESOURCES = process.env.DLSS5_TEST_RESOURCE_ROOT
+  ? path.resolve(process.env.DLSS5_TEST_RESOURCE_ROOT) : path.join(PROJECT, 'resources');
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
 const hashFile = file => fs.existsSync(file) ? sha(fs.readFileSync(file)) : null;
 function peBytes(label = '') {
@@ -101,7 +105,7 @@ async function fixture(t, options = {}) {
       externalDeploymentOptions: { guards, pe, ...(options.external || {}) }, ...special.overrides, ...(options.serviceOverrides || {}) } });
   await service.boot();
   const layout = () => service.getLayout(id), driver = driverFixture(events);
-  const componentsOptions = { resourcesPath: path.join(PROJECT, 'resources'), appDir: PROJECT,
+  const componentsOptions = { resourcesPath: COMPONENT_RESOURCES, appDir: PROJECT,
     gameDirectory: () => gameRoot, gameExecutable: () => exe, getLayout: layout, guards, assertGameClosed: guards.assertGameClosed,
     detectHardware: async () => hardware, antiCheatPresent: () => false,
     pe: { ...pe, getFileVersion: () => '310.8.0.0' },
@@ -148,4 +152,4 @@ async function fixture(t, options = {}) {
   return { root, gameRoot, exeDir, exe, id, userData, resourcesPath, payload, family, hardware, scan, guards, service, installer,
     plans, planOptions, apply, layout, events, driver, settings, components, workflow, coordinator, componentsOptions, special };
 }
-module.exports = { fixture, peBytes, put, hashFile, sha, PROJECT, INSTALLED_NAMES, PAYLOAD_FILES, DX11_COMPAT_CARRIER };
+module.exports = { fixture, peBytes, put, hashFile, sha, PROJECT, COMPONENT_RESOURCES, INSTALLED_NAMES, PAYLOAD_FILES, DX11_COMPAT_CARRIER };

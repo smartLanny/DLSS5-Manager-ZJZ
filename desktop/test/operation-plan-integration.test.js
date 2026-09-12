@@ -216,12 +216,13 @@ test('OperationPlan recovery dispatches an interrupted MFG file WAL to the FG ow
   assert.ok(f.events.includes('components-recover'));
 });
 
-test('real beta0.4.7 DX11 payload switches the Bridge independently, preserves its pin across Core selection, and restores cleanly', async t => {
+test('BG3 refuses a newer Bridge, preserves its explicit 1.4.11 pin across Core selection, and restores cleanly', async t => {
   const f = await fixture(t, { api: 'dx11', exeName: 'bg3_dx11.exe' });
   const { ID, OLD_BRIDGE, CURRENT_BRIDGE } = require('../scripts/prepare-bg3-bridge-comparison');
   assert.equal(OLD_BRIDGE, '73d438ee9427e73d9919d169a107c7f5d73f60b291ea2cd66bd33279a35d3e95', 'issue #224 original attachment identity');
   assert.equal(CURRENT_BRIDGE, '4656d9aac382a6f9b5c8488669aa5365283f03b5b94b2267f1c7f9b53927dc86', 'the pinned 1.4.12 baseline identity');
-  const source = path.join(PROJECT, 'payload/nr-before-sr');
+  const source = process.env.DLSS5_TEST_LEGACY_PAYLOAD_ROOT
+    ? path.resolve(process.env.DLSS5_TEST_LEGACY_PAYLOAD_ROOT) : path.join(PROJECT, 'payload/nr-before-sr');
   const catalog = JSON.parse(fs.readFileSync(path.join(source, 'bundle.json')));
   assert.ok(catalog.versions[ID], 'the prepared issue #224 comparison payload must exist');
   assert.equal(catalog.versions['0.4.7beta'].files[DX11_COMPAT_CARRIER], CURRENT_BRIDGE);
@@ -229,23 +230,23 @@ test('real beta0.4.7 DX11 payload switches the Bridge independently, preserves i
   const differing = Object.keys(catalog.versions['0.4.7beta'].files).filter(name => catalog.versions['0.4.7beta'].files[name] !== catalog.versions[ID].files[name]);
   assert.deepEqual(differing, [DX11_COMPAT_CARRIER]);
   await f.service.selectPayloadSource(source);
-  await f.apply({ api: 'dx11', version: '0.4.7beta', deployment: 'local' });
-  const baseline = installedHashes(f); assert.equal(baseline.carrier, CURRENT_BRIDGE);
-  assert.equal(fs.statSync(path.join(f.exeDir, DX11_COMPAT_CARRIER)).size, 809984);
-  const switched = await f.apply({ components: { bridge: 'nigos-1.4.11-nr' } });
-  assert.equal(switched.result.runtimeVerified, false);
-  assert.equal(Object.hasOwn(switched.preview.request, 'version'), false, 'independent Bridge selection does not select another Core');
+  const original = installedHashes(f);
+  await assert.rejects(f.plans.preview(f.id, { api: 'dx11', version: '0.4.7beta', deployment: 'local' }),
+    error => error.code === 'COMPONENT_GAME_PIN');
+  assert.deepEqual(installedHashes(f), original, 'rejecting the newer default Bridge cannot modify the game');
+  assert.equal(readManifest(f.gameRoot), null);
+  const installed = await f.apply({ api: 'dx11', version: '0.4.7beta', deployment: 'local', components: { bridge: 'nigos-1.4.11-nr' } });
+  assert.equal(installed.result.runtimeVerified, false);
   assert.equal(readManifest(f.gameRoot).payloadVersion, '0.4.7beta');
   const comparison = installedHashes(f);
   assert.equal(comparison.carrier, OLD_BRIDGE);
   assert.equal(fs.statSync(path.join(f.exeDir, DX11_COMPAT_CARRIER)).size, 513024);
-  assert.deepEqual(Object.keys(baseline).filter(kind => baseline[kind] !== comparison[kind]), ['carrier']);
   await f.apply({ api: 'dx11', version: '0.4.7beta', deployment: 'local' });
   assert.deepEqual(installedHashes(f), comparison, 'selecting the Core preserves the independently pinned 1.4.11 Bridge');
-  const restoredBridge = await f.apply({ components: { bridge: 'nigos-1.4.12-nr' } });
-  assert.equal(Object.hasOwn(restoredBridge.preview.request, 'version'), false);
+  await assert.rejects(f.plans.preview(f.id, { components: { bridge: 'nigos-1.4.12-nr' } }),
+    error => error.code === 'COMPONENT_GAME_PIN');
   assert.equal(readManifest(f.gameRoot).payloadVersion, '0.4.7beta');
-  assert.deepEqual(installedHashes(f), baseline, 'only an explicit Bridge selection restores the 1.4.12 baseline');
+  assert.deepEqual(installedHashes(f), comparison, 'even an explicit newer Bridge selection must respect the game exception');
   await f.apply({ uninstall: 'restore' });
   for (const name of Object.values(INSTALLED_NAMES).filter(name => name !== INSTALLED_NAMES.config)) assert.equal(fs.existsSync(path.join(f.exeDir, name)), false);
   assert.equal(hashFile(path.join(f.exeDir, 'nvngx_dlss.dll')), sha(peBytes('original native DLSS')));

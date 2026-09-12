@@ -1,11 +1,17 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../src/renderer/renderer.js'), 'utf8');
+const operationApiSource = fs.readFileSync(path.join(__dirname, '../src/shared/api-resolution.js'), 'utf8');
 const product = JSON.parse(fs.readFileSync(path.join(__dirname, '../product.json'), 'utf8'));
+
+function runRouteHelpers(context, endMarker) {
+  vm.runInContext(operationApiSource, context);
+  vm.runInContext(source.slice(source.indexOf('function feederOwnsVulkan('), source.indexOf(endMarker)), context);
+}
 
 test('DXGI awaiting confirmation is never labeled temporarily unsupported', () => {
   const context = {}; vm.createContext(context);
-  vm.runInContext(source.slice(source.indexOf('function isVulkanRoute('), source.indexOf('function hardwareLabel(')), context);
+  runRouteHelpers(context, 'function hardwareLabel(');
   context.game = { supported: false, installed: false, supportCode: 'ERR_API_SELECTION_REQUIRED' };
   const html = vm.runInContext('supportBadge(game)', context);
   assert.match(html, /API 待确认/); assert.doesNotMatch(html, /暂不支持/);
@@ -18,9 +24,10 @@ function uiContext() {
     bundle: { supersededVersions: { '0.4.6': '0.4.6-hotfix.1' } }
   } } };
   vm.createContext(context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, "../src/shared/api-resolution.js"), "utf8"), context);
+  vm.runInContext(operationApiSource, context);
   vm.runInContext(source.slice(source.indexOf('function coreVersionLabel('), source.indexOf('function poster(')), context);
   vm.runInContext(source.slice(source.indexOf('const API_LABELS'), source.indexOf('function gameDetail(')), context);
+  runRouteHelpers(context, 'function hardwareLabel(');
   return context;
 }
 
@@ -104,7 +111,7 @@ test('known multiple-API games show their supported choices and a stable Vulkan 
 
 test('an unknown or mixed API draft uses Vulkan selection readiness without the saved-route rejection', () => {
   const context = uiContext(); context.state.installing = new Set();
-  vm.runInContext(source.slice(source.indexOf('function isVulkanRoute('), source.indexOf('function supportBadge(')), context);
+  runRouteHelpers(context, 'function supportBadge(');
   vm.runInContext(source.slice(source.indexOf('function cardAction('), source.indexOf('const API_LABELS')), context);
   for (const api of ['unknown', 'mixed']) {
     context.game = { id: api, installed: false, apiOverride: 'auto', chosen: { path: `C:/Fixture/${api}.exe`,
@@ -123,7 +130,7 @@ test('an unknown or mixed API draft uses Vulkan selection readiness without the 
 test('Vulkan hard selection blockers disable apply and collapsed install without submitting IPC', async () => {
   const context = uiContext(), calls = []; context.state.installing = new Set();
   context.window = { manager: { applyGameRoute: (...args) => calls.push(args) } };
-  vm.runInContext(source.slice(source.indexOf('function isVulkanRoute('), source.indexOf('function supportBadge(')), context);
+  runRouteHelpers(context, 'function supportBadge(');
   vm.runInContext(source.slice(source.indexOf('function cardAction('), source.indexOf('const API_LABELS')), context);
   for (const reason of ['Vulkan 配套文件缺失', '当前只支持 RTX 50', '需要先恢复配套']) {
     context.game = { id: reason, installed: false, chosen: { path: 'C:/Fixture/Blocked.exe', detectedApiResolution: { api: 'mixed' } },
@@ -174,10 +181,8 @@ test('game refresh restores the focused API action at the same viewport position
 });
 
 test('game cards keep rename available and show a real pending install state', () => {
-  const context = { state: { installing: new Set() }, payloadReadyForHardware: () => true };
-  vm.createContext(context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, "../src/shared/api-resolution.js"), "utf8"), context);
-  vm.runInContext(source.slice(source.indexOf('function isVulkanRoute('), source.indexOf('function supportBadge(')), context);
+  const context = uiContext();
+  context.state.installing = new Set(); context.payloadReadyForHardware = () => true;
   vm.runInContext(source.slice(source.indexOf('function cardAction('), source.indexOf('const API_LABELS')), context);
   context.game = { id: 'game-1', installed: false, supported: true };
   let html = vm.runInContext('cardAction(game)', context);
@@ -204,12 +209,12 @@ test('Vulkan uses its fixed package and retains a read-only-capable graphics pan
     payloadReadyForHardware: () => false, hardwareLabel: () => 'RTX 50' };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../src/shared/api-resolution.js"), "utf8"), context);
-  vm.runInContext(source.slice(source.indexOf('function isVulkanRoute('), source.indexOf('function renderGames(')), context);
+  runRouteHelpers(context, 'function renderGames(');
   context.game = { id: 'vk-game', name: 'VK', installed: true, supported: false, nativeDlssAvailable: false, nativeFgAvailable: false,
     chosen: { path: 'C:/Games/VK.exe', bitness: 64, apiResolution: { api: 'vulkan', source: 'override' } },
     vulkan: { available: true, installed: true, coreVersion: '0.4.6-hotfix.1-vulkan-provider', packageId: 'nr-vulkan-e7df0fc', experimental: true } };
   const html = vm.runInContext('gameDetail(game)', context);
-  assert.ok(html.indexOf('游戏图形 API') < html.indexOf('Vulkan 使用独立固定配套'));
+  assert.ok(html.indexOf('游戏图形 API') < html.indexOf('Vulkan 使用按游戏保存的独立配套'));
   assert.match(html, /0\.4\.6-hotfix\.1 · Beta · Vulkan 桥接/);
   assert.match(html, /value="nr-vulkan-e7df0fc" selected/);
   assert.equal(vm.runInContext('vulkanVersionOption(game)', context), '<option value="nr-vulkan-e7df0fc" selected>0.4.6-hotfix.1 · Beta · Vulkan 桥接</option>');
@@ -220,7 +225,7 @@ test('Vulkan uses its fixed package and retains a read-only-capable graphics pan
   assert.match(vm.runInContext('cardAction(game)', context), /启动游戏/);
   context.game.vulkan.coreVersion = '0.4.7beta'; context.game.vulkan.packageId = 'nr-vulkan-beta047-fixture';
   assert.equal(vm.runInContext('vulkanVersionOption(game)', context), '<option value="nr-vulkan-beta047-fixture" selected>0.4.7beta · Vulkan 桥接</option>');
-  assert.match(vm.runInContext('vulkanRouteMarkup(game)', context), /当前实际核心为 0\.4\.7beta/);
+  assert.match(vm.runInContext('vulkanRouteMarkup(game)', context), /当前核心为 0\.4\.7beta/);
   assert.doesNotMatch(vm.runInContext('vulkanVersionOption(game)', context), /0\.4\.6|Beta · Vulkan/);
   context.game = { id: 'dx-game', installed: true, supported: true, addonVersion: 'ordinary-core', nativeDlssAvailable: true,
     chosen: { path: 'C:/Games/DX.exe', bitness: 64, apiResolution: { api: 'dx12', source: 'override' } } };
@@ -232,7 +237,7 @@ test('unavailable Vulkan gives the backend reason and cannot render an install a
     payloadReadyForHardware: () => true, hardwareLabel: () => 'RTX 50' };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../src/shared/api-resolution.js"), "utf8"), context);
-  vm.runInContext(source.slice(source.indexOf('function isVulkanRoute('), source.indexOf('function renderGames(')), context);
+  runRouteHelpers(context, 'function renderGames(');
   context.game = { id: 'vk-missing', installed: false, supported: true, nativeDlssAvailable: false,
     chosen: { path: 'C:/Games/VK.exe', bitness: 64, apiResolution: { api: 'vulkan', source: 'override' } },
     vulkan: { available: false, installed: false, coreVersion: '0.4.6-hotfix.1-vulkan-provider', packageId: 'nr-vulkan-e7df0fc', reason: '固定运行资产<缺失>', experimental: true } };
@@ -265,7 +270,7 @@ test('collapsed Vulkan install passes the exact package ID and maintenance opens
     window: { manager: { prepareGame: (...args) => { calls.push(['prepare', ...args]); return { ok: true, value: {} }; } } },
     setInstallBusy() {}, runConfirmedAction: work => Promise.resolve(work(true)), openMaintenance: id => calls.push(['maintenance', id]), confirmRenameGame() {}, confirmDismissGame() {}, confirmUninstall() {} });
   context.state.games = [game]; context.state.installing = new Set();
-  vm.runInContext(source.slice(source.indexOf('function isVulkanRoute('), source.indexOf('function supportBadge(')), context);
+  runRouteHelpers(context, 'function supportBadge(');
   vm.runInContext(source.slice(source.indexOf('function bindGameCards('), source.indexOf('async function loadExpanded(')), context);
   vm.runInContext('bindGameCards()', context);
   install.onclick({ stopPropagation() {} }); repair.onclick(); await new Promise(resolve => setImmediate(resolve));
@@ -389,7 +394,7 @@ test('runtime evidence awaiting verification is neutral and distinct from a brok
 test('manual DX12 Feeder selection uses candidate eligibility and submits the selected API', async () => {
   const context=uiContext(),calls=[];
   vm.runInContext(source.slice(source.indexOf('function cardAction('),source.indexOf('const API_LABELS')),context);
-  vm.runInContext(source.slice(source.indexOf('function isVulkanRoute('),source.indexOf('function hardwareLabel(')),context);
+  runRouteHelpers(context, 'function hardwareLabel(');
   context.state.installing=new Set();context.setInstallBusy=()=>{};context.runConfirmedAction=work=>work(true);
   context.window={manager:{prepareGame:(...args)=>{calls.push(args);return {ok:true,value:{prepared:true}};}}};
   context.game={id:'unknown-feeder',nativeDlssAvailable:false,nativeFgAvailable:false,chosen:{path:'C:/Games/Old.exe',bitness:64,apiResolution:{api:'unknown'},detectedApiResolution:{api:'unknown'}},
@@ -410,10 +415,31 @@ test('a Feeder recovery card exposes its dedicated owner action instead of launc
   const context=uiContext(),button={},calls=[];
   vm.runInContext(source.slice(source.indexOf('function cardAction('),source.indexOf('const API_LABELS')),context);
   context.game={id:'pending-feeder',installed:true,feeder:{installed:true,needsRecovery:true},chosen:{apiResolution:{api:'dx12'}}};
-  vm.runInContext(source.slice(source.indexOf('function isVulkanRoute('),source.indexOf('function hardwareLabel(')),context);
+  runRouteHelpers(context, 'function hardwareLabel(');
   const html=vm.runInContext('cardAction(game)',context);assert.match(html,/恢复并卸载 Feeder/);assert.doesNotMatch(html,/launch-btn|install-btn/);
   context.card={querySelector:selector=>selector==='.feeder-recover-btn'?button:null};
   context.window={manager:{restoreFeeder:id=>{calls.push(id);return {ok:true,value:{restored:true}};}}};context.runAction=work=>work();
   vm.runInContext('bindCardHeaderActions(card,game)',context);await button.onclick({stopPropagation(){}});
   assert.deepEqual(calls,['pending-feeder']);
+});
+
+for (const scenario of [
+  { name: 'native DLSS', detected: 'unknown', api: 'dx12', nativeDlss: true, present: false, route: 'native' },
+  { name: 'D16 Present', detected: 'unknown', api: 'dx12', nativeDlss: false, present: true, route: 'native' },
+  { name: 'DX11 override', detected: 'dx12', api: 'dx11', nativeDlss: false, present: true, route: 'feeder' }
+]) test(`card route submission keeps the selected API and Core capability for ${scenario.name}`, async () => {
+  const context = uiContext(), calls = [];
+  context.state.payload.versions['0.4.6-hotfix.1'].supportsPresent = scenario.present;
+  context.state.installing = new Set(); context.setInstallBusy = () => {};
+  context.runConfirmedAction = work => work(true);
+  context.window = { manager: { prepareGame: (...args) => { calls.push(args); return { ok: true, value: { prepared: true } }; } } };
+  context.game = { id: scenario.name, nativeDlssAvailable: scenario.nativeDlss,
+    chosen: { path: 'C:/Fixture/Game.exe', bitness: 64, apiResolution: { api: scenario.detected }, detectedApiResolution: { api: scenario.detected } },
+    feeder: { available: false, selectionAvailable: false } };
+  context.selectedApi = scenario.api;
+  vm.runInContext('updateRouteDraft(game, {api: selectedApi})', context);
+  await vm.runInContext('applyCardRoute(game)', context);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].api, scenario.api);
+  assert.equal(calls[0][1].route, scenario.route);
 });

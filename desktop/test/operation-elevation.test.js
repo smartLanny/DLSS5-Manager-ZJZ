@@ -32,16 +32,17 @@ test('real Windows PowerShell preserves a Chinese process path when decoded as U
 async function fixture(t, overrides = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'operation-elevation-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const now = overrides.now || Date.now;
   const exe = path.join(root, 'manager.exe'), gameExe = path.join(root, 'Game.exe');
   const application = { execPath: exe, appPath: root, mainHash: 'c'.repeat(64), codeHash: 'd'.repeat(64) };
   const parent = { pid: 101, executable: exe, startedAt: '2026-09-09T10:00:00Z' }, child = { pid: 102, executable: exe, startedAt: '2026-09-09T10:00:01Z' };
-  const plan = { planId, fingerprint, gameId: 'game', exe: gameExe, expiresAt: Date.now() + 600000, before: { exeSha256: 'b'.repeat(64) }, blockers: [] };
+  const plan = { planId, fingerprint, gameId: 'game', exe: gameExe, expiresAt: now() + 600000, before: { exeSha256: 'b'.repeat(64) }, blockers: [] };
   const state = { alive: new Map([[101, parent], [102, child]]), initialized: 0, applied: 0, launchCommands: [], worker: null };
   const inspectProcess = async pid => structuredClone(state.alive.get(pid) || null);
   const plans = { loadPlan: async (id, fp) => { assert.equal(id, planId); assert.equal(fp, fingerprint); return structuredClone(plan); },
     apply: async (id, consent) => { assert.equal(id, planId); assert.equal(consent.confirm, true); state.applied++; return { applied: true, stages: [{ kind: 'sr', status: 'complete' }], runtimeVerified: false }; } };
   const workerOptions = { userData: root, processInfo: { pid: 102 }, inspectProcess, getApplication: async () => application,
-    isAdministrator: async () => true, initialize: async () => { state.initialized++; return { plans }; }, sleep: waitTurn };
+    isAdministrator: async () => true, initialize: async () => { state.initialized++; return { plans }; }, sleep: waitTurn, now };
   const runPowerShell = async command => {
     state.launchCommands.push(command);
     const lock = JSON.parse(await fs.readFile(locations(root).lock, 'utf8'));
@@ -49,7 +50,7 @@ async function fixture(t, overrides = {}) {
     return '102';
   };
   const brokerOptions = { userData: root, plans, processInfo: { platform: 'win32', pid: 101, execPath: exe }, appPath: root,
-    inspectProcess, getApplication: async () => application, runPowerShell, sleep: waitTurn, timeoutMs: 1000, ...overrides };
+    inspectProcess, getApplication: async () => application, runPowerShell, sleep: waitTurn, timeoutMs: 1000, now, ...overrides };
   const broker = createOperationElevation(brokerOptions);
   return { root, application, parent, child, plan, state, plans, workerOptions, brokerOptions, broker };
 }
@@ -73,6 +74,22 @@ test('one-shot broker waits for the exact worker result and preserves the ordina
   assert.doesNotMatch(f.state.launchCommands[0], /no-sandbox|as-admin|elevation-handoff/);
   assert.equal((await f.broker.inspect()).active, false);
   const claims = await fs.readdir(path.join(f.root, 'operation-elevation/claims')); assert.equal(claims.length, 1);
+});
+test('a broker ticket uses one clock sample while expired and overlong tickets still fail closed', async t => {
+  let tick = Date.now(); const now = () => tick++;
+  const valid = await fixture(t, { now });
+  assert.equal((await valid.broker.apply('game', planId, { confirm: true, fingerprint })).applied, true);
+  await valid.state.worker; assert.equal(valid.state.applied, 1);
+
+  for (const mode of ['expired', 'overlong']) {
+    const f = await fixture(t, { now });
+    const timing = mode === 'expired' ? { createdAt: tick - 60000, expiresAt: tick - 1 }
+      : { createdAt: tick, expiresAt: tick + 120001 };
+    const value = await seed(f, timing);
+    await assert.rejects(executeOperationWorker({ ...f.workerOptions, nonce, requestHash: value.requestHash }),
+      { code: 'OPERATION_ELEVATION_REQUEST' });
+    assert.equal(f.state.initialized, 0); assert.equal(f.state.applied, 0);
+  }
 });
 test('a UAC cancellation does not apply or retry and leaves no blocking reservation', async t => {
   const f = await fixture(t, { runPowerShell: async () => { throw Object.assign(Error('user cancelled'), { code: 1223 }); } });

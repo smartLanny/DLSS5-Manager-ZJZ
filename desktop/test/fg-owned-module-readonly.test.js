@@ -10,7 +10,9 @@ const { ADDON } = require('../src/product/fg-mfgunlock-resources');
 const journal = require('../src/core/file-journal');
 const { createCompactBundle } = require('../src/product/payload');
 const { RECEIPT: EXTERNAL_RECEIPT } = require('../src/product/external-runtime');
-const { fixture: operationFixture, peBytes, put, PROJECT } = require('./helpers/operation-integration-fixture');
+const { fixture: operationFixture, peBytes, put, PROJECT, COMPONENT_RESOURCES } = require('./helpers/operation-integration-fixture');
+const LEGACY_PAYLOAD_ROOT = process.env.DLSS5_TEST_LEGACY_PAYLOAD_ROOT
+  ? path.resolve(process.env.DLSS5_TEST_LEGACY_PAYLOAD_ROOT) : path.join(PROJECT, 'payload/nr-before-sr');
 
 function fixture(t, overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fg-owned-readonly-'));
@@ -21,7 +23,7 @@ function fixture(t, overrides = {}) {
   put(path.join(dir, 'ReShade.ini'), '[ADDON]\r\nAddonPath=.\r\n'); fs.mkdirSync(outside, { recursive: true });
   const layout = { source: 'game-directory', mode: 'local', verified: true, exe, runtimeDir: dir,
     addonDirectory: dir, activeConfigPath: path.join(dir, 'ReShade.ini'), needsRecovery: false, blockers: [] };
-  const options = { resourcesPath: path.join(PROJECT, 'resources'), appDir: PROJECT,
+  const options = { resourcesPath: COMPONENT_RESOURCES, appDir: PROJECT,
     gameDirectory: () => game, gameExecutable: () => exe, getLayout: () => layout,
     detectHardware: async () => ({ series: ['RTX40'] }), scan: async () => ({ api: 'dx12', streamlineFg: true, reshadeAddon: true }),
     getFeatureEvidence: async () => ({ support: { status: 'supported', source: 'native-integration', capabilities: { mfgUnlock: { available: true, multipliers: [2, 3, 4] } } } }),
@@ -39,7 +41,7 @@ function fixture(t, overrides = {}) {
 
 test('unowned custom outside AddonPath returns an empty read-only manifest while MFG writes remain blocked', async t => {
   const f = fixture(t), original = f.custom(), unowned = path.join(f.outside, ADDON);
-  fs.copyFileSync(path.join(PROJECT, 'resources/fg-mfgunlock', ADDON), unowned);
+  fs.copyFileSync(path.join(COMPONENT_RESOURCES, 'fg-mfgunlock', ADDON), unowned);
   const before = fs.readFileSync(unowned);
   assert.deepEqual(await f.service.ownedModuleManifest('game'), []);
   await assert.rejects(f.service.prepare('game'), { code: 'SETTINGS_FG_LAYOUT_UNVERIFIED' });
@@ -109,7 +111,7 @@ test('the real HoYo preview hook accepts an unowned custom AddonPath after direc
     serviceOverrides: { getKnownComponents: async id => { queries++; return components ? components.ownedModuleManifest(id) : []; } },
     specialSetup: async ({ root, resourcesPath }) => {
       const payload = path.join(resourcesPath, 'payload/nr-before-sr');
-      const loader = fs.readFileSync(path.join(PROJECT, 'payload/nr-before-sr/fixed/RTX50/ReShade64.dll'));
+      const loader = fs.readFileSync(path.join(LEGACY_PAYLOAD_ROOT, 'fixed/RTX50/ReShade64.dll'));
       for (const family of ['RTX40', 'RTX50']) put(path.join(payload, 'fixed', family, 'ReShade64.dll'), loader);
       put(path.join(payload, 'bundle.json'), JSON.stringify(createCompactBundle(payload,
         ['fixture-core-1', 'fixture-core-2'].map(id => ({ id, label: id, compatibility: 'dx11' })), 'fixture-core-1')));

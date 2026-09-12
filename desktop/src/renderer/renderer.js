@@ -192,9 +192,9 @@ function coreSupportsPresent(game, selection) {
   const version = selection?.version || routeSelection(game).version;
   return state.payload?.versions?.[version]?.supportsPresent ?? game?.coreCapabilities?.supportsPresent ?? false;
 }
-function isFeederRoute(game) { const api = globalThis.ManagerOperationApi.resolveOperationApi(game).effectiveApi; return game?.feeder?.installed === true ||
+function isFeederRoute(game, selection) { const api = selection?.resolvedApi ?? globalThis.ManagerOperationApi.resolveOperationApi(game).effectiveApi; return game?.feeder?.installed === true ||
   api === 'vulkan' && feederOwnsVulkan(game) || Number(game?.chosen?.bitness) === 32 && game?.feeder?.selections?.[api]?.available ||
-  ['dx9', 'dx10'].includes(api) || game?.nativeDlssAvailable === false && (api === 'dx11' || api === 'dx12' && !coreSupportsPresent(game)); }
+  ['dx9', 'dx10'].includes(api) || game?.nativeDlssAvailable === false && (api === 'dx11' || api === 'dx12' && !coreSupportsPresent(game, selection)); }
 function routeInstalled(game) { return isVulkanRoute(game) ? game?.vulkan?.installed === true : game?.installed === true; }
 function routeSupported(game) { return isVulkanRoute(game) ? game?.vulkan?.available === true : isFeederRoute(game)
   ? (game?.feeder?.selections?.[game?.chosen?.apiResolution?.api]?.available ?? game?.feeder?.available) === true : game?.supported === true; }
@@ -395,7 +395,7 @@ function cardAction(game) {
   if (game.vulkan?.installed === true && game.vulkan?.needsRecovery === true)
     return `<button class="button" disabled>需先恢复配套</button><button class="button primary card-open">恢复配套</button>${rename}${dismiss}`;
   if (routeInstalled(game)) return `<button class="button primary launch-btn">启动游戏</button><button class="button subtle card-open">设置</button>${rename}${dismiss}`;
-  if (isFeederRoute(game) && routeSelection(game).resolvedApi === 'dx12') return feederSelectionState(game).available ? `${installButton}${rename}${dismiss}` : `<button class="button" disabled>Feeder 暂不可用</button>${rename}${dismiss}`;
+  if (isFeederRoute(game, routeSelection(game)) && routeSelection(game).resolvedApi === 'dx12') return feederSelectionState(game).available ? `${installButton}${rename}${dismiss}` : `<button class="button" disabled>Feeder 暂不可用</button>${rename}${dismiss}`;
   if (state.routeDrafts?.has(game.id) && ['dx11', 'dx12', 'vulkan'].includes(routeSelection(game).resolvedApi)) {
     const selected = routeSelection(game);
     if (routeNeedsRestore(game, selected)) return `<button class="button" disabled>需先恢复配套</button>${rename}${dismiss}`;
@@ -488,7 +488,7 @@ function routeApplyRow(game) {
 }
 function routeControlsMarkup(game) {
   const selected = routeSelection(game);
-  if (isFeederRoute(game) && game.feeder?.generation === 'external-provider-v1') return `${apiControls(game)}<div class="config-block core-selection"><h4>外部输入配套</h4><p class="config-note">${escapeHtml(game.feeder.coreVersion || '当前 Core')} · ${escapeHtml(game.feeder.providerPackageId || '已选输入桥')}。接口和文件身份在安装前核对，运行画面请进游戏确认。</p></div>${routeApplyRow(game)}`;
+  if (isFeederRoute(game, selected) && game.feeder?.generation === 'external-provider-v1') return `${apiControls(game)}<div class="config-block core-selection"><h4>外部输入配套</h4><p class="config-note">${escapeHtml(game.feeder.coreVersion || '当前 Core')} · ${escapeHtml(game.feeder.providerPackageId || '已选输入桥')}。接口和文件身份在安装前核对，运行画面请进游戏确认。</p></div>${routeApplyRow(game)}`;
   if (selected.resolvedApi === 'dx12' && game.nativeDlssAvailable === false && (game.feeder?.installed || !coreSupportsPresent(game, selected))) return `${apiControls(game)}<div class="config-block core-selection"><h4>无原生 DLSS · Feeder 试验路线</h4><p class="config-note">${escapeHtml(game.feeder?.coreVersion || '0.4.7beta')} 固定配套 · RTX50 / 64 位 DX12 / 已确认 sRGB 的 RGBA8 画面。</p><p class="config-note">提供成品帧 NR 后处理；当前不支持 HDR，实际处理状态需进游戏确认。</p><p class="config-note feeder-entry-note">加载入口：DXGI。此固定配套暂不提供 DXGI → D3D12 切换；它不能作为反作弊报错的通用修复。</p></div>${routeApplyRow(game)}`;
   return `${apiControls(game)}${selected.resolvedApi === 'vulkan' && !feederOwnsVulkan(game) ? vulkanRouteMarkup(game) : `<div class="config-block core-selection"><h4>Addon 核心版本</h4>${addonVersionRow(game)}<p class="config-note">API 与核心版本选好后，一次应用。新安装使用当前安装来源的默认核心；已有安装保留当前版本。</p></div>`}${routeApplyRow(game)}`;
 }
@@ -537,7 +537,7 @@ async function applyCardRoute(game) {
   setInstallBusy(game.id, true);
   try {
     return await runConfirmedAction(async allowAntiCheat => {
-      const feeder = isFeederRoute(game);
+      const feeder = isFeederRoute(game, selected);
       const result = feeder && game.feeder?.installed
         ? await window.manager.installFeeder(game.id, { api: selected.api, allowAntiCheat })
         : !game.installed

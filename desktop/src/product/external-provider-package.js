@@ -96,7 +96,13 @@ function createExternalProviderPackages(options = {}) {
       // backend must not inherit a package through the old API-wide field.
       if (Object.keys(routes).some(key => key.startsWith(`${api}|`))) return null;
     }
-    return data.selected.externalProviders?.[api] || (selectedByApi(data)[api] ?? null);
+    if (data.selected.externalProviders?.[api]) return data.selected.externalProviders[api];
+    const legacy = data.selected.externalProvider;
+    if (ID.test(legacy || '')) {
+      const row = providerRows(data).find(value => value.id === legacy);
+      if (!row || row.gameApis?.includes(api)) return legacy;
+    }
+    return null;
   }
   function inventoryFileRow(data, file, expectedSha, label) {
     const absolute = path.resolve(root, file || '');
@@ -264,6 +270,8 @@ function createExternalProviderPackages(options = {}) {
     const item = definition(data, row), route = routeFor(item.manifest, selection), proxy = selection.proxyEntry || 'auto';
     const currentCore = contextValue('currentCore', supplied.currentCore);
     const currentRuntime = contextValue('currentRuntime', supplied.currentRuntime);
+    if (currentRuntime?.family !== selection.hardwareFamily)
+      fail('EXTERNAL_PROVIDER_RUNTIME_INCOMPATIBLE', '当前共享 NR Runtime 与所选显卡系列不匹配。');
     const injected = sourceContext(data, currentCore, currentRuntime, route, item.manifest.interface);
     const files = route.files.map((spec, index) => {
       const file = item.byName.get(spec.file.toLowerCase());

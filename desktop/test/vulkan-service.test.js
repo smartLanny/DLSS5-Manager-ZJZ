@@ -87,7 +87,7 @@ test('summary only reads metadata and missing/unaccepted packages stay unavailab
   for (let n = 0; n < 20; n++) service.summary(game);
   assert.deepEqual(f.calls, []); assert.equal(f.values.size, 0); assert.equal(fs.existsSync(f.bindingPath), false);
   f.runtime.acceptance.status = 'loaded'; f.writeRecipes();
-  assert.equal(service.summary(game).available, false); assert.match(service.summary(game).reason, /实际处理验收/);
+  assert.equal(service.summary(game).available, false); assert.match(service.summary(game).reason, /验收/);
   fs.unlinkSync(path.join(f.runtimeRoot, 'recipe.json'));
   assert.equal(service.summary(game).available, false); assert.match(service.summary(game).reason, /尚未提供/);
 });

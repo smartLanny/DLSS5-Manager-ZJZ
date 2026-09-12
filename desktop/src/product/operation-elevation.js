@@ -180,8 +180,9 @@ function createOperationElevation({ userData, plans, processInfo = process, appP
       const parent = await inspectProcess(processInfo.pid), application = await getApplication();
       assertNotCancelled();
       if (!processIdentity(parent) || !samePath(parent.executable, application.execPath)) fail('PARENT', '无法确认当前普通界面进程身份。');
+      const createdAt = now();
       request = { version: 1, nonce: crypto.randomUUID(), planId, fingerprint: consent.fingerprint, gameId, target, parent, application,
-        createdAt: now(), expiresAt: Math.min(plan.expiresAt, now() + 120000), allowAntiCheat: consent.allowAntiCheat === true };
+        createdAt, expiresAt: Math.min(plan.expiresAt, createdAt + 120000), allowAntiCheat: consent.allowAntiCheat === true };
       requestHash = hash(request); const files = locations(userData, request.nonce);
       await writeNew(base.lock, { version: 1, nonce: request.nonce, requestHash, parent, child: null, state: 'reserved' }); lockCreated = true;
       await writeNew(files.request, request);

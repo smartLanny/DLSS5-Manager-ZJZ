@@ -22,8 +22,8 @@ function fixture(t, alter = value => value) {
   }
   const provider = object('transport/provider.addon64', Buffer.from('provider-fixture'));
   const core = object('core/current-core.addon64', Buffer.from('core-fixture'));
-  const chain = object('core/nrchain_nvngx.dll', Buffer.from('core-chain-fixture'));
-  const config = object('core/nr_before_sr.ini', Buffer.from('[NRBeforeSR]\nEnabled=1\n'));
+  const chain = object('nrchain_nvngx.dll', Buffer.from('core-chain-fixture'));
+  const config = object('nr_before_sr.ini', Buffer.from('[NRBeforeSR]\nEnabled=1\n'));
   const runtime = object('runtime/nvngx_dlssnr.dll', Buffer.from('runtime-fixture'));
   const manifest = alter({ schema: 'dlss5-external-provider-package-v1',
     interface: { name: 'NRExternalProviderV1', version: 1, requiredCoreCapabilities: ['same-frame-output'] },
@@ -83,4 +83,15 @@ test('legacy runtime consumes the selected recipe through its normal exact-file 
   assert.equal(pkg.recipe.providerPackageId, 'provider-v1-fixture'); assert.equal(pkg.root, f.root);
   fs.appendFileSync(path.join(f.root, pkg.recipe.files.find(row => row.role === 'provider').source), 'changed');
   await assert.rejects(runtime.verify(pkg), { code: 'LEGACY_PACKAGE_HASH' });
+});
+
+test('a route supporting both GPU families still refuses the other family runtime without changing its selection', async t => {
+  for (const [hardwareFamily, runtimeFamily] of [['RTX40', 'RTX50'], ['RTX50', 'RTX40']]) {
+    const f = fixture(t); f.currentRuntime.family = runtimeFamily;
+    await f.packages.select('provider-v1-fixture');
+    const inventoryFile = path.join(f.root, 'inventory.json'), before = fs.readFileSync(inventoryFile);
+    assert.throws(() => f.packages.load({ selection: { api: 'dx11', architecture: 'x64', hardwareFamily, loadingBackend: 'local' } }),
+      { code: 'EXTERNAL_PROVIDER_RUNTIME_INCOMPATIBLE' });
+    assert.deepEqual(fs.readFileSync(inventoryFile), before);
+  }
 });

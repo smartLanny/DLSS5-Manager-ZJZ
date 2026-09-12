@@ -7,11 +7,12 @@ const os = require('os');
 const path = require('path');
 const { createFgComponents } = require('../src/product/fg-components');
 const { createFgComponents: createLegacy } = require('../src/product/fg-legacy-components');
-const { ADDON, SHA256, sha256 } = require('../src/product/fg-mfgunlock-resources');
+const { ID, ADDON, SHA256, PROVIDERS, sha256, providerById } = require('../src/product/fg-mfgunlock-resources');
 const journal = require('../src/core/file-journal');
 const { createLaunchSettingsService } = require('../src/product/launch-settings-service');
 const { enhancementEvidence } = require('./helpers/enhancement-evidence');
-const resourceRoot = path.resolve(__dirname, '../resources');
+const resourceRoot = process.env.DLSS5_TEST_RESOURCE_ROOT
+  ? path.resolve(process.env.DLSS5_TEST_RESOURCE_ROOT) : path.resolve(__dirname, '../resources');
 
 function fixture(t, overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mfgunlock-components-'));
@@ -42,6 +43,7 @@ function fixture(t, overrides = {}) {
   return { root, game, dir, exe, resources, oldResources, options, service, legacy, state, observed, addon, receipt, seedAddon };
 }
 const bytes = file => fs.existsSync(file) ? fs.readFileSync(file) : null;
+const providerFile = (f, id = ID) => path.join(f.resources, 'fg-mfgunlock', providerById(id).directory, ADDON);
 function oldSnapshot(f) {
   const names = ['RTX40MFGCore.dll', 'RTX40MFG.asi', 'RTX40MFG-UI.addon64', 'RTX40MFG-Universal.json', 'version.dll', 'version.ini'];
   return new Map([...names.map(name => path.join(f.dir, name)), f.receipt].map(file => [file, bytes(file)]));
@@ -203,7 +205,7 @@ test('RTX50 native route needs no new resource or runtime and never installs the
 });
 
 test('missing or changed new resources cannot select or reinstall the available legacy suite', async t => {
-  const f = fixture(t); fs.writeFileSync(path.join(f.resources, 'fg-mfgunlock', ADDON), 'changed');
+  const f = fixture(t); fs.writeFileSync(providerFile(f), 'changed');
   const status = await f.service.inspect('g'); assert.equal(status.canPrepare, false);
   await assert.rejects(f.service.prepare('g'), { code: 'SETTINGS_FG_BLOCKED' });
   assert.equal(fs.existsSync(path.join(f.dir, 'RTX40MFGCore.dll')), false); assert.equal(fs.existsSync(f.addon), false);
@@ -452,7 +454,7 @@ test('owned module manifest comes from the verified MFG receipt and never blesse
   const f = fixture(t), active = path.join(f.root, 'active'); fs.mkdirSync(active);
   const layout = { verified: true, mode: 'external', exe: f.exe, addonDirectory: active, activeConfigPath: path.join(active, 'ReShade.ini') };
   const service = createFgComponents({ ...f.options, getLayout: () => layout }), addon = path.join(active, ADDON);
-  fs.copyFileSync(path.join(f.resources, 'fg-mfgunlock', ADDON), addon);
+  fs.copyFileSync(providerFile(f), addon);
   assert.deepEqual(await service.ownedModuleManifest('g'), []);
   await service.prepare('g'); const receiptBefore = bytes(service.receiptFile('g'));
   assert.deepEqual(await service.ownedModuleManifest('g'), [{ path: addon, name: ADDON, role: 'mfgunlock', sha256: SHA256, architecture: 64, owner: 'fg-mfgunlock' }]);
@@ -506,27 +508,27 @@ test('special routes retain interrupted FG owner recovery even when no receipt w
 });
 
 test('provider catalog and preview expose fixed target hashes without writing, and no selection preserves an installed fallback', async t => {
-  const f = fixture(t), { providerById } = require('../src/product/fg-mfgunlock-resources');
+  const f = fixture(t);
   const fallback = providerById('mfgunlock-0.6.1');
   fs.copyFileSync(path.join(f.resources, 'fg-mfgunlock', fallback.directory, ADDON), f.addon);
-  assert.equal(f.service.catalog().filter(row => row.ready).length, 3);
+  assert.equal(f.service.catalog().filter(row => row.ready).length, PROVIDERS.length);
   const p = await f.service.previewProvider('g', 'mfgunlock-0.7-zh-CN');
   assert.equal(p.canApply, true); assert.equal(p.action, 'replace'); assert.equal(p.beforeSha256, fallback.sha256);
-  assert.equal(p.afterSha256, SHA256); assert.equal(p.file, f.addon); assert.equal(fs.existsSync(f.receipt), false);
+  assert.equal(p.afterSha256, providerById('mfgunlock-0.7-zh-CN').sha256); assert.equal(p.file, f.addon); assert.equal(fs.existsSync(f.receipt), false);
   const prepared = await f.service.prepare('g'); assert.equal(prepared.id, fallback.id); assert.equal(prepared.replaced.length, 0);
   assert.equal(sha256(bytes(f.addon)), fallback.sha256); assert.equal((await f.service.inspect('g')).canUpgrade, true);
   await f.service.restore('g'); assert.equal(sha256(bytes(f.addon)), fallback.sha256);
 });
 
 test('created MFG keeps removal ownership across upgrade and downgrade with one active canonical provider', async t => {
-  const f = fixture(t), { providerById } = require('../src/product/fg-mfgunlock-resources');
+  const f = fixture(t);
   await f.service.prepare('g', { providerId: 'mfgunlock-0.6.1' });
   await f.service.prepare('g', { providerId: 'mfgunlock-0.7-zh-CN' });
   const down = await f.service.prepare('g', { providerId: 'mfgunlock-0.7' });
   assert.equal(JSON.parse(bytes(f.receipt)).files[0].mode, 'created');
   assert.equal(sha256(bytes(f.addon)), providerById('mfgunlock-0.7').sha256);
   assert.equal(fs.readdirSync(f.dir).filter(name => name.endsWith('.addon64')).length, 1);
-  await f.service.rollbackPrepare('g', down.undoToken); assert.equal(sha256(bytes(f.addon)), SHA256);
+  await f.service.rollbackPrepare('g', down.undoToken); assert.equal(sha256(bytes(f.addon)), providerById('mfgunlock-0.7-zh-CN').sha256);
   await f.service.restore('g'); assert.equal(fs.existsSync(f.addon), false);
 });
 
@@ -578,7 +580,7 @@ test('interrupted version replacement restores original bytes through durable fi
   const f = fixture(t, { copyFile: async (...args) => { await fsp.copyFile(...args); if (stop) throw Object.assign(new Error('interrupted replacement'), { preservePending: true }); } });
   await f.service.prepare('g', { providerId: 'mfgunlock-0.6.1' }); const original = bytes(f.addon), receipt = bytes(f.receipt);
   stop = true; await assert.rejects(f.service.prepare('g', { providerId: 'mfgunlock-0.7-zh-CN' }), { code: 'errBackendRecovery' });
-  assert.equal(sha256(bytes(f.addon)), SHA256);
+  assert.equal(sha256(bytes(f.addon)), providerById('mfgunlock-0.7-zh-CN').sha256);
   stop = false; await createFgComponents(f.options).recoverPending('g');
   assert.deepEqual(bytes(f.addon), original); assert.deepEqual(bytes(f.receipt), receipt);
 });

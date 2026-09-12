@@ -16,7 +16,7 @@ test('real Electron reads entry identity through ASAR and code identity from the
   await fs.mkdir(path.join(source, 'src/product'), { recursive: true });
   const main = 'module.exports = "identity fixture";\n';
   await fs.writeFile(path.join(source, 'main.js'), main);
-  for (const name of ['operation-elevation.js', 'launch-safety.js'])
+  for (const name of ['operation-elevation.js', 'launch-safety.js', 'streamed-file-digest.js'])
     await fs.copyFile(path.join(__dirname, '../src/product', name), path.join(source, 'src/product', name));
   await asar.createPackage(source, archive);
   const invoke = () => new Promise((resolve, reject) => execFile(require('electron'), ['-e',
@@ -33,4 +33,13 @@ test('real Electron reads entry identity through ASAR and code identity from the
   assert.equal(second.mainHash, first.mainHash);
   assert.notEqual(second.codeHash, first.codeHash);
   assert.equal(second.codeHash, sha(await fs.readFile(archive)));
+
+  // The virtual member must inherit the physical archive's link policy. A
+  // member digest that trusted Electron's synthetic inode would accept this.
+  await fs.link(archive, path.join(root, 'archive-alias.asar'));
+  const digestEntry = () => new Promise((resolve, reject) => execFile(require('electron'), ['-e',
+    'const p=process.argv[1]; require(p+"/src/product/launch-safety.js").digestFile(p+"/main.js").then(x=>process.stdout.write(x)).catch(e=>{process.stderr.write(e.code+":"+e.message);process.exitCode=1})', archive],
+  { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '' }, windowsHide: true, timeout: 10000, encoding: 'utf8' },
+  (error, stdout, stderr) => error ? reject(Object.assign(error, { stderr })) : resolve(stdout)));
+  await assert.rejects(digestEntry(), error => error.stderr.includes('SETTINGS_LINK_BLOCKED'));
 });
