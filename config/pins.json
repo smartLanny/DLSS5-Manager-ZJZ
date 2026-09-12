@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-12",
+  "checkCadence": {
+    "onLaunch": true,
+    "manualCommand": "dlss5-manager-zjz check",
+    "periodicHours": 24,
+    "autoInstall": false,
+    "metadataOnlyByDefault": true,
+    "notes": "类 RHI：启动与手动检查只拉 pin 元数据；二进制须用户确认后再按 pin 下载到本机缓存，永不写入本仓。"
+  },
+  "components": [
+    {
+      "id": "mfg-unlock",
+      "displayName": "MFG Unlock (40)",
+      "slot": "mfg-dlc",
+      "defaultPin": "0.9",
+      "priority": "default",
+      "rollbacks": ["0.7-zh-CN", "0.7"],
+      "neverAutoBump": true,
+      "updateSource": {
+        "kind": "github-releases",
+        "owner": "mavismmg",
+        "repo": "MFGAdaUnlock-RenoDx",
+        "pageUrl": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases",
+        "metadataUrl": "https://api.github.com/repos/mavismmg/MFGAdaUnlock-RenoDx/releases?per_page=15"
+      },
+      "policy": "prefer-owner-pin",
+      "notes": "Owner 2026-09-12：优先/默认 0.9；0.7 仅回滚。公开 GitHub 标签可能落后于 pin，pin 表为准，不自动改跟源站 latest。"
+    },
+    {
+      "id": "bridge",
+      "displayName": "Bridge",
+      "slot": "bridge",
+      "defaultPin": "game-recipe",
+      "gamePins": {
+        "bg3": "1.4.11"
+      },
+      "neverForce": ["latest", "1.4.13-pre"],
+      "neverAutoBump": true,
+      "updateSource": {
+        "kind": "pin-manifest",
+        "pageUrl": "https://github.com/smartLanny/DLSS5-Manager-ZJZ/blob/main/config/pins.json",
+        "metadataUrl": "https://raw.githubusercontent.com/smartLanny/DLSS5-Manager-ZJZ/main/config/pins.json"
+      },
+      "policy": "pinnable-never-latest",
+      "labRef": "smartLanny/dlss5-nr-before-sr-lab#224",
+      "notes": "BG3 钉在 1.4.11。lab #224：勿无脑跟 latest / 1.4.13-pre。配方未写明的游戏保持 recipe-local，不提升到源站最新。"
+    },
+    {
+      "id": "feeder",
+      "displayName": "Feeder",
+      "slot": "feeder",
+      "defaultPin": "optional",
+      "rollbacks": [],
+      "neverAutoBump": true,
+      "updateSource": {
+        "kind": "changelog-gate",
+        "pageUrl": null,
+        "metadataUrl": null
+      },
+      "policy": "optional-changelog-gate",
+      "notes": "主 OTA 默认可省略。仅当配方 changelog 开门后才检查；无公开默认下载根。"
+    },
+    {
+      "id": "nvngx-dlssnr",
+      "displayName": "nvngx_dlssnr",
+      "slot": "nr-runtime",
+      "defaultPin": "310.8.SF-v2",
+      "rollbacks": [],
+      "neverAutoBump": true,
+      "updateSource": {
+        "kind": "rhi-or-nvidia",
+        "pageUrl": "https://www.nvidia.com/en-us/geforce/technologies/dlss/",
+        "metadataUrl": null
+      },
+      "policy": "field-pin-evidence-only",
+      "notes": "场上 310.8.SF-v2。无公开证据 / RHI 目录条目则别乱动。本仓不嵌入 NVIDIA DLL。"
+    },
+    {
+      "id": "dlss-sl-stack",
+      "displayName": "DLSS / Streamline stack",
+      "slot": "sl-stack",
+      "defaultPin": "field-current",
+      "evaluate": "310.9.1+SL2.14.1",
+      "rollbacks": [],
+      "neverAutoBump": true,
+      "updateSource": {
+        "kind": "github-releases",
+        "owner": "NVIDIA-RTX",
+        "repo": "Streamline",
+        "pageUrl": "https://github.com/NVIDIA-RTX/Streamline/releases",
+        "metadataUrl": "https://api.github.com/repos/NVIDIA-RTX/Streamline/releases?per_page=15"
+      },
+      "policy": "evaluate-ab-separate",
+      "notes": "评估 310.9.1+SL2.14.1 走独立 A/B，不绑 lab #190。公开 Streamline 发行页只作元数据对照；SDK zip 不进本仓。"
+    }
+  ]
+}
