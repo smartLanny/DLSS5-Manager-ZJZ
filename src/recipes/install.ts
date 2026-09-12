@@ -1,5 +1,6 @@
 import { Failures } from "../failures.js";
 import type { Recipe } from "../types.js";
+import { planBridgeDlc, type BridgePlan } from "./bridge.js";
 
 export interface RecipeAction {
   op: "install" | "uninstall";
@@ -7,9 +8,10 @@ export interface RecipeAction {
   dryRun: true;
   steps: string[];
   refused: string[];
+  bridge?: BridgePlan;
 }
 
-export function planInstall(recipe: Recipe): RecipeAction {
+export function planInstall(recipe: Recipe, bridgeContext?: unknown): RecipeAction {
   if (recipe.pins.bridge === "latest" || recipe.pins.bridge === "1.4.13-pre") {
     throw Failures.bridgeLatestForbidden(recipe.pins.bridge);
   }
@@ -33,7 +35,17 @@ export function planInstall(recipe: Recipe): RecipeAction {
     refused.push("D14 Core 选择保持可选，默认跳过");
   }
 
-  return { op: "install", recipeId: recipe.id, dryRun: true, steps, refused };
+  const bridge = bridgeContext === undefined ? undefined : planBridgeDlc(recipe, bridgeContext);
+  if (bridge) {
+    if (bridge.state === "blocked") {
+      steps.splice(0, steps.length, "仅报告可选桥接 DLC 拒绝原因；不执行安装，原游戏与现有 Core 保持不变。");
+      refused.push(`[${bridge.code}] ${bridge.message}`);
+    } else {
+      steps.push(`[${bridge.code}] ${bridge.message}`, ...bridge.requiredChecks);
+    }
+  }
+  return { op: "install", recipeId: recipe.id, dryRun: true, steps, refused,
+    ...(bridge ? { bridge } : {}) };
 }
 
 export function planUninstall(recipe: Recipe): RecipeAction {
