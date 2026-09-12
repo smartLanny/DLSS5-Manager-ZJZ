@@ -1,0 +1,67 @@
+'use strict';
+const test = require('node:test'), assert = require('node:assert/strict');
+const fs = require('node:fs'), path = require('node:path'), os = require('node:os'), crypto = require('node:crypto');
+const { createComponentLibrary, relativeName } = require('../src/product/component-library');
+const { createCompactBundle, requirePayload } = require('../src/product/payload');
+const { PAYLOAD_FILES } = require('../src/product/constants');
+const { resolveOperationApi } = require('../src/product/operation-api');
+const { assess } = require('../src/product/game-support');
+const hash = data => crypto.createHash('sha256').update(data).digest('hex');
+function setup(t) {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-components-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bytes = Buffer.alloc(128); bytes.write('MZ'); bytes.writeUInt32LE(64, 60); bytes.writeUInt32LE(0x4550,64); bytes.writeUInt16LE(2,84); bytes.writeUInt16LE(0x20b,88);
+  const dll = path.join(root, 'input.dll'); fs.writeFileSync(dll, bytes);
+  const catalog = { packages: [{ id:'runtime-a',kind:'nr-runtime',version:'1.0',variant:'RTX20-40',hardwareFamilies:['RTX40'],architecture:'x64',interface:'NGX-Feature18',filename:'nvngx_dlssnr.dll',bytes:bytes.length,sha256:hash(bytes) }] };
+  return { root, dll, bytes, lib:createComponentLibrary({ userData:root, catalog }) };
+}
+test('known runtime import verifies PE/hash and deduplicates without changing games', async t => {
+  const f = setup(t); const first = await f.lib.importComponent(f.dll); await f.lib.importComponent(f.dll);
+  assert.equal(first.changedGames, false); assert.equal((await f.lib.inventory()).packages.length, 1);
+  assert.equal((await f.lib.inventory()).packages[0].hardwareFamilies[0], 'RTX40');
+  fs.appendFileSync(f.dll, 'changed'); await assert.rejects(f.lib.importComponent(f.dll), /尚未识别/);
+  assert.equal((await f.lib.inventory()).packages.length, 1);
+});
+test('runtime overlay supports a base missing NVIDIA DLL and does not duplicate by route', async t => {
+  const f = setup(t), base = path.join(f.root, 'base');
+  for (const family of ['RTX40','RTX50']) {
+    const dir = path.join(base,'fixed',family); fs.mkdirSync(dir,{recursive:true});
+    for (const name of ['ReShade64.dll','nrchain_nvngx.dll','nvngx_dlssnr.dll']) fs.writeFileSync(path.join(dir,name),f.bytes);
+  }
+  const v = path.join(base,'versions','core-a'); fs.mkdirSync(v,{recursive:true});
+  fs.writeFileSync(path.join(v,PAYLOAD_FILES.addon),f.bytes); fs.writeFileSync(path.join(v,PAYLOAD_FILES.config),'[NR]\n');
+  const bundle=createCompactBundle(base,[{id:'core-a'}],'core-a'); bundle.versions['core-a'].supportsPresent=true;
+  fs.writeFileSync(path.join(base,'bundle.json'),JSON.stringify(bundle));
+  for (const family of ['RTX40','RTX50']) fs.unlinkSync(path.join(base,'fixed',family,'nvngx_dlssnr.dll'));
+  await f.lib.importComponent(f.dll); await f.lib.activateRuntime('runtime-a',base);
+  const payload=requirePayload(f.lib.root,'RTX40','core-a');
+  assert.equal(payload.runtime.valid,true); assert.equal(payload.versionInfo.supportsPresent,true);
+  assert.match(payload.runtime.file,/objects/);
+  assert.equal(fs.existsSync(path.join(f.lib.root,'fixed','RTX40','nvngx_dlssnr.dll')),false);
+  fs.writeFileSync(payload.runtime.file,'tampered'); await assert.rejects(f.lib.activateRuntime('runtime-a',base),/缓存.*改/);
+});
+test('component manifests cannot escape the cache or masquerade as tested packages', async t => {
+  const f=setup(t), dir=path.join(f.root,'custom');fs.mkdirSync(dir);
+  const m={schema:'dlss5-component-v1',id:'external',kind:'bridge',version:'1.2.3',architecture:'x64',interface:'NGX-D3D12-Feature1',files:[{path:'../input.dll',sha256:hash(f.bytes),bytes:f.bytes.length}]};
+  fs.writeFileSync(path.join(dir,'component-manifest.json'),JSON.stringify(m));
+  await assert.rejects(f.lib.importComponent(dir),/无效路径/);
+  m.files[0].path='bridge.addon64';fs.writeFileSync(path.join(dir,m.files[0].path),f.bytes);
+  fs.writeFileSync(path.join(dir,'component-manifest.json'),JSON.stringify(m));
+  await f.lib.importComponent(dir);assert.equal((await f.lib.inventory()).packages[0].validation,'candidate');
+  for(const name of ['../x','C:/x','x:stream','NUL.dll','a/../b','a\\b'])assert.throws(()=>relativeName(name));
+});
+test('one API result handles assessment evidence, manual override and auto reset', () => {
+  const game={chosen:{apiAssessment:{effectiveApi:'dx12',source:'imports'}}};
+  assert.equal(resolveOperationApi(game).effectiveApi,'dx12');
+  assert.equal(resolveOperationApi(game).requiresManualSelection,false);
+  game.apiOverride='dx11';assert.equal(resolveOperationApi(game).effectiveApi,'dx11');
+  assert.equal(resolveOperationApi(game,{api:'auto'}).effectiveApi,'unknown');
+  game.chosen.detectedApi='dx12';assert.equal(resolveOperationApi(game,{api:'auto'}).effectiveApi,'dx12');
+  game.chosen.detectedApi='mixed';assert.equal(resolveOperationApi(game,{api:'auto'}).requiresManualSelection,true);
+});
+test('only a declared Present-capable Core admits non-DLSS x64 DX12', () => {
+  const scan={chosen:{api:'dx12',bitness:64}};
+  assert.equal(assess(scan).code,'ERR_NO_DLSS');assert.equal(assess(scan,{supportsPresent:true}).supported,true);
+  scan.chosen.bitness=32;assert.equal(assess(scan,{supportsPresent:true}).supported,false);
+  scan.chosen.bitness=64;scan.chosen.api='dx11';assert.equal(assess(scan,{supportsPresent:true,allowDx11:true}).code,'ERR_NO_DLSS');
+});

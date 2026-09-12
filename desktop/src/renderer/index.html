@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' file: data:; script-src 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DLSS 5 AI 超分管理器</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="workspace-layout.css">
+  <link rel="stylesheet" href="game-page.css">
+  <link rel="stylesheet" href="compatibility-panel.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><img src="app-icon.png" alt=""></div>
+        <div><h1 id="brandName">DLSS 5 AI 超分</h1><p id="brandEdition">装机宅版</p></div>
+      </div>
+      <nav>
+        <button class="nav active" data-view="games"><span class="nav-icon nav-icon-games" aria-hidden="true"></span>游戏</button>
+        <button class="nav" data-view="hoyo"><span class="nav-icon nav-icon-hoyo" aria-hidden="true"></span>米哈游游戏</button>
+        <button class="nav" data-view="repair"><span class="nav-icon nav-icon-repair" aria-hidden="true"></span>维护</button>
+        <button class="nav" data-view="addons"><span class="nav-icon nav-icon-addons" aria-hidden="true"></span>组件管理</button>
+        <button class="nav" data-view="settings"><span class="nav-icon nav-icon-settings" aria-hidden="true"></span>设置</button>
+      </nav>
+      <div class="sidebar-foot">
+        <p id="authorText">by 野生的装机宅</p>
+        <button class="text-link" id="bilibiliBtn">Bilibili 主页 ↗</button>
+        <div class="community-note" aria-label="项目说明"><span>用爱发电</span><span>不要付费</span></div>
+        <button class="text-link hidden" id="qqBtn">加入交流群</button>
+        <button class="text-link hidden" id="updateBtn">更新与公告 ↗</button>
+        <small id="versionText"></small>
+      </div>
+    </aside>
+
+    <main>
+      <header class="titlebar">
+        <div class="page-title"><h2 id="pageTitle">我的游戏</h2><p id="pageSubtitle">选择游戏，确认兼容性后安装</p></div>
+        <div class="title-actions">
+          <button class="window-button" id="minBtn" aria-label="最小化">—</button>
+          <button class="window-button close" id="closeBtn" aria-label="关闭">×</button>
+        </div>
+      </header>
+
+      <section class="view active" id="view-games">
+        <div class="library-header"><div><h3>游戏库</h3><p class="summary" id="gameSummary"></p></div><div class="library-actions"><button class="button primary" id="addGameBtn">添加游戏</button><button class="button subtle" id="addExeBtn">选择 EXE</button><button class="button subtle" id="refreshBtn">重新扫描</button></div></div>
+        <div class="notice hidden" id="hardwareNotice"></div>
+        <div class="notice hidden" id="payloadNotice"></div>
+        <div class="toolbar-row">
+          <div class="search"><span>⌕</span><input id="searchInput" placeholder="搜索游戏" autocomplete="off"></div>
+          <select id="gameFilter" aria-label="筛选游戏"><option value="all">全部游戏</option><option value="installed">已安装</option><option value="supported">可安装</option><option value="unsupported">暂不支持</option></select>
+        </div>
+        <div class="game-list" id="gameList"></div>
+        <div class="empty hidden" id="emptyState">
+          <h3>还没有找到游戏</h3>
+          <p>先自动扫描 Steam、Epic、GOG；也可以选择游戏文件夹或实际运行 EXE。</p>
+          <button class="button primary" id="emptyAddBtn">添加游戏</button>
+        </div>
+      </section>
+
+      <section class="view" id="view-game-detail" aria-label="游戏详情"></section>
+
+      <section class="view" id="view-hoyo" aria-label="米哈游游戏">
+        <div id="hoyoWorkspace"></div>
+      </section>
+
+      <section class="view" id="view-repair">
+        <div class="panel repair-head">
+          <div><h3>检查一个游戏</h3><p>先核对文件与安装记录，再处理异常或恢复原文件。</p></div>
+          <select id="repairGameSelect" aria-label="选择要检查的游戏"></select>
+        </div>
+        <div class="panel diagnostics" id="diagnostics"></div>
+        <div class="repair-actions">
+          <button class="button primary" id="repairBtn">预览修复</button>
+          <button class="button" id="copyDiagBtn">复制诊断信息</button>
+        </div>
+        <div id="repairMaintenance" class="gp-inline" aria-label="当前游戏维护操作"></div>
+        <div class="panel feedback-panel">
+          <div class="section-heading"><div><h3>需要进一步排查</h3><p>保存精简反馈，保留错误原因和必要环境信息。</p></div><span class="badge">只保存到本机</span></div>
+          <div class="feedback-controls">
+            <select id="feedbackGameSelect" aria-label="选择反馈游戏"></select>
+            <label class="check-line"><input type="checkbox" id="feedbackIncludePaths"> 包含完整路径</label>
+            <button class="button" id="copyFeedbackBtn">复制反馈日志</button>
+            <button class="button primary" id="exportFeedbackBtn">保存反馈日志</button>
+          </div>
+          <div class="diagnostic-actions"><button class="button subtle" id="exportStartupBtn">导出管理器启动诊断</button><span class="section-caption">用于打不开窗口、启动失败或界面异常；无需选择游戏。</span></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-addons">
+        <div class="panel" id="componentLibraryPanel">
+          <h3>运行库与桥接组件</h3>
+          <p>RTX 20／30／40 共用一套 NR 运行库，RTX 50 使用单独运行库。导入和选择来源不会改动已安装游戏。</p>
+          <div class="control-row"><button class="button primary" id="importComponentBtn">导入组件包／DLL</button><button class="button" id="importComponentDirBtn">导入组件目录</button><button class="button" id="refreshComponentsBtn">刷新组件</button><button class="button" id="checkComponentUpdatesBtn">检查更新</button><button class="button" id="componentRuntimeHelpBtn">运行库下载说明</button></div>
+          <p id="componentLibraryMessage" class="config-note" role="status"></p>
+          <div id="componentLibraryRows"></div>
+          <div id="componentUpdateRows"></div>
+          <details><summary>选择输入桥配套</summary><div class="control-row"><select id="componentProviderSelect" aria-label="输入桥配套"></select><button class="button" id="selectComponentProviderBtn">用于后续安装</button></div><p id="componentProviderStatus" class="config-note"></p></details>
+          <details><summary>为游戏切换 DX11 桥接组件</summary><div class="control-row"><select id="componentGameSelect" aria-label="选择游戏"></select><select id="componentBridgeSelect" aria-label="选择桥接版本"></select><button class="button" id="applyBridgeComponentBtn">应用到此游戏</button></div><p id="componentBridgeStatus" class="config-note"></p></details>
+        </div>
+        <div class="component-sources-layout">
+        <div class="panel payload-source-panel">
+          <div class="payload-source-head"><div><h3>安装组件来源</h3><p>选择完整组件目录并记住路径，后续安装和修复使用这里的组件。</p></div><span class="badge" id="payloadSourceStatus">正在检查</span></div>
+          <div class="payload-source-location"><strong id="payloadSourceLabel">随程序提供</strong><span id="payloadSourcePath"></span></div>
+          <p class="config-note" id="payloadSourceDetail" role="status"></p>
+          <div class="payload-source-actions"><button class="button primary" id="choosePayloadSourceBtn">选择组件目录</button><button class="button" id="recheckPayloadSourceBtn">重新检查</button><button class="button subtle hidden" id="resetPayloadSourceBtn">使用随程序组件</button></div>
+          <p class="payload-source-feedback hidden" id="payloadSourceFeedback" role="status" aria-live="polite"></p>
+          <details class="payload-source-help"><summary>完整组件与更新包有什么区别？</summary><p>完整组件目录用于首次安装与修复，标准 OTA 或单个 addon 用于更新。这里选择的是安装文件来源；安装后的插件仍由游戏内 ReShade 加载。切换来源不会立即改动游戏，版本更新需按游戏应用并保留恢复记录。</p></details>
+        </div>
+        <div class="panel addon-intro">
+          <div>
+            <h3>导入核心更新</h3>
+            <p>标准 OTA 会一起校验核心和配套组件；单个 addon 只更新核心。DX11 的兼容桥接按 API 自动部署，DX12 保留所选核心及共用组件。</p>
+            <div class="config-actions addon-actions"><button class="button" id="importAddonBtn">选择 OTA / addon 文件</button></div>
+          </div>
+          <div class="addon-drop" id="addonDropZone">把标准 OTA .zip 或 .addon64 拖到这里</div>
+        </div>
+        </div>
+        <div class="panel default-core-panel"><div><h3>新安装默认核心</h3><p id="addonVersionNote">用于新安装；已安装游戏保留自己的版本。</p></div><select id="addonVersionSelect" aria-label="新安装默认核心版本"></select></div>
+        <div class="panel">
+          <div class="addon-list-head"><h3>可用版本</h3><span class="muted" id="addonListHint"></span></div>
+          <div class="addon-list" id="addonVersionList"></div>
+        </div>
+        <details class="panel addon-guide">
+          <summary>版本选择与兼容说明</summary>
+          <div class="addon-guide-head">
+            <div><h3>0.3 稳定基线，0.4 Beta</h3><p>核心版本与管理器版本分别记录。实验分支的构建结果不能代替具体游戏验证，实际可用版本以上方组件目录为准。</p></div>
+            <span class="addon-guide-tip">按游戏选择与回退</span>
+          </div>
+          <div class="addon-guide-grid">
+            <article class="addon-guide-card"><span class="addon-guide-version">0.1</span><h4>先增强，再交给游戏超分</h4><p>游戏以 1440p 渲染 → NR 增强 → 游戏自己的 DLSS SR → 4K。</p><small>NR 处理 1440p；放大到 4K 仍由游戏原生 DLSS SR 负责。</small><b>第一次证明“先 AI 增强，再超分”可以跑。</b></article>
+            <article class="addon-guide-card"><span class="addon-guide-version">0.2</span><h4>把增强结果合回原图</h4><p>NR 处理后，把变化合回原始画面，再交给游戏原生 SR。</p><small>仍以 1440p 做 NR，重点解决 HDR、颜色和合成问题。</small><b>开始处理画面合成和 HDR 兼容。</b></article>
+            <article class="addon-guide-card"><span class="addon-guide-version">0.3</span><h4>让 NR→SR 更稳定</h4><p>仍是“NR → 游戏原生 SR”，但迁移 NR 效果的过程更稳。</p><small>NR 处理 1440p；最终放大到 4K 由游戏原生 SR 负责。</small><b>NR→SR 开始真正工程化、稳定化。</b></article>
+            <article class="addon-guide-card featured"><span class="addon-guide-version">Beta0.4</span><h4>NR 可以单独用更低分辨率</h4><p>游戏保留 1440p → 额外缩一份 1080p 给 NR → AI 修改贴回 1440p → 游戏原生 SR → 4K。</p><small>NR 实际处理 1080p，和游戏自己的渲染分辨率解耦。</small><b>核心飞跃：降低 NR 成本，同时保留游戏原生超分。</b></article>
+          </div>
+          <p class="addon-guide-footer">当前 NR 安装路线要求 64 位及已有普通 DLSS；DX11 需要配套桥接，DX12 直接使用核心。Vulkan、DX9/DX10/OpenGL 等仍需后续兼容实现，界面可选不代表已经支持。</p>
+        </details>
+      </section>
+
+      <section class="view" id="view-settings">
+        <div class="workspace-intro"><h3>管理器偏好</h3><p>游戏画面参数和核心版本在各自页面设置。</p></div>
+        <div class="panel settings-panel">
+          <h3>扫描范围</h3>
+          <label class="setting-row">
+            <div><strong>扫描本机其他游戏目录</strong><p>默认关闭，开启后会寻找常见 Games / Repacks 等目录。</p></div>
+            <input type="checkbox" id="scanDrivesToggle">
+          </label>
+          <div class="setting-row">
+            <div><strong>手动添加游戏库</strong><p>选择一个包含多个游戏的上级目录。</p></div>
+            <button class="button" id="addFolderBtn">添加目录</button>
+          </div>
+          <div class="setting-row">
+            <div><strong>显卡组件匹配</strong><p>RTX 20 / 30 / 40 使用 RTX40 兼容组件，RTX 50 使用 RTX50 组件；未知型号不会强行安装。</p></div>
+            <b id="settingsHardware">自动识别</b>
+          </div>
+          <div class="setting-row">
+            <div><strong>恢复与卸载</strong><p>按恢复记录核对原文件；遇到外部改动会保留现场并提示，不覆盖未知插件。</p></div>
+            <b>原文件备份 + 恢复记录</b>
+          </div>
+        </div>
+        <div class="panel settings-panel startup-panel" id="startupSettings" aria-labelledby="startupSettingsTitle">
+          <h3 id="startupSettingsTitle">启动与权限</h3>
+          <div class="setting-row"><div><strong>本次启动方式</strong><p>正常启动保留默认沙箱，兼容入口仅用于临时排障。</p></div><b id="startupMode">正在读取…</b></div>
+          <div class="setting-row"><div><strong>管理器权限</strong><p>浏览界面无需管理员权限。只有操作受保护目录或驱动设置时，才可能需要提权。</p></div><b id="startupPrivilege">正在读取…</b></div>
+          <p class="startup-mode-note" id="startupModeNote" hidden></p>
+          <div class="startup-actions"><button class="button" id="startupRefreshBtn" type="button">刷新状态</button><button class="button" id="startupOperationRecoveryBtn" type="button" hidden disabled>恢复已结束的一次性操作</button></div>
+          <p class="startup-message" id="startupMessage" role="status" aria-live="polite"></p>
+        </div>
+        <details class="panel settings-panel product-information">
+          <summary>关于管理器 <span id="settingsVersion"></span></summary>
+          <div class="info-row"><span>核心版本</span><b>按游戏管理 · 0.3 稳定 / 0.4 Beta</b></div>
+          <div class="info-row"><span>作者</span><b id="settingsAuthor">野生的装机宅</b></div>
+          <div class="info-row"><span>上游基础</span><b>DLSS5-Swapper (MIT)</b></div>
+          <div class="info-row"><span>游戏内设置</span><b>继续使用 ReShade Overlay</b></div>
+        </details>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <div class="modal hidden" id="gamePickerModal">
+    <div class="modal-card game-picker-card">
+      <h3>确认添加游戏</h3>
+      <p id="gamePickerHint"></p>
+      <div class="game-picker-path" id="gamePickerPath"></div>
+      <div class="game-candidate-list" id="gameCandidateList"></div>
+      <div class="game-picker-form">
+        <label><span>游戏名称</span><input id="gameNameInput" maxlength="160" placeholder="自动识别，可修改"></label>
+        <div class="game-icon-editor">
+          <div class="game-icon-preview" id="gameIconPreview"><span>?</span></div>
+          <div><strong>游戏图标</strong><p>默认使用所选 EXE 的图标，也可以手动选择 ICO/EXE/DLL。</p><button class="button" id="chooseGameIconBtn" type="button">选择图标</button></div>
+        </div>
+      </div>
+      <div class="modal-actions"><button class="button" id="gamePickerCancel" type="button">取消</button><button class="button primary" id="confirmGameBtn" type="button">确认添加</button></div>
+    </div>
+  </div>
+  <div class="modal hidden" id="modal">
+    <div class="modal-card">
+      <h3 id="modalTitle"></h3>
+      <p id="modalBody"></p>
+      <label class="modal-input-line hidden" id="renameGameLine"><span>游戏名称</span><input id="renameGameInput" maxlength="160" autocomplete="off" spellcheck="false"></label>
+      <label class="check-line hidden" id="removeSettingsLine"><input type="checkbox" id="removeSettingsCheck"> 同时删除个人参数设置</label>
+      <div class="modal-actions"><button class="button" id="modalCancel">取消</button><button class="button danger" id="modalConfirm">确认</button></div>
+    </div>
+  </div>
+  <script src="../shared/api-resolution.js"></script>
+  <script src="action-flow.js"></script>
+  <script src="game-detail-tabs.js"></script>
+  <script src="launch-settings-ui.js"></script>
+  <script src="startup-ui.js"></script>
+  <script src="game-maintenance-ui.js"></script>
+  <script src="game-page-ui.js"></script>
+  <script src="compatibility-panel.js"></script>
+  <script src="compatibility-integration.js"></script>
+  <script src="hoyo-page-ui.js"></script>
+  <script src="renderer.js"></script>
+  <script src="component-library-ui.js"></script>
+</body>
+</html>

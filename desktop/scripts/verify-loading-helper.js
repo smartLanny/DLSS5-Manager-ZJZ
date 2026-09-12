@@ -1,0 +1,15 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { getBitness } = require('../src/core/pe');
+const { verifyExecutable } = require('./verify-execution-level');
+const root = path.resolve(__dirname, '..'), directory = path.join(root, 'resources/loading-helper');
+const digest = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const metadata = JSON.parse(fs.readFileSync(path.join(directory, 'component.json'), 'utf8'));
+if (metadata.id !== 'dlss5-loading-helper' || metadata.version !== 1 || metadata.file !== 'dlss5-load-helper.exe' || metadata.protocol !== 1) throw new Error('Unexpected loading helper metadata.');
+const file = path.join(directory, metadata.file), stat = fs.lstatSync(file);
+if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || getBitness(file) !== 64 || digest(file) !== metadata.sha256) throw new Error('Loading helper binary identity mismatch.');
+if (digest(path.join(root, 'src/native/load-helper.cpp')) !== metadata.sourceSha256) throw new Error('Rebuild the loading helper after its source changes.');
+if (!verifyExecutable(file, 'asInvoker').ok) throw new Error('Loading helper must run as the ordinary user.');
+console.log(`Loading helper verified: x64 / asInvoker / ${metadata.sha256}`);

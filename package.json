@@ -1,7 +1,7 @@
 {
   "name": "dlss5-manager-zjz",
-  "version": "0.1.0-shell",
-  "description": "装机宅 DLSS5 Manager 开源壳：游戏发现、配方安装、DLC pin/更新（MIT）",
+  "version": "0.5.0-beta.1",
+  "description": "装机宅 DLSS5 Manager：桌面管理器、组件库与共享安装预检",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -11,12 +11,15 @@
     "dlss5-manager-zjz": "./dist/src/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-desktop-contract.mjs",
     "start": "node dist/src/index.js",
     "pins": "node dist/src/index.js pins",
     "check:updates": "node dist/src/index.js check",
     "test": "tsc -p tsconfig.json && node --test dist/test/*.test.js",
-    "check": "npm test && node scripts/assert-no-payloads.mjs"
+    "check": "npm run build && npm test && node scripts/assert-no-payloads.mjs",
+    "start:desktop": "npm run build && npm --prefix desktop start",
+    "test:desktop": "npm run build && npm --prefix desktop test",
+    "build:desktop": "npm run build && npm --prefix desktop run build"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

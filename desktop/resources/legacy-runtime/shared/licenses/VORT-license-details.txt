@@ -1,0 +1,9 @@
+VORT motion estimation includes files with two different licenses.
+The root project is MIT (see VORT-root-MIT.txt).
+Includes/vort_MotionVectors.fxh is CC BY-NC 4.0, not MIT.
+Original authors: Jakob Wapenhensch (Jak0bW), Pascal Gilcher / Marty McFly.
+Modifications by: Vortigern.
+License: https://creativecommons.org/licenses/by-nc/4.0/
+Source: https://github.com/vortigern11/vort_Shaders/tree/b410b9f0c0fbb83c8cb42164aaf1655fab386f4a
+Original attribution and license headers are retained in every shader.
+This package is provided for noncommercial use.

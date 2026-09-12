@@ -1,6 +1,10 @@
 node_modules/
 dist/
 coverage/
+deliveries/
+.packaging-stage/
+desktop/.packaging-stage/
+desktop/build/
 *.log
 .DS_Store
 .env
@@ -19,3 +23,5 @@ nvngx*
 signing-keys/
 cache/
 downloads/
+manager-distribution-staging*.json
+!docs/MANAGER-DISTRIBUTION-STAGING.example.json

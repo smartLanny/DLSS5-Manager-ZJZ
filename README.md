@@ -1,38 +1,61 @@
-# DLSS5-Manager-ZJZ
+# DLSS5 Manager ZJZ
 
-装机宅 DLSS5 **开源安装器 / 管理器壳**（MIT）。
+这是装机宅 DLSS5 Manager 的公开集成仓库：根目录保留 MIT CLI / 配方壳，`desktop/` 承载迁入的 Electron Manager 源码。两者共用 pin、组件边界和拆包策略，源码树不提交 NVIDIA runtime、Addon 成品或签名材料。
 
-## 边界
-- **本仓（MIT）**：游戏发现、配方安装/卸载、DLC pin 清单、可检查/下载更新（类 RHI）、失败可读。
-- **Core**：`dlss5-nr-before-sr-lab` 发版（MIT 源码；**不**塞 NVIDIA DLL）。
-- **专有面**：签名发行、防再分发、部分 UI/米哈游专属能力可仍在私有 Manager 发行线（见既有 `dlss5-manager` ARR）。
-- **DLC（外链）**：Bridge / Feeder / MFG / nvngx·SL 等二进制 — 只维护 manifest + pin + 更新源，**不**进本仓源码树。
+## 发行边界
 
-## 当前 pin（摘要）
-- **MFG Unlock：优先/默认 0.9**（`mavismmg/MFGAdaUnlock-RenoDx`）；0.7 仅回滚。
-- **Bridge**：可读 pin（BG3 → 1.4.11；勿无脑 1.4.13-pre）。见 lab #224。
-- **dlssnr**：场上 310.8.SF-v2，无公开更新则别乱动。
+- **基础 Manager 包**：Electron UI、默认 Core、ReShade、`nrchain_nvngx.dll` 等小型配套、MFG Unlock 0.9 登记与安装资源。
+- **RTX20–40 / RTX50 运行库包**：只在本地离线整合包中分别放一份 `nvngx_dlssnr.dll`；基础包不嵌入大型 NVIDIA DLL，用户也可以从完整外部组件目录导入。
+- **小组件 staging**：Bridge、Feeder、host、Vulkan 只有在外部 staging 清单逐文件提供 bytes/SHA-256 后才会进入 `resources/components/`；大 NR runtime 永远沿用独立运行库包。
+- **Vulkan layer**：基础包保留原 `resources/vulkan-reshade/` 的四文件 ReShade layer，供动态 Vulkan provider 和 Bridge 复用 HKCU 激活；旧 Vulkan Core/chain/NR 运行池不随包恢复。
+- **DX11 Bridge**：当前 staging 已携带 `1.4.13-pre7` 的 manager-core-compat 候选包及 importer manifest；包内记录为 `candidate-staged`，独立游戏兼容验证完成前不会把它宣称为已兼容。
+- **旧 Manager 源码**：迁移快照已冻结；这不冻结仍在活跃 Core 任务中的组件产物。原始迁移清单保持不变，增量记录见 [docs/MANAGER-MIGRATION-INCREMENTAL.md](docs/MANAGER-MIGRATION-INCREMENTAL.md)。
 
-## 并行
-- 接入点兼容（Reno 多 hook）→ lab **#190**（勿把仓乱堆进 #190）。
-- 安装器 P0：mgr **#27/#28**（提权误拦 / 大 EXE digest）→ lab PR **#251**。
+二进制输入通过仓库外的 staging 清单提供，构建只复制清单白名单。交付目录默认位于仓库旁的 `deliveries/`，不会进入 Git。
 
-## 话术
-先壳 → 按游戏拉桥/MFG/Core DLC；禁止再推 800MB+ 全家桶。
+## CLI 壳
 
-## 本仓骨架
-
-Node 22 + TypeScript CLI。不嵌入 DLC 二进制。公开 ARR `dlss5-manager` 只作概念对齐，不拷源码。
+根目录是 Node 22 + TypeScript CLI，负责游戏发现、配方 dry-run、DLC pin 和更新元数据检查：
 
 ```sh
 npm install
 npm run check
 node dist/src/index.js pins
 node dist/src/index.js check
-node dist/src/index.js discover
-node dist/src/index.js install bg3
 ```
 
-`check --live` 才会访问更新源的 Releases JSON；默认只说明将如何 GET。架构与边界见 [ARCHITECTURE.md](ARCHITECTURE.md)，pin / 节奏见 [docs/DLC-PIN.md](docs/DLC-PIN.md)，可选模块见 [docs/OPTIONAL-MODULES.md](docs/OPTIONAL-MODULES.md)。
+默认 `check` 只输出 FetchPlan；只有显式 `--live` 才访问 Releases 元数据。CLI 不加载 Core/Feeder/NVIDIA DLL，也不执行 GPU 或游戏安装。
 
-**本仓不宣称 mgr #27 / #28 已修**（仍在 lab PR #251，待 Windows 复测）。
+## Electron Manager 打包
+
+先准备仓库外 staging 清单，格式见 [docs/MANAGER-DISTRIBUTION-STAGING.example.json](docs/MANAGER-DISTRIBUTION-STAGING.example.json)。清单必须指定活动 Core 版本、授权的 RTX40/RTX50 runtime 文件和已批准的 MFG 0.9 SHA-256；D13/D14 Core 会被入口拒绝。
+
+```powershell
+# 先在仓库根目录准备共享 CLI/Desktop contract 生成所需依赖
+npm ci
+cd desktop
+npm install
+$env:DLSS5_MANAGER_STAGING = 'C:\path\manager-distribution-staging.json'
+npm run verify:staging
+npm run build:base
+npm run build:offline
+```
+
+`build:base` 的 stage 只含小组件，`build:offline` 才复制 RTX40 与 RTX50 两个大型 runtime。两种构建都不复制 Feeder/Vulkan/legacy 中的重复 runtime；可选路线缺少资源时由 Manager 显示未准备状态。实际构建使用动态 Electron Builder 配置，避免把历史 `extraResources` 全量列表重新带入包。
+
+根目录检查：
+
+```powershell
+npm run check
+node scripts/assert-no-payloads.mjs
+```
+
+检查会正确处理 Windows 路径，跳过 `node_modules`、release、deliveries 和合法的 ignored stage；源码和已跟踪文件仍禁止 DLL、Addon、NVIDIA runtime 与私钥材料。
+
+运行库包、手动导入和 VC++ 修复说明见 [docs/RUNTIME-PACKS.md](docs/RUNTIME-PACKS.md)。
+
+## 组件 pin
+
+权威 pin 见 [config/pins.json](config/pins.json) 和 [docs/DLC-PIN.md](docs/DLC-PIN.md)。MFG 默认 0.9、0.7 仅回滚；BG3 Bridge 继续固定 1.4.11，禁止把 latest 或 1.4.13-pre 当作兼容结论。Bridge/Feeder/Core 的真实接口与游戏验收仍由相应组件任务负责。
+
+架构和仓库边界见 [ARCHITECTURE.md](ARCHITECTURE.md)，打包拆分与验收细节见 [docs/MANAGER-PACKAGING.md](docs/MANAGER-PACKAGING.md)。

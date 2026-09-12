@@ -1,0 +1,28 @@
+DLSS 5 AI 超分管理器 0.4.9-beta.1 · D14 Core 测试版
+
+本版把内置的 0.5 测试 Core 更新为 beta0.5-dline14，来源为
+codex/050-corefix8-integration-20260911 的 build-r5 验证产物。
+完整 ZIP 请全部解压后运行；便携 EXE 可单独运行。升级前正常退出旧管理器。
+
+Core 测试入口
+在普通游戏或米哈游设置的“增强版本”中可选择：
+  0.5 D14 · 测试
+  0.4.7 Corefix8 · 测试
+它们只更新已有的原生 DX12 安装，使用各自配套的 Core 和 nrchain。
+新安装仍默认使用 0.4.7beta；先完成 DX12 基础安装，再预览切换测试版本。
+切换前退出游戏。现有 NR 配置、ReShade、NVIDIA Runtime 和游戏自带 DLSS 保留。
+D14 与 Corefix8 都不带 DX11 carrier，不用于 DX11、Vulkan 或 Feeder 配套。
+
+D14 Core 来源与校验
+中文 Core SHA-256：d96726c3f74f90c1309994e6f4e7c3825907fc35b348ea53fb188b4373810290
+nrchain SHA-256：46041a5ff91ae2fd907e310d132aabc3c4a1ecd48dace511b8672909d5d9c2fb
+INI SHA-256：84cb54bea2d2fcdd0ede005741d413a80f082d960752be1ae8912c28cd0204a8
+源码提交：1cabf797a24256f1b40f5653a0dcdda9f3f97c14
+来源清单 SHA-256：da0dd185085e0f3992fa23d5808fe9ddd79fab73511327c84dfc0f45c4ab89eb
+
+现有 D3D12 安装才能应用 Core 更新。切换保留已有 INI，不会把内置模板覆盖到游戏。
+DX11 carrier 仍只与已验证的 0.4.7beta Core 配套，D14 不自动混用。
+
+验证边界
+文件和 Manager 操作流程已按本地校验；D14 的真实游戏画面、NVIDIA NR 运行和性能仍需单独验收。
+没有据此声明 DX11、Vulkan、Feeder 或任何具体游戏的兼容性。

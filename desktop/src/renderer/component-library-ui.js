@@ -1,0 +1,92 @@
+'use strict';
+(function () {
+  const $ = id => document.getElementById(id), message = $('componentLibraryMessage');
+  const kindLabel = kind => ({ 'nr-runtime':'NR 运行库', core:'增强核心', bridge:'图形桥', feeder:'输入桥', mfg:'多帧生成组件', host:'跨位数宿主' })[kind] || kind;
+  const unwrap = result => { if (result?.ok === false) throw new Error(result.error?.message || '组件操作失败'); return result?.ok === true ? result.value : result; };
+  async function refreshComponents() {
+    const data = unwrap(await window.manager.listComponents());
+    if (data.warnings?.length) message.textContent = data.warnings.join('；');
+    const host = $('componentLibraryRows'); host.replaceChildren();
+    for (const item of data.packages.filter(row => !row.internal)) {
+      const row = document.createElement('div'); row.className = 'control-row';
+      const text = document.createElement('span');
+      text.textContent = `${kindLabel(item.kind)} · ${item.version} · ${item.variant || ''}${item.requiresAdapter ? '（上游原包已缓存，需导入匹配的输入适配包）' : item.validation === 'blocked' ? '（暂不可应用）' : item.validation === 'candidate' ? '（待验证候选）' : ''}`;
+      row.append(text);
+      if (item.kind === 'nr-runtime') {
+        const button = document.createElement('button'); button.className = 'button'; button.textContent = '用于后续安装'; button.disabled = item.validation === 'blocked';
+        button.onclick = () => perform(async () => { sourceChanged(unwrap(await window.manager.activateComponentRuntime(item.id))); return '运行库来源已更新。请在游戏卡片中应用；现有游戏未修改。'; }); row.append(button);
+      }
+      if (item.kind === 'core') {
+        const button = document.createElement('button'); button.className = 'button'; button.textContent = '作为安装候选'; button.disabled = item.validation === 'blocked';
+        button.onclick = () => perform(async () => { sourceChanged(unwrap(await window.manager.activateComponentCore(item.id))); return 'Core 候选已加入安装来源，现有游戏未修改。'; }); row.append(button);
+      }
+      host.append(row);
+    }
+    if (!data.packages.length) { const p = document.createElement('p'); p.textContent = '尚未导入运行库。请选择与你的显卡对应的运行包或已识别 DLL。'; host.append(p); }
+    const downloads = $('componentUpdateRows'); downloads.replaceChildren();
+    for (const item of data.catalog.packages.filter(p => p.downloadUrl && !data.packages.some(row => row.id === p.id))) {
+      const button = document.createElement('button'); button.className = 'button'; button.textContent = `下载 ${kindLabel(item.kind)} ${item.version} 到缓存`;
+      button.onclick = () => perform(async () => { unwrap(await window.manager.downloadComponent(item.id)); return '组件已下载并校验，未修改游戏。'; }); downloads.append(button);
+    }
+    const selectedGame = $('componentGameSelect').value;
+    const games = unwrap(await window.manager.listGames()); $('componentGameSelect').replaceChildren();
+    for (const game of games.filter(g => (g.operationApi?.effectiveApi || g.chosen?.apiResolution?.api) === 'dx11')) {
+      const option = document.createElement('option'); option.value = game.id; option.textContent = game.name; $('componentGameSelect').append(option);
+    }
+    if ([...$('componentGameSelect').options].some(o => o.value === selectedGame)) $('componentGameSelect').value = selectedGame;
+    await refreshBridgeChoices();
+    const providers = unwrap(await window.manager.inspectComponentProviders()), select = $('componentProviderSelect'); select.replaceChildren();
+    const none = document.createElement('option'); none.value = ''; none.textContent = '使用随包配套'; select.append(none);
+    for (const provider of providers.packages) {
+      const option = document.createElement('option'); option.value = provider.id; option.disabled = !provider.selectable;
+      option.textContent = `${provider.version} · ${(provider.gameApis || []).join('/')} ${provider.reason || '（待游戏验证）'}`; select.append(option);
+    }
+    select.value = providers.selectedId || '';
+    $('componentProviderStatus').textContent = providers.reason || '新 Core、输入桥与运行库按接口配套；已有游戏保留原版本，可在游戏设置中先恢复后切换。MFG 版本在游戏的补帧组件设置中切换。';
+  }
+  function sourceChanged(result) {
+    if (result?.state) window.dispatchEvent(new CustomEvent('manager-components-changed', { detail: result.state }));
+  }
+  async function refreshBridgeChoices() {
+    const game = $('componentGameSelect').value, select = $('componentBridgeSelect'); select.replaceChildren();
+    $('applyBridgeComponentBtn').disabled = true;
+    if (!game) { $('componentBridgeStatus').textContent = '请先在游戏库添加 DX11 游戏。'; return; }
+    const choices = unwrap(await window.manager.componentChoices(game));
+    for (const bridge of choices.bridges) {
+      const option = document.createElement('option'); option.value = bridge.id;
+      option.textContent = `${bridge.label}${bridge.installed ? '（当前）' : ''}${!bridge.compatible ? '（接口不匹配）' : !bridge.ready ? '（未导入）' : bridge.runtimeVerified ? '' : '（游戏待验）'}`;
+      option.disabled = !bridge.compatible || !bridge.ready; select.append(option);
+    }
+    const current = choices.bridges.find(b => b.installed && b.compatible && b.ready) || choices.bridges.find(b => b.compatible && b.ready);
+    if (current) select.value = current.id;
+    $('applyBridgeComponentBtn').disabled = !current;
+    $('componentBridgeStatus').textContent = '切换会按现有安装事务备份、校验和恢复。请先关闭游戏；同时只启用一个桥接器。';
+  }
+  async function perform(action) {
+    const controls = [...document.querySelectorAll('#componentLibraryPanel button')].map(button => ({button, disabled:button.disabled})); controls.forEach(({button}) => button.disabled = true);
+    message.textContent = '正在校验组件文件…';
+    try { message.textContent = await action(); await refreshComponents(); }
+    catch (error) { message.textContent = error.message; }
+    finally { controls.forEach(({button,disabled}) => button.disabled = disabled); $('applyBridgeComponentBtn').disabled = !$('componentBridgeSelect').selectedOptions[0] || $('componentBridgeSelect').selectedOptions[0].disabled; }
+  }
+  const importSelected = directory => perform(async () => { const value = unwrap(await window.manager.pickComponent(directory)); return value ? '组件已导入缓存，未修改游戏。' : '已取消导入。'; });
+  $('importComponentBtn').onclick = () => importSelected(false);
+  $('importComponentDirBtn').onclick = () => importSelected(true);
+  $('refreshComponentsBtn').onclick = () => perform(async () => '组件列表已刷新。');
+  $('componentGameSelect').onchange = () => refreshBridgeChoices().catch(error => { message.textContent = error.message; });
+  $('applyBridgeComponentBtn').onclick = () => perform(async () => {
+    unwrap(await window.manager.applyBridgeComponent($('componentGameSelect').value, $('componentBridgeSelect').value));
+    return '此游戏的桥接设置已应用；运行效果请进游戏核对。';
+  });
+  $('checkComponentUpdatesBtn').onclick = () => perform(async () => {
+    const results = unwrap(await window.manager.checkComponentUpdates());
+    return results.map(row => `${kindLabel(row.kind)}：${row.error || row.releases.map(r => r.version + (r.preview ? ' 预览' : '')).join('／')}`).join('；') + '。上游新版需通过配套检查后应用，检查更新不会改动游戏。';
+  });
+  $('componentRuntimeHelpBtn').onclick = () => window.manager.openExternal('runtimePacksUrl');
+  $('selectComponentProviderBtn').onclick = () => perform(async () => {
+    unwrap(await window.manager.selectComponentProvider($('componentProviderSelect').value || null));
+    window.dispatchEvent(new CustomEvent('manager-components-changed'));
+    return '输入桥候选已保存，已有游戏保持当前配套。';
+  });
+  refreshComponents().catch(error => { message.textContent = error.message; });
+})();

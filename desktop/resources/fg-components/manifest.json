@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "id": "rtx40-mfg-v1.2-ual-v9.7.4",
+  "protocol": 11,
+  "files": {
+    "core": {
+      "file": "RTX40MFGCore.dll",
+      "sha256": "9ae8702ace7bedc13dc050b8fc6acbb09ee81fca8b04f35b1c68f6910c852808"
+    },
+    "asi": {
+      "file": "RTX40MFG.asi",
+      "sha256": "fb03c9e287c3adc052f4202ab3218eeda05b1e572cc4bdf1a4d3e0ed32b48b1c"
+    },
+    "overlay": {
+      "file": "RTX40MFG-UI.addon64",
+      "sha256": "caec2ec46bba6fdae9ce0f525028e55d54df3b86d3bbffae820007ae9c26b010"
+    },
+    "ual": {
+      "file": "ual-x64.dll",
+      "sha256": "031a3e5576d91dce1e438d36b9a3d462c7334ab4791990a8ff1e3ddc0e132daf"
+    },
+    "ualConfig": {
+      "file": "global.ini",
+      "sha256": "6ee312dcdfb605ff557f8a27f9ca5a502d6fdcd3e59404ce24874c25ea67c63d"
+    }
+  },
+  "ualProxyNames": [
+    "dinput8.dll",
+    "version.dll",
+    "winmm.dll"
+  ],
+  "sources": [
+    {
+      "name": "RTX40MFG-Unlock v1.2",
+      "url": "https://github.com/dashdogy/RTX40MFG-Unlock/releases/download/v1.2/Universal-RTX-40-MFG-Unlock-v1.2.zip",
+      "sha256": "137869ecf44099ff51e90926011a44566a5c592b65bd0551ffa67cf423bc6429"
+    },
+    {
+      "name": "Ultimate ASI Loader v9.7.4 x64",
+      "url": "https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/download/v9.7.4/Ultimate-ASI-Loader-NoPDB_x64.zip",
+      "sha256": "e5860e7d9a1805267535b65749575b5e406cc6ea3325c7392189c578815045d1"
+    }
+  ]
+}

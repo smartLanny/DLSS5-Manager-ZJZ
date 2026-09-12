@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "id": "dlss5-loading-helper",
+  "file": "dlss5-load-helper.exe",
+  "sha256": "bba561676573d68e24a4b92188ddee3c9bacdda5f76c2d5fe5d656a2ef3ac764",
+  "architecture": "x64",
+  "sourceSha256": "73d9f08a0668fd7ad15c394065be1535f7fd1c9fb87a768474ba6894d6977651",
+  "protocol": 1,
+  "policy": {
+    "privilege": "ordinary-default/explicit-same-user-admin",
+    "elevatedRoute": "hoyoshade-only",
+    "cleanupGameFiles": false,
+    "terminateGame": false,
+    "protectionBypass": false
+  },
+  "verification": {
+    "compiled": true,
+    "nativeFixture": true,
+    "elevatedNativeFixture": true,
+    "elevated": {
+      "checkedAt": "2026-09-10T12:26:17.794Z",
+      "reportSha256": "ea750686a9dd6ade0b1cdc338381df04c42e1f48b445361f6c7d4adc537a00aa"
+    },
+    "realGame": false,
+    "scope": "ordinary-user-owned-fixtures-only",
+    "checkedAt": "2026-09-10T12:29:21.945Z",
+    "reportSha256": "ef90bbb94aa94d4241bd5ed17d3472866c5f44eda51496bbbc9a6f12041811b5",
+    "testFiles": {
+      "test/loading-helper-native.test.js": "a35622c16b7908bae13c72c6b4f14fd262a8db12c68703522469074420e73e8e",
+      "test/loading-helper.test.js": "3486e836c8ffe17881e35844ce0b34d74080d10338fe827f9cec9516fb8df553",
+      "test/launch-session.test.js": "0630c9702e78b4b21ed62f39782877376271a3124c6c54a8866a77c2341ab949",
+      "test/runtime-verification.test.js": "47f8018fa4680a633870628ebaad7f3d2637cdc4810d66c3a42f59700907b566",
+      "test/fg-components-mfgunlock.test.js": "5238526345b25d03d5d084a1234d5b94a40c27babe4ebe8442e971a759c256b9"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "id": "hoyoshade-beta9-profile-v1",
+  "upstreamTag": "V3.0.0-Beta.9",
+  "sourceCommit": "23761f935444a78388c028fbfda921965177c453",
+  "sourceUrl": "https://github.com/DuolaD/HoYoShade/tree/23761f935444a78388c028fbfda921965177c453",
+  "referenceArchive": {
+    "name": "OpenHoYoShade-V3.0.0-Beta.9.zip",
+    "sha256": "ca982d326145b9b5e2f2c864fd484fa4ea098d731de6535c023678d5c8f99d77"
+  },
+  "loader": {
+    "name": "ReShade64.dll",
+    "version": "6.8.0",
+    "sha256": "0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7",
+    "source": "Same official full Add-on ReShade already provided by the Manager payload"
+  },
+  "adapter": "manager-owned-profile-and-loading-helper",
+  "policy": {
+    "firstInstall": "direct_hoyo",
+    "releaseCategory": "public",
+    "launchViaVerifiedLauncher": true,
+    "preserveExistingUserConfiguration": true,
+    "unknownAddons": "isolate-unless-explicitly-kept",
+    "confirmedConflicts": "isolate",
+    "upstreamInjectorExecuted": false,
+    "upstreamIniBuilderExecuted": false,
+    "unconditionalGameFileCleanup": false,
+    "terminateGame": false,
+    "protectionBypass": false
+  },
+  "runtimeVerified": false
+}

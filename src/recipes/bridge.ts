@@ -14,6 +14,7 @@ export interface BridgeDlc {
   gameArchitectures: GameArch[];
   consumerInterface: string;
   compatibleCoreBuilds: string[];
+  compatibilityPolicy?: "exact-build" | "interface";
   x64HostIncluded: boolean;
   licenseNoticeFiles: string[];
 }
@@ -26,6 +27,8 @@ export interface BridgeContext {
   core: { buildId: string; inputInterfaces: string[]; nativeD3D12: boolean };
   packages: BridgeDlc[];
   selectedVariant?: string;
+  allowPreview?: boolean;
+  intent?: "native-bridge" | "external-provider";
 }
 export interface BridgePlan {
   state: "not-requested" | "native" | "candidate" | "blocked";
@@ -74,7 +77,8 @@ export function planBridgeDlc(recipe: Recipe, input?: unknown): BridgePlan {
     return result("not-requested", "BRIDGE_NOT_REQUESTED", "桥接 DLC 未启用，保留原生路线/原图。");
   if (!record(input) || input.enabled !== true || !text(input.gameApi) || !APIS.has(input.gameApi) ||
       !text(input.architecture) || !ARCHES.has(input.architecture) ||
-      (input.nativeInputs !== "usable" && input.nativeInputs !== "absent"))
+      (input.nativeInputs !== "usable" && input.nativeInputs !== "absent" &&
+       !(input.nativeInputs === "unknown" && ["native-bridge", "external-provider"].includes(String(input.intent)))))
     return result("blocked", "BRIDGE_INPUT_UNKNOWN", "API、位数或原生输入证据不足；不猜测安装路线。");
   const core = input.core;
   if (!record(core) || !text(core.buildId) || !Array.isArray(core.inputInterfaces) ||
@@ -86,9 +90,9 @@ export function planBridgeDlc(recipe: Recipe, input?: unknown): BridgePlan {
 
   const interfaces = core.inputInterfaces;
   const coreBuild = core.buildId;
-  const component: BridgeComponent = input.nativeInputs === "usable" ? "bridge" : "feeder";
+  const component: BridgeComponent = input.intent === "native-bridge" ? "bridge" : input.intent === "external-provider" ? "feeder" : input.nativeInputs === "usable" ? "bridge" : "feeder";
   const pin = recipe.pins[component];
-  if (!version(pin) || (component === "bridge" && pin.startsWith("1.4.13-pre")))
+  if (!version(pin) || (/-[^+]*\b(?:pre|beta|alpha|rc)/i.test(pin) && input.allowPreview !== true))
     return result("blocked", "BRIDGE_PIN_REQUIRED", "所需桥接器必须使用已批准的固定版本，不能使用 latest/未准入候选。", component);
   if (recipe.gameId === "bg3" && component === "bridge" && pin !== "1.4.11")
     return result("blocked", "BRIDGE_GAME_PIN", "此配方已有 BG3 Bridge 1.4.11 固定要求，不由 DLC 目录提升版本。", component);
@@ -107,7 +111,8 @@ export function planBridgeDlc(recipe: Recipe, input?: unknown): BridgePlan {
       strings(p.gameApis) && p.gameApis.every(api => APIS.has(api)) && p.gameApis.includes(input.gameApi as GameApi) &&
       strings(p.gameArchitectures) && p.gameArchitectures.every(arch => ARCHES.has(arch)) && p.gameArchitectures.includes(input.architecture as GameArch) &&
       text(p.consumerInterface) && interfaces.includes(p.consumerInterface) &&
-      strings(p.compatibleCoreBuilds) && p.compatibleCoreBuilds.includes(coreBuild) &&
+      ((p.compatibilityPolicy === "interface" && Array.isArray(p.compatibleCoreBuilds)) ||
+       (strings(p.compatibleCoreBuilds) && p.compatibleCoreBuilds.includes(coreBuild))) &&
       typeof p.x64HostIncluded === "boolean" && (input.architecture !== "x86" || p.x64HostIncluded) &&
       strings(p.licenseNoticeFiles) && p.licenseNoticeFiles.every(noticePath);
   });
