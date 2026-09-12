@@ -80,6 +80,24 @@ function createExternalProviderPackages(options = {}) {
     }
     return result;
   }
+  function selectedFor(data, selection) {
+    const routes = selectedRoutes(data), api = selection?.api, architecture = selection?.architecture;
+    if (APIS.includes(api) && ARCHITECTURES.includes(architecture)) {
+      if (selection.loadingBackend) {
+        const exact = routeKey(selection);
+        if (exact && routes[exact]) return routes[exact];
+      } else {
+        const ids = [...new Set(Object.entries(routes)
+          .filter(([key]) => key.startsWith(`${api}|${architecture}|`)).map(([, id]) => id))];
+        if (ids.length === 1) return ids[0];
+        if (ids.length > 1) return null;
+      }
+      // Once an API has route-scoped selections, another architecture or
+      // backend must not inherit a package through the old API-wide field.
+      if (Object.keys(routes).some(key => key.startsWith(`${api}|`))) return null;
+    }
+    return data.selected.externalProviders?.[api] || (selectedByApi(data)[api] ?? null);
+  }
   function inventoryFileRow(data, file, expectedSha, label) {
     const absolute = path.resolve(root, file || '');
     if (!inside(root, absolute)) fail('EXTERNAL_PROVIDER_SOURCE', `${label}不在组件库存中。`);
@@ -303,9 +321,8 @@ function createExternalProviderPackages(options = {}) {
   }
   function load(input = {}) {
     const data = inventory(), selection = input.selection || input;
-    const api = selection.api || input.gameApi, exact = routeKey(selection);
-    const selected = input.id || input.providerId || (exact && selectedRoutes(data)[exact]) ||
-      (api ? data.selected.externalProviders?.[api] || selectedByApi(data)[api] : data.selected.externalProvider);
+    const selected = input.id || input.providerId || (selection.api || input.gameApi
+      ? selectedFor(data, { ...selection, api: selection.api || input.gameApi }) : data.selected.externalProvider);
     if (!selected) fail('EXTERNAL_PROVIDER_NOT_SELECTED', '尚未选择外部 Provider 配套。');
     const row = providerRows(data).find(value => value.id === selected);
     if (!row) fail('EXTERNAL_PROVIDER_SELECTION_INVALID', '已选 Provider 不在组件库存中，未回退到旧 Core。');
@@ -422,16 +439,7 @@ function createExternalProviderPackages(options = {}) {
   }
   function selectedId(selection) {
     const data = inventory();
-    if (selection && typeof selection === 'object') {
-      if (!selection.loadingBackend && APIS.includes(selection.api) && ARCHITECTURES.includes(selection.architecture)) {
-        const ids = [...new Set(Object.entries(selectedRoutes(data))
-          .filter(([key]) => key.startsWith(`${selection.api}|${selection.architecture}|`)).map(([, id]) => id))];
-        if (ids.length === 1) return ids[0];
-        if (ids.length > 1) return null;
-      }
-      const exact = routeKey(selection);
-      return exact && selectedRoutes(data)[exact] || data.selected.externalProviders?.[selection.api] || selectedByApi(data)[selection.api] || null;
-    }
+    if (selection && typeof selection === 'object') return selectedFor(data, selection);
     return selection ? selectedByApi(data)[selection] || null : data.selected.externalProvider || Object.values(selectedByApi(data))[0] || null;
   }
 
