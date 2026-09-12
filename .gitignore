@@ -1,0 +1,21 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.env
+.env.*
+
+# Never commit DLC / NVIDIA / addon payloads
+*.dll
+*.exe
+*.addon64
+*.dlss5pkg
+*.pdb
+nvngx*
+*.pem
+*.p12
+*.pfx
+signing-keys/
+cache/
+downloads/

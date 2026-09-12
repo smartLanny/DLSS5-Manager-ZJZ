@@ -19,3 +19,20 @@
 
 ## 话术
 先壳 → 按游戏拉桥/MFG/Core DLC；禁止再推 800MB+ 全家桶。
+
+## 本仓骨架
+
+Node 22 + TypeScript CLI。不嵌入 DLC 二进制。公开 ARR `dlss5-manager` 只作概念对齐，不拷源码。
+
+```sh
+npm install
+npm run check
+node dist/src/index.js pins
+node dist/src/index.js check
+node dist/src/index.js discover
+node dist/src/index.js install bg3
+```
+
+`check --live` 才会访问更新源的 Releases JSON；默认只说明将如何 GET。架构与边界见 [ARCHITECTURE.md](ARCHITECTURE.md)，pin / 节奏见 [docs/DLC-PIN.md](docs/DLC-PIN.md)，可选模块见 [docs/OPTIONAL-MODULES.md](docs/OPTIONAL-MODULES.md)。
+
+**本仓不宣称 mgr #27 / #28 已修**（仍在 lab PR #251，待 Windows 复测）。

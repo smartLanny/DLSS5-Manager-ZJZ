@@ -1,0 +1,24 @@
+# 可选模块（挂钩，不覆盖旧构建）
+
+这些能力在产品 Manager 里存在或计划存在。本 MIT 壳只留 **模块 id + 默认关闭 + 可读拒绝**，避免用旧发行包盖掉新壳。
+
+| id | 意图 | 默认 | 拒绝码 |
+| --- | --- | --- | --- |
+| `mihoyo-hooks` | 米哈游启动器路径、反作弊提示、专属反馈分流 | 关 | `LAB_CORE_OUT_OF_SCOPE` |
+| `feedback-packaging` | 只读脱敏报告；不自动开 Issue；私有附件单独确认 | 关 | `OPTIONAL_MODULE_DISABLED` |
+| `mfg-dlc-slot` | MFG DLC 槽，默认制品 **0.9** | 关（pin 仍生效） | `OPTIONAL_MODULE_DISABLED` |
+| `d14-core` | 选择 lab 发的 D14 Core，不在此做兼容矩阵 | 关 | `LAB_CORE_OUT_OF_SCOPE` |
+
+CLI：`dlss5-manager-zjz optional` 列出；带模块 id 会按上表抛错。
+
+## 概念对齐（不复制 ARR 源码）
+
+公开 ARR 仓 `smartLanny/dlss5-manager` 文档里有组件清单 v2、`.dlss5pkg` 契约、反馈契约。本壳：
+
+- **可以** 用自己的 TypeScript 类型描述“将来如何接”
+- **不可以** 拷贝该仓 Electron/CJS 实现或把 `trusted-keys` / 签名脸搬过来
+- **不可以** 把私有 lab 的 NR 成品或防再分发逻辑搬过来
+
+反馈方向（独立重述）：本机预览 → 用户确认 → 公开文本脱敏；原始路径/截图不进公开报告。本骨架尚未实现打包器。
+
+D14 / 多 hook 继续在 lab **#190**。本仓配方把 `d14-core` 标成 optionalSlots，安装 dry-run 默认跳过。
