@@ -1,0 +1,11 @@
+'use strict';
+const test=require('node:test');const assert=require('node:assert/strict');const {feedbackReminder,COOLDOWN_MS}=require('../../src/compatibility/reminder.cjs');const f=require('./fixtures.cjs');
+const ready=()=>({enabled:true,session:f.session({scope:'game'}),trigger:'game-ended',gameRunning:false,now:1000000000});
+test('reminders are opt-in, not automatic consent',()=>assert.equal(feedbackReminder().show,false));
+test('an ended bound game session can show a passive reminder',()=>{const r=feedbackReminder(ready());assert(r.show);assert(r.receipt);});
+test('running or unknown process state does not prompt',()=>{for(const gameRunning of [true,undefined])assert.equal(feedbackReminder({...ready(),gameRunning}).show,false);});
+test('demo/host/manual snapshots do not prompt as actual games',()=>{for(const patch of [{scope:'demo'},{scope:'controlled-host'},{contextSource:'manual-snapshot'}])assert.equal(feedbackReminder({...ready(),session:f.session({scope:'game',...patch})}).show,false);});
+test('same session already reported does not prompt again',()=>{const args=ready();args.reportedSessionIds=[args.session.sessionId];assert.equal(feedbackReminder(args).show,false);});
+test('same environment/recipe has a cooldown, new session does not bypass it',()=>{const args=ready(),r=feedbackReminder(args);assert.equal(feedbackReminder({...args,session:f.session({scope:'game'}),history:[r.receipt],now:args.now+1000}).show,false);});
+test('clock rollback suppresses a reminder storm',()=>{const args=ready(),r=feedbackReminder(args);assert.equal(feedbackReminder({...args,history:[r.receipt],now:args.now-1000}).show,false);});
+test('cooldown eventually expires',()=>{const args=ready(),r=feedbackReminder(args);assert(feedbackReminder({...args,history:[r.receipt],now:args.now+COOLDOWN_MS+1}).show);});

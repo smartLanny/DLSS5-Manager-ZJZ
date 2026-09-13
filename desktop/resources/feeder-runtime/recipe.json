@@ -1,0 +1,313 @@
+{
+  "version": 1,
+  "id": "nr-feeder-dx12-047-sdr-20260909",
+  "route": "feeder-dx12",
+  "api": "dx12",
+  "architecture": 64,
+  "hardwareFamily": "RTX50",
+  "coreVersion": "0.4.7beta",
+  "sourceRevision": "4ecc6d02ca6058cb1ebb0faae5aa49b34b0614ad",
+  "provenance": "Synthetic",
+  "scope": "post-process",
+  "colorContract": "rgba8-srgb-confirmed",
+  "srInjected": false,
+  "fgInjected": false,
+  "acceptance": {
+    "status": "controlled-callback-candidate",
+    "compileLinkVerified": true,
+    "controlledDx12Verified": true,
+    "controlledResizeVerified": true,
+    "realGameVerified": false,
+    "scope": "RTX 5090 Laptop; x64 DX12 real ReShade callback; RGBA8 UNORM confirmed sRGB; initial 640x360 and one resize to 768x432; Synthetic post-process guides",
+    "evidenceSummarySha256": "3dbdb51972e0ade859982bb649aebac8f988955de6b6c8f15305411971e9539d",
+    "evidenceIdentitySha256": "808c4c7936c5c73e4d29a5c96ae94c1b1dbff1e712423e3c09bf7017cb5649ec",
+    "hostSha256": "8ad0d8e9528396a2aa8998e03bec8c91b3cf5402c5741eb819a5b6dab8490f49",
+    "providerSha256": "05f6c6d720378c05ff49332498cf065682806e4742cef473f150e0b844c12aa7",
+    "note": "NR completed and recorded same-frame writeback through the project Core. No HDR/BGRA, DX11, x86, native SR/FG injection or real-game image-quality acceptance."
+  },
+  "files": [
+    {
+      "source": "dxgi.dll",
+      "target": "dxgi.dll",
+      "role": "loader",
+      "sha256": "0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7",
+      "bytes": 5592064,
+      "mutable": false,
+      "provenance": {
+        "project": "ReShade",
+        "version": "6.8.0",
+        "sourceSha256": "0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/addons/DLSS5-AI渲染超分版-beta0.4.7-@野生的装机宅-Bilibili.addon64",
+      "target": "_DLSS5_Feeder/addons/DLSS5-AI渲染超分版-beta0.4.7-@野生的装机宅-Bilibili.addon64",
+      "role": "core",
+      "sha256": "93011d9283615ea9dc8e92955f5ca6aeff01435925f63e941dc1eea1128a372c",
+      "bytes": 1850880,
+      "mutable": false,
+      "provenance": {
+        "sourceCommit": "4ecc6d02ca6058cb1ebb0faae5aa49b34b0614ad",
+        "baselineCommit": "6a0ad768",
+        "build": "vulkan-provider-047-final",
+        "sourceManifestSha256": "8217cfbd7bcc60a84f2184fa62137afc9c1125d4b3883c3477ee6c620e8b53a3",
+        "sha256": "93011d9283615ea9dc8e92955f5ca6aeff01435925f63e941dc1eea1128a372c",
+        "provider": "External provider V1 with canonical IUnknown identity; preserves beta0.4.7 algorithm, UI and defaults."
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/addons/nrchain_nvngx.dll",
+      "target": "_DLSS5_Feeder/addons/nrchain_nvngx.dll",
+      "role": "chain",
+      "sha256": "46041a5ff91ae2fd907e310d132aabc3c4a1ecd48dace511b8672909d5d9c2fb",
+      "bytes": 8192,
+      "mutable": false,
+      "provenance": {
+        "source_commit": "e7df0fcf26f28e9661a8dcfe0322377278820dd6"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/addons/nvngx_dlssnr.dll",
+      "target": "_DLSS5_Feeder/addons/nvngx_dlssnr.dll",
+      "role": "nr-runtime",
+      "sha256": "e16bcf15e16e13f527491cdf7845b2fe6521a738d8f7c9c721866a8496e1fc8e",
+      "bytes": 165840496,
+      "mutable": false,
+      "provenance": {
+        "file_version": "310.8.0.0",
+        "authenticode": "Valid",
+        "signer": "NVIDIA Corporation",
+        "signer_thumbprint": "7B7B0B6697AFB438CF6F65A155F00E86676FB186"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/DLSS5_Feed.fx",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/DLSS5_Feed.fx",
+      "role": "shader",
+      "sha256": "cdac08a721b14b97187dd86c5b5bead157c9063d7ee859a0f131a8ee791695f1",
+      "bytes": 51193,
+      "mutable": false,
+      "provenance": {
+        "commit": "26c002d5156d178c2db438327194077c9ad94418"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/licenses/Feeder-MIT.txt",
+      "target": "_DLSS5_Feeder/licenses/Feeder-MIT.txt",
+      "role": "license",
+      "sha256": "1ce240e402901fb81eb82a60a6bafd2fb913cd5746860b0a4ec52a5acb49ced7",
+      "bytes": 1210,
+      "mutable": false,
+      "provenance": {
+        "commit": "26c002d5156d178c2db438327194077c9ad94418"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/ReShade.fxh",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/ReShade.fxh",
+      "role": "shader",
+      "sha256": "6dabfbbaf968c3871905d2ea17f96572ff7b1cec01310b5d0e5252b66b30174f",
+      "bytes": 4250,
+      "mutable": false,
+      "provenance": {
+        "repository": "crosire/reshade-shaders",
+        "commit": "6db142b4b1a05c764222e5b0bd9a644b7ccfe1dc"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/vort_Motion.fx",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/vort_Motion.fx",
+      "role": "shader",
+      "sha256": "8365f6e1098d5dda5c8ffbf9380b78afeab4a13768e4640c7f4809bdc539254a",
+      "bytes": 2432,
+      "mutable": false,
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_Defs.fxh",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_Defs.fxh",
+      "role": "shader",
+      "sha256": "a25fa87e29be65a350eec31d5200490a055262372b28829e57e300730875fb9a",
+      "bytes": 24166,
+      "mutable": false,
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_Motion_UI.fxh",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_Motion_UI.fxh",
+      "role": "shader",
+      "sha256": "3e8f2086f12e9cfd387f6e5cca7a3c7c22b33aec431db1b67601582a78791dc4",
+      "bytes": 5072,
+      "mutable": false,
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_MotionUtils.fxh",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_MotionUtils.fxh",
+      "role": "shader",
+      "sha256": "9c8168cfa38741b197465e325fd41d8696ddc78c206981ddfa96508946c95b7f",
+      "bytes": 5954,
+      "mutable": false,
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_MotionVectors.fxh",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_MotionVectors.fxh",
+      "role": "shader",
+      "sha256": "d6d4150178880bf2b19a6094c59efbcc2d25030f88e3d0cdfb9ebba9cc8a8f79",
+      "bytes": 17521,
+      "mutable": false,
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_Depth.fxh",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_Depth.fxh",
+      "role": "shader",
+      "sha256": "078cba2dd100cb24eafe70c1ee4c0c36c41cb9e4e7c9f95eddf94636fcbc5667",
+      "bytes": 1960,
+      "mutable": false,
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_ColorTex.fxh",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_ColorTex.fxh",
+      "role": "shader",
+      "sha256": "97f844ef15d230b7b5e58033934a5b5286a6095cf6e381aff4e922231352358f",
+      "bytes": 510,
+      "mutable": false,
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_BlueNoise.fxh",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_BlueNoise.fxh",
+      "role": "shader",
+      "sha256": "1b51f778ff728b3a893489770eb69762e777a71dca3f61a3edf0dbeb096f80ea",
+      "bytes": 363,
+      "mutable": false,
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_Tonemap.fxh",
+      "target": "_DLSS5_Feeder/reshade-shaders/Shaders/Includes/vort_Tonemap.fxh",
+      "role": "shader",
+      "sha256": "27415694e32016e87a33b6858296fddad60e83c2ee5b0cb0bdcf9072142cbae3",
+      "bytes": 3014,
+      "mutable": false,
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/reshade-shaders/Textures/vort_BlueNoise.png",
+      "target": "_DLSS5_Feeder/reshade-shaders/Textures/vort_BlueNoise.png",
+      "role": "shader",
+      "sha256": "050d26db9283fbaece3b6883e300d22403631d83a12a5f2f79dc8b789b860305",
+      "bytes": 262548,
+      "mutable": false,
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/licenses/VORT-root-MIT.txt",
+      "target": "_DLSS5_Feeder/licenses/VORT-root-MIT.txt",
+      "role": "license",
+      "sha256": "562a1a335ad0815f60b3b27394d1619951d4b125f4f2161f98e8ca088c67778a",
+      "bytes": 1089,
+      "mutable": false,
+      "provenance": {
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/ReShadePreset.ini",
+      "target": "_DLSS5_Feeder/ReShadePreset.ini",
+      "role": "preset",
+      "sha256": "66bc991490d6b7f961d8083f90429b9e8c04e9daefb8add7b8a05d6d6cbf95a7",
+      "bytes": 468,
+      "mutable": true,
+      "provenance": "private Vulkan sample config; not a game preset"
+    },
+    {
+      "source": "_DLSS5_Feeder/addons/nr_before_sr.ini",
+      "target": "_DLSS5_Feeder/addons/nr_before_sr.ini",
+      "role": "core-config",
+      "sha256": "47548da1dab387ffd3e98aeb9d4d954885561bdc858ceb9e0578204121abcd74",
+      "bytes": 1069,
+      "mutable": true,
+      "provenance": {
+        "coreVersion": "0.4.7beta",
+        "source": "Same native beta0.4.7 default configuration used in this controlled run",
+        "sha256": "7ed62ef6f3f565a00e9cb6a92195e7c1bfaa3714f6f4fc28dfcbd1644a41ff80"
+      }
+    },
+    {
+      "source": "_DLSS5_Feeder/addons/dlss5-feed-dx12-sdr.addon64",
+      "target": "_DLSS5_Feeder/addons/dlss5-feed-dx12-sdr.addon64",
+      "role": "provider",
+      "sha256": "05f6c6d720378c05ff49332498cf065682806e4742cef473f150e0b844c12aa7",
+      "bytes": 186368,
+      "mutable": false,
+      "provenance": {
+        "upstreamCommit": "26c002d5156d178c2db438327194077c9ad94418",
+        "stagedSourceSha256": "a3deed1b842ddfc6e91d46a87113fb53f333ddff7e92db013990283168a51dd2",
+        "transformSha256": "d39abae457af883f844c3511c60c4aac8c292e307c9c87263750becefd8c6605",
+        "build": "full-msvc-dx12-sdr",
+        "compileLinkVerified": true
+      }
+    },
+    {
+      "source": "ReShade.ini",
+      "target": "ReShade.ini",
+      "role": "reshade-config",
+      "sha256": "4ec9b2e591bda1f594553eea7a7d1f74b1a82597c631f708a2cbb68b8bbe438d",
+      "bytes": 377,
+      "mutable": true,
+      "provenance": "DX12 fixed local loader/addon/search paths; no global layer registration"
+    },
+    {
+      "source": "_DLSS5_Feeder/addons/dlss5-feed.cfg",
+      "target": "_DLSS5_Feeder/addons/dlss5-feed.cfg",
+      "role": "feeder-config",
+      "sha256": "6076913ee8812f528fb6fce840859359cc51f2039c1b187a2f330d63acd574db",
+      "bytes": 347,
+      "mutable": true,
+      "provenance": "DX12 only; full-size feed; no synthetic SR/work_upscale or FG"
+    },
+    {
+      "source": "_DLSS5_Feeder/licenses/ReShade-LICENSE.md",
+      "target": "_DLSS5_Feeder/licenses/ReShade-LICENSE.md",
+      "role": "license",
+      "sha256": "d2bb5eb908e9aa7ac2f7f4cf6441d62e1f6ac1256cf22bb5289516c9f30e5f0a",
+      "bytes": 1490,
+      "mutable": false,
+      "provenance": "Official ReShade BSD notice retained"
+    }
+  ]
+}

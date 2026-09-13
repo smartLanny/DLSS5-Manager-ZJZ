@@ -1,0 +1,130 @@
+{
+  "name": "xiaofeng-dlss5-manager",
+  "version": "0.5.0-beta.1",
+  "private": true,
+  "description": "A beginner-friendly desktop manager for the DLSS 5 NR-before-SR add-on.",
+  "main": "main.js",
+  "author": "野生的装机宅 / 装机宅版 contributors",
+  "license": "MIT",
+  "scripts": {
+    "prestart": "node ../scripts/build-desktop-contract.mjs",
+    "start": "electron .",
+    "test": "npm run test:unit && npm run test:ui-contract",
+    "pretest:unit": "node ../scripts/build-desktop-contract.mjs",
+    "test:unit": "node --test --test-concurrency=1 test/*.test.js",
+    "test:ui-contract": "node scripts/check-ui.js",
+    "verify:vendor": "node scripts/verify-vendor.js",
+    "verify:payload": "node scripts/verify-payload.js",
+    "icon": "electron scripts/build-icon.js",
+    "stage:distribution": "node scripts/stage-manager-distribution.cjs",
+    "verify:staging": "node scripts/stage-manager-distribution.cjs --check",
+    "build": "node scripts/build-manager.cjs --flavor base",
+    "build:base": "node scripts/build-manager.cjs --flavor base",
+    "build:portable": "node scripts/build-manager.cjs --flavor base --portable",
+    "build:offline": "node scripts/build-manager.cjs --flavor offline",
+    "build:offline:portable": "node scripts/build-manager.cjs --flavor offline --portable",
+    "verify:fg-components": "node scripts/verify-fg-components.js",
+    "verify:execution-level": "node scripts/verify-execution-level.js",
+    "build:external": "node ../scripts/build-desktop-contract.mjs && npm run icon && npm run verify:vendor && electron-builder --win --config scripts/external-build-config.cjs && npm run verify:external",
+    "verify:external": "node scripts/verify-external-package.cjs dist-external/win-unpacked",
+    "verify:fg-mfgunlock": "node scripts/verify-fg-mfgunlock.js",
+    "verify:feeder-runtime": "node scripts/verify-feeder-runtime.js",
+    "verify:legacy-runtime": "node scripts/verify-legacy-runtime.js",
+    "verify:loading-helper": "node scripts/verify-loading-helper.js",
+    "verify:distribution": "node scripts/verify-distribution-policy.js",
+    "pretest:game-page": "node ../scripts/build-desktop-contract.mjs",
+    "test:game-page": "electron test/game-page-frontend.electron.cjs"
+  },
+  "dependencies": {
+    "yauzl": "^2.10.0"
+  },
+  "devDependencies": {
+    "electron": "44.3.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "buildVersion": "0.5.0.1",
+    "appId": "com.xiaofeng.dlss5.manager",
+    "productName": "DLSS 5 AI 超分管理器",
+    "files": [
+      "main.js",
+      "preload.js",
+      "build/icon.png",
+      "src/**/*",
+      "vendor/DLSS5-Swapper/LICENSE",
+      "vendor/DLSS5-Swapper/src/library.js",
+      "vendor/DLSS5-Swapper/src/core/pe.js",
+      "vendor/DLSS5-Swapper/src/core/emulators.js",
+      "vendor/DLSS5-Swapper/src/core/feeder-release.js",
+      "vendor/DLSS5-Swapper/src/core/file-journal.js",
+      "vendor/DLSS5-Swapper/src/core/scan.js",
+      "vendor/DLSS5-Swapper/src/core/install-guards.js",
+      "vendor/DLSS5-Swapper/src/steamart.js",
+      "package.json",
+      "product.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
+      "UPSTREAM.md"
+    ],
+    "extraResources": [],
+    "extraFiles": [
+      {
+        "from": "docs/core-candidate-LICENSES.txt",
+        "to": "Core第三方许可.txt"
+      },
+      {
+        "from": "docs/manager-0.5.0-beta.1-use.txt",
+        "to": "使用说明.txt"
+      },
+      {
+        "from": "scripts/startup-diagnostics.cmd",
+        "to": "启动诊断.cmd"
+      },
+      {
+        "from": "scripts/startup-diagnostics.ps1",
+        "to": "startup-diagnostics.ps1"
+      },
+      {
+        "from": "scripts/startup-compatible.cmd",
+        "to": "兼容启动.cmd"
+      },
+      {
+        "from": "scripts/startup-compatible.ps1",
+        "to": "startup-compatible.ps1"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "fileAssociations": [
+      {
+        "ext": "addon64",
+        "name": "DLSS 5 Addon",
+        "description": "DLSS 5 AI 超分 Addon 文件",
+        "role": "Editor"
+      }
+    ],
+    "portable": {
+      "requestExecutionLevel": "user",
+      "artifactName": "DLSS5-Manager-${version}-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "DLSS 5 AI 超分管理器",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "DLSS5-Manager-Setup-${version}.exe"
+    }
+  }
+}

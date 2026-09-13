@@ -1,0 +1,25 @@
+LIBRARY d3d9
+EXPORTS
+    Direct3DCreate9=_ShimDirect3DCreate9@4 @37
+    Direct3DCreate9Ex=_ShimDirect3DCreate9Ex@8 @38
+    Direct3DCreate9On12=_ShimDirect3DCreate9On12@12 @20
+    Direct3DCreate9On12Ex=_ShimDirect3DCreate9On12Ex@16 @21
+    D3DPERF_BeginEvent=ShimSystem0 @27
+    D3DPERF_EndEvent=ShimSystem1 @28
+    D3DPERF_GetStatus=ShimSystem2 @29
+    D3DPERF_QueryRepeatFrame=ShimSystem3 @30
+    D3DPERF_SetMarker=ShimSystem4 @31
+    D3DPERF_SetOptions=ShimSystem5 @32
+    D3DPERF_SetRegion=ShimSystem6 @33
+    DebugSetLevel=ShimSystem7 @34
+    DebugSetMute=ShimSystem8 @35
+    Direct3D9EnableMaximizedWindowedModeShim=ShimSystem9 @36
+    Direct3DShaderValidatorCreate9=ShimSystem10 @24
+    PSGPError=ShimSystem11 @25
+    PSGPSampleTexture=ShimSystem12 @26
+    Ordinal16=ShimSystem13 @16 NONAME
+    Ordinal17=ShimSystem14 @17 NONAME
+    Ordinal18=ShimSystem15 @18 NONAME
+    Ordinal19=ShimSystem16 @19 NONAME
+    Ordinal22=ShimSystem17 @22 NONAME
+    Ordinal23=ShimSystem18 @23 NONAME

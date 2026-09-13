@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "sources": {
+    "bridge": "https://github.com/NIGos/dlss5-bridge/releases",
+    "feeder": "https://github.com/jlrouzies-fr/DLSS5-Feeder/releases",
+    "mfg": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases",
+    "nr-runtime": "https://github.com/smartLanny/DLSS5-Manager-ZJZ/blob/codex/full-manager-compat-20260912/docs/RUNTIME-PACKS.md"
+  },
+  "packages": [
+    {"id":"nr-runtime-rtx20-40-sfv2","kind":"nr-runtime","version":"310.8.SF-v2","variant":"RTX20-40","hardwareFamilies":["RTX40"],"architecture":"x64","interface":"NGX-Feature18","filename":"nvngx_dlssnr.dll","bytes":165830144,"sha256":"6eb209e764f39872625debd6abaf45e2bb6322f6f270f781f70c059ae30b3927"},
+    {"id":"nr-runtime-rtx50-sfv2","kind":"nr-runtime","version":"310.8.SF-v2","variant":"RTX50","hardwareFamilies":["RTX50"],"architecture":"x64","interface":"NGX-Feature18","filename":"nvngx_dlssnr.dll","bytes":165840496,"sha256":"e16bcf15e16e13f527491cdf7845b2fe6521a738d8f7c9c721866a8496e1fc8e"},
+    {"id":"mfg-0.9-official","kind":"mfg","version":"0.9","variant":"official","hardwareFamilies":["RTX40"],"architecture":"x64","interface":"Streamline-DLSSG","filename":"renodx-mfgunlock.addon64","bytes":601088,"sha256":"64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da","downloadUrl":"https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/0.9/renodx-mfgunlock.addon64"},
+    {"id":"bridge-1.4.13-pre7-official","kind":"bridge","version":"1.4.13-pre7","variant":"official","architecture":"x64","gameApis":["dx11","vulkan"],"interface":"NGX-D3D12-Feature1","filename":"dlss5-bridge.addon64","bytes":534016,"sha256":"f16a12f0e1e33645de60e2854f0129032e26298ae054d865604fddfe2ba2f964","validation":"candidate","downloadUrl":"https://github.com/NIGos/dlss5-bridge/releases/download/v1.4.13-pre7/dlss5-bridge.addon64"}
+  ]
+}

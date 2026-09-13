@@ -1,0 +1,540 @@
+{
+  "schema": 1,
+  "upstream": {
+    "repository": "jlrouzies-fr/DLSS5-Feeder",
+    "version": "0.15.1",
+    "commit": "3f624855276c4bde55145c712782477639b30e85",
+    "ipcVersion": 9
+  },
+  "coreVersion": "0.4.7beta",
+  "coreFileName": "DLSS5-AI渲染超分版-beta0.4.7-@野生的装机宅-Bilibili.addon64",
+  "coreInterface": "NRExternalProviderV1",
+  "coreVariant": {
+    "requiredInterface": "NRExternalProviderV1",
+    "baselineVersion": "0.4.7beta",
+    "sourceCommit": "4ecc6d02ca6058cb1ebb0faae5aa49b34b0614ad",
+    "genericCoreInterchangeable": false
+  },
+  "colorContract": "actual-sRGB packed RGBA8/BGRA8 -> linear FP16 -> project Core -> original layout; alpha preserved",
+  "provenance": "Synthetic",
+  "srInjected": false,
+  "fgInjected": false,
+  "blockedComponents": [
+    {
+      "id": "dgvoodoo2",
+      "deliveryBlocked": true,
+      "reason": "Defender severe detection persists; upstream excludes general launcher/framework bundling"
+    }
+  ],
+  "acceptance": {
+    "dx9-x86-RTX50-local-d3d9": {
+      "controlledRuntimeVerified": true,
+      "realGameVerified": false,
+      "reportAsset": "controlled-acceptance"
+    },
+    "dx9-x64-RTX50-local-d3d9": {
+      "controlledRuntimeVerified": true,
+      "realGameVerified": false,
+      "reportAsset": "controlled-acceptance"
+    },
+    "dx10-x86-RTX50-local-dxgi": {
+      "controlledRuntimeVerified": true,
+      "realGameVerified": false,
+      "reportAsset": "controlled-acceptance"
+    },
+    "dx10-x64-RTX50-local-dxgi": {
+      "controlledRuntimeVerified": true,
+      "realGameVerified": false,
+      "reportAsset": "controlled-acceptance"
+    },
+    "dx11-x86-RTX50-local-dxgi": {
+      "controlledRuntimeVerified": true,
+      "realGameVerified": false,
+      "reportAsset": "controlled-acceptance"
+    },
+    "dx11-x64-RTX50-local-dxgi": {
+      "controlledRuntimeVerified": true,
+      "realGameVerified": false,
+      "reportAsset": "controlled-acceptance"
+    },
+    "dx12-x64-RTX50-local-dxgi": {
+      "controlledRuntimeVerified": true,
+      "realGameVerified": false,
+      "reportAsset": "controlled-acceptance"
+    }
+  },
+  "assets": [
+    {
+      "id": "loader-x86",
+      "source": "loaders/ReShade32.dll",
+      "role": "loader",
+      "architecture": "x86",
+      "mutable": false,
+      "sha256": "da430e0a9c6eecefa0d1b27d05e16c426fb5d04e808b194d914eaac4b31bc0f8",
+      "bytes": 4398080,
+      "provenance": {
+        "url": "https://reshade.me/downloads/ReShade_Setup_6.8.0_Addon.exe",
+        "version": "6.8.0"
+      }
+    },
+    {
+      "id": "loader-x64",
+      "source": "loaders/ReShade64.dll",
+      "role": "loader",
+      "architecture": "x64",
+      "mutable": false,
+      "sha256": "0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7",
+      "bytes": 5592064,
+      "provenance": {
+        "url": "https://reshade.me/downloads/ReShade_Setup_6.8.0_Addon.exe",
+        "version": "6.8.0"
+      }
+    },
+    {
+      "id": "provider-x64",
+      "source": "providers/dlss5-feed.addon64",
+      "role": "provider",
+      "architecture": "x64",
+      "mutable": false,
+      "sha256": "9ab673cbea5c14d42542bc824da8ca917945cceb97ff732efde018d18f927497",
+      "bytes": 276992,
+      "provenance": {
+        "type": "source-owned-build",
+        "upstreamCommit": "3f624855276c4bde55145c712782477639b30e85",
+        "build": "feeder-beta3-r20"
+      }
+    },
+    {
+      "id": "provider-x86",
+      "source": "providers/dlss5-feed.addon32",
+      "role": "provider",
+      "architecture": "x86",
+      "mutable": false,
+      "sha256": "8bdfe3fa2a127f5702984476c9bed84137b76a0f0490cac59d34889f4fd880d8",
+      "bytes": 155136,
+      "provenance": {
+        "type": "source-owned-build",
+        "upstreamCommit": "3f624855276c4bde55145c712782477639b30e85",
+        "build": "feeder-beta3-r20"
+      }
+    },
+    {
+      "id": "provider-relay-x64",
+      "source": "providers/dlss5-feed-relay.addon64",
+      "role": "provider",
+      "architecture": "x64",
+      "mutable": false,
+      "sha256": "52aba4995c4de83b985ae81eb82097e246aeb5c9c5c2bc30bd75bbd10dcce9cb",
+      "bytes": 171008,
+      "provenance": {
+        "type": "source-owned-build",
+        "upstreamCommit": "3f624855276c4bde55145c712782477639b30e85",
+        "build": "feeder-beta3-r20"
+      }
+    },
+    {
+      "id": "host-x64",
+      "source": "providers/dlss5-feed-host64.exe",
+      "role": "host",
+      "architecture": "x64",
+      "mutable": false,
+      "sha256": "60c7b068f29868c8b1bdb575960dc89d2259860b7bf77e51c52e44870df0034c",
+      "bytes": 150016,
+      "provenance": {
+        "type": "source-owned-build",
+        "upstreamCommit": "3f624855276c4bde55145c712782477639b30e85",
+        "build": "feeder-beta3-r20"
+      }
+    },
+    {
+      "id": "core",
+      "source": "core/DLSS5-AI渲染超分版-beta0.4.7-@野生的装机宅-Bilibili.addon64",
+      "role": "core",
+      "architecture": "x64",
+      "mutable": false,
+      "sha256": "93011d9283615ea9dc8e92955f5ca6aeff01435925f63e941dc1eea1128a372c",
+      "bytes": 1850880,
+      "provenance": {
+        "sourceCommit": "4ecc6d02ca6058cb1ebb0faae5aa49b34b0614ad",
+        "baselineCommit": "6a0ad768",
+        "build": "vulkan-provider-047-final",
+        "sourceManifestSha256": "8217cfbd7bcc60a84f2184fa62137afc9c1125d4b3883c3477ee6c620e8b53a3",
+        "sha256": "93011d9283615ea9dc8e92955f5ca6aeff01435925f63e941dc1eea1128a372c",
+        "provider": "External provider V1 with canonical IUnknown identity; preserves beta0.4.7 algorithm, UI and defaults."
+      }
+    },
+    {
+      "id": "chain",
+      "source": "core/nrchain_nvngx.dll",
+      "role": "chain",
+      "architecture": "x64",
+      "mutable": false,
+      "sha256": "46041a5ff91ae2fd907e310d132aabc3c4a1ecd48dace511b8672909d5d9c2fb",
+      "bytes": 8192
+    },
+    {
+      "id": "shared-8",
+      "source": "shared/reshade-shaders/Shaders/DLSS5_Feed.fx",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "cdac08a721b14b97187dd86c5b5bead157c9063d7ee859a0f131a8ee791695f1",
+      "bytes": 51193,
+      "target": "reshade-shaders/Shaders/DLSS5_Feed.fx",
+      "provenance": {
+        "commit": "26c002d5156d178c2db438327194077c9ad94418"
+      }
+    },
+    {
+      "id": "shared-9",
+      "source": "shared/licenses/Feeder-MIT.txt",
+      "role": "license",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "1ce240e402901fb81eb82a60a6bafd2fb913cd5746860b0a4ec52a5acb49ced7",
+      "bytes": 1210,
+      "target": "licenses/Feeder-MIT.txt",
+      "provenance": {
+        "commit": "26c002d5156d178c2db438327194077c9ad94418"
+      }
+    },
+    {
+      "id": "shared-10",
+      "source": "shared/reshade-shaders/Shaders/ReShade.fxh",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "6dabfbbaf968c3871905d2ea17f96572ff7b1cec01310b5d0e5252b66b30174f",
+      "bytes": 4250,
+      "target": "reshade-shaders/Shaders/ReShade.fxh",
+      "provenance": {
+        "repository": "crosire/reshade-shaders",
+        "commit": "6db142b4b1a05c764222e5b0bd9a644b7ccfe1dc"
+      }
+    },
+    {
+      "id": "shared-11",
+      "source": "shared/reshade-shaders/Shaders/vort_Motion.fx",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "8365f6e1098d5dda5c8ffbf9380b78afeab4a13768e4640c7f4809bdc539254a",
+      "bytes": 2432,
+      "target": "reshade-shaders/Shaders/vort_Motion.fx",
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "shared-12",
+      "source": "shared/reshade-shaders/Shaders/Includes/vort_Defs.fxh",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "a25fa87e29be65a350eec31d5200490a055262372b28829e57e300730875fb9a",
+      "bytes": 24166,
+      "target": "reshade-shaders/Shaders/Includes/vort_Defs.fxh",
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "shared-13",
+      "source": "shared/reshade-shaders/Shaders/Includes/vort_Motion_UI.fxh",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "3e8f2086f12e9cfd387f6e5cca7a3c7c22b33aec431db1b67601582a78791dc4",
+      "bytes": 5072,
+      "target": "reshade-shaders/Shaders/Includes/vort_Motion_UI.fxh",
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "shared-14",
+      "source": "shared/reshade-shaders/Shaders/Includes/vort_MotionUtils.fxh",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "9c8168cfa38741b197465e325fd41d8696ddc78c206981ddfa96508946c95b7f",
+      "bytes": 5954,
+      "target": "reshade-shaders/Shaders/Includes/vort_MotionUtils.fxh",
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "shared-15",
+      "source": "shared/reshade-shaders/Shaders/Includes/vort_MotionVectors.fxh",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "d6d4150178880bf2b19a6094c59efbcc2d25030f88e3d0cdfb9ebba9cc8a8f79",
+      "bytes": 17521,
+      "target": "reshade-shaders/Shaders/Includes/vort_MotionVectors.fxh",
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "shared-16",
+      "source": "shared/reshade-shaders/Shaders/Includes/vort_Depth.fxh",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "078cba2dd100cb24eafe70c1ee4c0c36c41cb9e4e7c9f95eddf94636fcbc5667",
+      "bytes": 1960,
+      "target": "reshade-shaders/Shaders/Includes/vort_Depth.fxh",
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "shared-17",
+      "source": "shared/reshade-shaders/Shaders/Includes/vort_ColorTex.fxh",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "97f844ef15d230b7b5e58033934a5b5286a6095cf6e381aff4e922231352358f",
+      "bytes": 510,
+      "target": "reshade-shaders/Shaders/Includes/vort_ColorTex.fxh",
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "shared-18",
+      "source": "shared/reshade-shaders/Shaders/Includes/vort_BlueNoise.fxh",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "1b51f778ff728b3a893489770eb69762e777a71dca3f61a3edf0dbeb096f80ea",
+      "bytes": 363,
+      "target": "reshade-shaders/Shaders/Includes/vort_BlueNoise.fxh",
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "shared-19",
+      "source": "shared/reshade-shaders/Shaders/Includes/vort_Tonemap.fxh",
+      "role": "shader",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "27415694e32016e87a33b6858296fddad60e83c2ee5b0cb0bdcf9072142cbae3",
+      "bytes": 3014,
+      "target": "reshade-shaders/Shaders/Includes/vort_Tonemap.fxh",
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "shared-20",
+      "source": "shared/reshade-shaders/Textures/vort_BlueNoise.png",
+      "role": "texture",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "050d26db9283fbaece3b6883e300d22403631d83a12a5f2f79dc8b789b860305",
+      "bytes": 262548,
+      "target": "reshade-shaders/Textures/vort_BlueNoise.png",
+      "provenance": {
+        "repository": "vortigern11/vort_Shaders",
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "shared-21",
+      "source": "shared/licenses/VORT-root-MIT.txt",
+      "role": "license",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "562a1a335ad0815f60b3b27394d1619951d4b125f4f2161f98e8ca088c67778a",
+      "bytes": 1089,
+      "target": "licenses/VORT-root-MIT.txt",
+      "provenance": {
+        "commit": "b410b9f0c0fbb83c8cb42164aaf1655fab386f4a"
+      }
+    },
+    {
+      "id": "preset",
+      "source": "config/ReShadePreset.ini",
+      "role": "preset",
+      "architecture": null,
+      "mutable": true,
+      "sha256": "66bc991490d6b7f961d8083f90429b9e8c04e9daefb8add7b8a05d6d6cbf95a7",
+      "bytes": 468
+    },
+    {
+      "id": "core-config",
+      "source": "core/nr_before_sr.ini",
+      "role": "core-config",
+      "architecture": null,
+      "mutable": true,
+      "sha256": "47548da1dab387ffd3e98aeb9d4d954885561bdc858ceb9e0578204121abcd74",
+      "bytes": 1069
+    },
+    {
+      "id": "shared-24",
+      "source": "shared/licenses/ReShade-LICENSE.md",
+      "role": "license",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "d2bb5eb908e9aa7ac2f7f4cf6441d62e1f6ac1256cf22bb5289516c9f30e5f0a",
+      "bytes": 1490,
+      "target": "licenses/ReShade-LICENSE.md",
+      "provenance": "Official ReShade BSD notice retained"
+    },
+    {
+      "id": "runtime-rtx40",
+      "source": "runtimes/RTX40/nvngx_dlssnr.dll",
+      "role": "nr-runtime",
+      "architecture": "x64",
+      "mutable": false,
+      "sha256": "6eb209e764f39872625debd6abaf45e2bb6322f6f270f781f70c059ae30b3927",
+      "bytes": 165830144,
+      "provenance": {
+        "hardwareFamily": "RTX40",
+        "source": "bundle.fixed.RTX40"
+      }
+    },
+    {
+      "id": "runtime-rtx50",
+      "source": "runtimes/RTX50/nvngx_dlssnr.dll",
+      "role": "nr-runtime",
+      "architecture": "x64",
+      "mutable": false,
+      "sha256": "e16bcf15e16e13f527491cdf7845b2fe6521a738d8f7c9c721866a8496e1fc8e",
+      "bytes": 165840496,
+      "provenance": {
+        "hardwareFamily": "RTX50",
+        "source": "bundle.fixed.RTX50"
+      }
+    },
+    {
+      "id": "license-vort-details",
+      "source": "shared/licenses/VORT-license-details.txt",
+      "role": "license",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "b0908e45eae493c94a64058cbe6865bab7fddd5c00d812e5e5b4b96fa14c2dc5",
+      "bytes": 553,
+      "target": "licenses/VORT-license-details.txt"
+    },
+    {
+      "id": "provider-dx9-x86",
+      "source": "providers/dlss5-feed-dx9.addon32",
+      "role": "provider",
+      "architecture": "x86",
+      "mutable": false,
+      "sha256": "250e4a5523a20c54a0c59dc55f08f81cc38526efa1eb6c920a86e3602fd499f8",
+      "bytes": 190976,
+      "provenance": {
+        "type": "source-owned-build",
+        "upstreamCommit": "3f624855276c4bde55145c712782477639b30e85",
+        "build": "d3d9on12-provider-fix-r3",
+        "sourceSha256": "40b8af455ad5d89823bb42ad854bec5d687658e5bd6cba30026f0434985da774",
+        "source": {
+          "scripts/feeder-beta3/nr_feeder_d3d9.cpp": "40b8af455ad5d89823bb42ad854bec5d687658e5bd6cba30026f0434985da774",
+          "scripts/feeder-beta3/nr_feeder_control.h": "065526266d538bfa79e72dcc2922b1b6f651627a4bee0763c4cc8220532decbf",
+          "scripts/feeder-beta3/nr_feeder_query.h": "eaaa774eac519f4253d08055481a337270dd3ee17dc794f51a0710b6f8fce12e",
+          "scripts/feeder-beta3/nr_feeder_ipc_client.h": "ce8290338f20a1e599464f7ea0b0c1e8a1cd8625c86be66ff1a4728d41c79377",
+          "scripts/feeder-beta3/nr_feeder_depth_copy.h": "4be5925e1716a87209a6013a812c0159cd9c8e4f5db0d43558070d224ae9ac1d"
+        },
+        "buildReportAsset": "dx9-r3-build"
+      }
+    },
+    {
+      "id": "provider-dx9-x64",
+      "source": "providers/dlss5-feed-dx9.addon64",
+      "role": "provider",
+      "architecture": "x64",
+      "mutable": false,
+      "sha256": "7743b2cb7d2bbc8ea42471a2787cc91e635d421162d14a862cba9d4670fa4a2a",
+      "bytes": 236032,
+      "provenance": {
+        "type": "source-owned-build",
+        "upstreamCommit": "3f624855276c4bde55145c712782477639b30e85",
+        "build": "d3d9on12-provider-fix-r3",
+        "sourceSha256": "40b8af455ad5d89823bb42ad854bec5d687658e5bd6cba30026f0434985da774",
+        "source": {
+          "scripts/feeder-beta3/nr_feeder_d3d9.cpp": "40b8af455ad5d89823bb42ad854bec5d687658e5bd6cba30026f0434985da774",
+          "scripts/feeder-beta3/nr_feeder_control.h": "065526266d538bfa79e72dcc2922b1b6f651627a4bee0763c4cc8220532decbf",
+          "scripts/feeder-beta3/nr_feeder_query.h": "eaaa774eac519f4253d08055481a337270dd3ee17dc794f51a0710b6f8fce12e",
+          "scripts/feeder-beta3/nr_feeder_ipc_client.h": "ce8290338f20a1e599464f7ea0b0c1e8a1cd8625c86be66ff1a4728d41c79377",
+          "scripts/feeder-beta3/nr_feeder_depth_copy.h": "4be5925e1716a87209a6013a812c0159cd9c8e4f5db0d43558070d224ae9ac1d"
+        },
+        "buildReportAsset": "dx9-r3-build"
+      }
+    },
+    {
+      "id": "shim-dx9-x86",
+      "source": "loaders/d3d9-x86.dll",
+      "role": "api-wrapper",
+      "architecture": "x86",
+      "mutable": false,
+      "sha256": "74a9a415cf8883bed5e56eaacd2a1c3b3da2a3f68c89a0db249c6a69b16bee85",
+      "bytes": 105472,
+      "provenance": {
+        "type": "source-owned-build",
+        "upstreamCommit": "3f624855276c4bde55145c712782477639b30e85",
+        "build": "d3d9on12-shim-r5"
+      }
+    },
+    {
+      "id": "shim-dx9-x64",
+      "source": "loaders/d3d9-x64.dll",
+      "role": "api-wrapper",
+      "architecture": "x64",
+      "mutable": false,
+      "sha256": "7c520f090ec1484ee95af35be2a2ba5f8f953695697be7d9466623311a633a9b",
+      "bytes": 142848,
+      "provenance": {
+        "type": "source-owned-build",
+        "upstreamCommit": "3f624855276c4bde55145c712782477639b30e85",
+        "build": "d3d9on12-shim-r5"
+      }
+    },
+    {
+      "id": "controlled-acceptance",
+      "source": "acceptance/controlled-rtx50.json",
+      "role": "evidence",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "0cce70c0c133b4068465cf09ae0c13642647981c9fc09d30f1c3a4e7e7858ba5",
+      "bytes": 65260
+    },
+    {
+      "id": "dx9-r2-build",
+      "source": "acceptance/dx9-r2-build.json",
+      "role": "evidence",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "bbc2d73b849ddc50b5db98bbe232c21df634a3f22ba32902dd35aef8fbb00f3f",
+      "bytes": 10339
+    },
+    {
+      "id": "dx9-r3-build",
+      "source": "acceptance/dx9-r3-build.json",
+      "role": "evidence",
+      "architecture": null,
+      "mutable": false,
+      "sha256": "2f6bfa0fa2c4494e4dacc6ec7a3695e18957d1fe9b170ef265424a042ff1c054",
+      "bytes": 17291
+    }
+  ],
+  "protocols": {
+    "adapterEnumeration": 1,
+    "frameCompletion": "project-frame-completion-v1",
+    "hostVortGuides": 1
+  }
+}

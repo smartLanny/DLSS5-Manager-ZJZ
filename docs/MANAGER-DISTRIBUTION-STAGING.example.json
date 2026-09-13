@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "packageVersion": "0.5.0-beta.1",
+  "core": {
+    "payloadRoot": "C:/path/to/active-core/payload/nr-before-sr",
+    "version": "REPLACE_WITH_ACTIVE_CORE_VERSION",
+    "sourcePackage": {
+      "file": "C:/path/to/verified-core-package.zip",
+      "bytes": 0,
+      "sha256": "REPLACE_WITH_VERIFIED_PACKAGE_SHA256",
+      "sourceCommit": "REPLACE_WITH_VERIFIED_SOURCE_COMMIT",
+      "sourceManifestSha256": "REPLACE_WITH_VERIFIED_SOURCE_MANIFEST_SHA256"
+    }
+  },
+  "runtime": {
+    "sourceRoot": "C:/path/to/authorized/manager-major-update-20260911/payload/nr-before-sr",
+    "families": {
+      "RTX40": {
+        "file": "C:/path/to/authorized/manager-major-update-20260911/payload/nr-before-sr/fixed/RTX40/nvngx_dlssnr.dll",
+        "bytes": 165830144,
+        "sha256": "6eb209e764f39872625debd6abaf45e2bb6322f6f270f781f70c059ae30b3927"
+      },
+      "RTX50": {
+        "file": "C:/path/to/authorized/manager-major-update-20260911/payload/nr-before-sr/fixed/RTX50/nvngx_dlssnr.dll",
+        "bytes": 165840496,
+        "sha256": "e16bcf15e16e13f527491cdf7845b2fe6521a738d8f7c9c721866a8496e1fc8e"
+      }
+    }
+  },
+  "mfg": {
+    "file": "C:/path/to/renodx-mfgunlock-0.9.addon64",
+    "bytes": 601088,
+    "sha256": "64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da",
+    "url": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases"
+  },
+  "components": [],
+  "resources": [],
+  "bridge": {
+    "status": "reserved",
+    "id": "nigos-dlss5-bridge",
+    "version": "1.4.12",
+    "url": "https://github.com/NIGos/dlss5-bridge"
+  }
+}

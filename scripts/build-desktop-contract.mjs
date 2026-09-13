@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+const root = fileURLToPath(new URL('..', import.meta.url));
+const source = fs.readFileSync(path.join(root, 'src/recipes/bridge.ts'), 'utf8');
+const output = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, strict: true } }).outputText;
+const dest = path.join(root, 'desktop/src/product/generated/bridge-contract.cjs');
+fs.mkdirSync(path.dirname(dest), { recursive: true });
+fs.writeFileSync(dest, '// Generated from the shared CLI bridge contract. Rebuild from repository root.\n' + output);

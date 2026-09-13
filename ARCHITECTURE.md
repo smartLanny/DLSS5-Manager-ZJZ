@@ -1,55 +1,52 @@
-# Architecture — DLSS5-Manager-ZJZ
+# DLSS5 Manager ZJZ 架构边界
 
-本仓是 **MIT 安装器 / 管理器壳**。它负责发现游戏、按配方安装/卸载、维护 DLC pin、用类 RHI 方式检查（并在用户确认后下载）更新，以及把失败写成可读错误。它不是 Core，也不是签名发行面。
+本仓库有两个可组合的产品面：根目录的 MIT CLI 壳，以及迁入 `desktop/` 的 Electron Manager。二者都只提交源码、pin、清单和许可证文本；实际运行库由仓库外 staging 清单在本地打包时注入。
 
-## 三面边界
+## 组件面
 
-| 面 | 仓库 | 许可 | 本壳做什么 |
+| 面 | 所在位置 | 责任 | 发行约束 |
 | --- | --- | --- | --- |
-| **Manager 壳** | `smartLanny/DLSS5-Manager-ZJZ`（本仓） | MIT | 发现、配方、pin、更新检查、可读失败 |
-| **Core** | `smartLanny/dlss5-nr-before-sr-lab` | 源码侧 MIT；**不**塞 NVIDIA DLL | 发版 Core。Reno 多 hook / 接入点兼容 = lab **#190**，勿倒进本仓 |
-| **专有 / 签名面** | 私有 lab 发行线 + 公开 ARR `smartLanny/dlss5-manager` | ARR / UNLICENSED | 签名、防再分发、部分 UI / 米哈游专属能力。逻辑与密钥不进本树 |
+| CLI / 配方壳 | `src/` | 发现、配方 dry-run、pin、更新元数据 | 不加载 DLL，不写游戏，不带 payload |
+| Electron Manager | `desktop/` | 游戏选择、API/Core 路由、安装/恢复 UI、外部组件来源 | 源码可公开；构建资源必须来自 staging 白名单 |
+| Core | 外部活动任务产物 | NR 算法与 Addon | 默认 Core 必须在 staging 清单中明确版本；拒绝 D13/D14 冒充最新 |
+| NR runtime | 外部授权目录 | RTX20–40 共享 RTX40 runtime、RTX50 runtime | 基础包不嵌入；offline 包各放一份，禁止 Feeder/Vulkan/legacy 重复携带 |
+| MFG | 外部官方 0.9 Addon | RTX40 的 MFG Unlock 入口 | 0.9 固定 bytes/SHA；0.7 仅回滚，由 Manager 清单登记 |
+| DX11 Bridge | `bridge-dlc/manifest.json` 与小组件清单（stage） | 候选来源、逐游戏 pin 和接口预检 | 缺包时 `reserved`；已暂存包为 `candidate-staged`，不据此宣称游戏兼容 |
+| 可选小组件 | `resources/components/`（stage） | 外部清单提供的 Bridge、Feeder、host、Vulkan 文件 | 必须逐文件 pin；不允许 `nvngx_dlssnr.dll` 混入 |
 
-产品 Manager 的现行实现目前仍在私有 lab 分支（如 `codex/manager-049-beta1-20260912`）与 fix PR **#251**（`codex/manager-049-mgr27-28-20260912`）。本仓从零搭壳 + pin/updater，**不**把 ARR 源码或私有秘密拷过来。公开 `dlss5-manager` 的文档契约（组件清单、本地包、反馈）只作概念对齐。
+## 运行时数据流
 
-## 本树允许 / 禁止
-
-**允许**
-
-- TypeScript/Node 壳、CLI、pin JSON、配方 dry-run
-- 更新源 URL、检查节奏、元数据 GET 计划
-- 可选模块的挂钩点与文档（米哈游钩子、反馈打包、MFG 槽、D14 Core 选择）
-- 可读错误码（见 `src/failures.ts`）
-
-**禁止**
-
-- NVIDIA DLL、`nvngx_*`、专有 NR kernel、`.addon64`、`.dlss5pkg` 成品
-- 防再分发 / Authenticode / Ed25519 私钥或“签名脸”
-- 把 lab #190 Core 兼容工作堆进此仓
-- 宣称 **mgr #27 / #28** 已在本仓修复（提权误拦 / 大 EXE digest 仍在 lab PR **#251**，待 Windows 复测）
-
-## 运行时数据流（目标）
-
-```
-发现游戏 → 解析配方 + pin → 类 RHI 元数据检查
-        → 用户确认 → 外链 DLC 进本机缓存（哈希）
-        → 事务安装 / 卸载 → 失败可读 + 回滚入口
+```text
+外部 staging JSON
+       │
+       ├─ Core bundle v4 + ReShade + nrchain
+       ├─ RTX40 / RTX50 nvngx runtime（offline flavor 才复制）
+       ├─ MFG 0.9（固定摘要）
+       ├─ 外部 staging 小组件（可选，逐文件摘要）
+       └─ Bridge reservation / 显式暂存的候选包（无兼容宣称）
+       │
+       ▼
+desktop/.packaging-stage/<flavor>
+       │
+       ▼
+Electron Builder → 根目录 deliveries/（Git 忽略）
 ```
 
-当前骨架：发现只报扫描根；安装/卸载只输出 dry-run；`check` 默认打印如何拉取，`--live` 才打 Releases JSON。没有任何命令会把二进制写进仓库。
+`desktop/scripts/stage-manager-distribution.cjs` 是唯一发行 payload 组装入口。它逐文件检查普通文件、大小和 SHA-256，拒绝符号链接、D13/D14 默认版本和未列出的资源；允许明确列出的 Core、ReShade/chain、按显卡族 runtime、MFG 0.9、小组件、加载助手及四文件 Vulkan ReShade layer。`desktop/scripts/build-manager.cjs` 以 stage 生成动态 electron-builder 配置，不继承旧的 Feeder/Vulkan/legacy 全量资源列表。
 
-## 更新器（类 RHI）
+## 基础包和离线包
 
-- **权威**是 `config/pins.json`，不是源站 latest。
-- 启动 / 手动 / 每 24h：只检查元数据。
-- **从不自动安装**。
-- Bridge：游戏可 pin；BG3 → **1.4.11**；拒绝 `latest` 与 `1.4.13-pre`（概念对齐 lab **#224**）。
-- MFG Unlock：默认 **0.9**；**0.7** 只出现在回滚列。
-- `nvngx_dlssnr`：场上 **310.8.SF-v2**，无证据不 bump。
-- DLSS/SL 评估走独立 A/B，不绑 #190。
+基础包解决首次启动和 UI 使用所需的小组件，启动后如果本机显卡需要 NR runtime，Manager 会提示选择完整外部组件目录。离线包的差别只有运行库注入：`fixed/RTX40/nvngx_dlssnr.dll` 覆盖 RTX20/30/40，`fixed/RTX50/nvngx_dlssnr.dll` 单独覆盖 RTX50。两者都来自 staging 清单对应的授权目录；不得从旧 D13/D14 包或历史 `dist` 目录推导默认 Core。
 
-节奏与 URL 见 [docs/DLC-PIN.md](docs/DLC-PIN.md)。
+Feeder、Vulkan 和 legacy x86/DX9 属于独立路线，当前打包入口不把它们的 runtime 复制进基础包或离线包。缺少这些可选资源时，Manager 应保留可读的未准备状态，不能把文件存在性当成兼容性结论。
 
-## 与旧发行线的关系
+## 仓库安全边界
 
-米哈游钩子、反馈打包、MFG DLC 槽、D14 Core 选择是 **可选模块**，默认关闭，见 [docs/OPTIONAL-MODULES.md](docs/OPTIONAL-MODULES.md)。它们存在是为了以后接，而不是用旧构建覆盖本壳。
+- `docs/MANAGER-MIGRATION-SOURCE.json` 是原始 tracked snapshot，保持不改；迁移后的打包增量另记在 `docs/MANAGER-MIGRATION-INCREMENTAL.md`。
+- `scripts/assert-no-payloads.mjs` 扫描源码和工作树中的实际文件，跳过 node_modules、release、deliveries 和合法 ignored stage；Windows 使用 `fileURLToPath` 解析脚本路径。
+- 源码、已跟踪资源和文档不得包含 DLL、`.addon64`、`nvngx_*`、私钥或签名材料。stage 是临时构建输入，交付物留在仓库外。
+- CLI 的 pin 是版本策略，不是二进制认证；Manager 的 staging SHA-256 是构建前输入检查，也不替代真实游戏/Core 接口验收。
+
+## 未来接口
+
+Bridge、Feeder、host 和 Vulkan 的新版本按已有清单、接口与路线合同接入，见 [COMPONENT-PACKS.md](docs/COMPONENT-PACKS.md)。来源校验、预检通过和真实游戏验收分别记录；显式 staging 候选不会自动变成稳定兼容记录。需要新增资源种类时，扩展对应白名单和测试，保持 NR runtime 按显卡族共享，不能恢复旧的整包 `extraResources` 列表。

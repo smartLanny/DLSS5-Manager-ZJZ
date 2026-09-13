@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "provider": "mfgunlock-0.7-zh-CN",
+  "localSafetyPatches": [
+    {
+      "id": "flip-metering-serialization-v1",
+      "files": {
+        "patch_gate.hpp": "d5ff66f0c1cdb52367796fa854a6d89c58a89d07857472cfdd72f6bc359487a8"
+      }
+    }
+  ],
+  "upstream": {
+    "repository": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx",
+    "archiveSha256": "3deedace278de6d9452529f945908be78988aef7db14711a7f6ba9b1ddd2d9fd",
+    "files": {
+      "addon.cpp": "05d7bcda9bffe64721c99fc0d19470108e7535dfe0887414864fbfdd4545d148",
+      "framecount.hpp": "e328021a64c7271495f7e4fadb7c9b1724ad985b53aa11a2e97848bd54dc6613",
+      "hdr_compat.hpp": "a5ff759de851a60122866369b71a3a2caf4f3815c14a2135a295312aa9597aa4",
+      "LICENSE": "4ce922ecb6aa4b60d24f63f6241f0436e960a00989d71c68e2eb81ecc3d718fd",
+      "loadhook.hpp": "b4ed62379d72ec801c5c034aff261af7868652dc814de33c345fa458abaa1e76",
+      "midpoint.hpp": "23e42dacbe2bcf6ee527e97e940158ed18d378a5d7c7e14a51598aa814e66b48",
+      "ngx_hook.hpp": "b413c4a1c0bf1e4613f1e28c03b2450113cfcc89b57d6798cd63d21c943bb075",
+      "quality_guard.hpp": "cf08962147816b55664e7d069954cae107e68e6b76724731c9529e87953e4bc8",
+      "README.md": "59707735445f072c80f349eafcf73a51be5467699db2adde91cf806f757ecd2d"
+    },
+    "commit": "ffe6169b5e98ad578fcf2c30614d06a567790fe1"
+  },
+  "renodx": {
+    "commit": "8d360960a8bdeccada1a1babf7f02215c15c82e8",
+    "repository": "https://github.com/clshortfuse/renodx"
+  },
+  "dependencies": [
+    {
+      "relative": "external/reshade",
+      "files": {
+        "include/reshade_api_device.hpp": "87b98725841048689d3ff884305c8bded2f1ee1771b8c62fc473e9ad0139f739",
+        "include/reshade_api_format.hpp": "d5fcdf598a9adbd18db6ccd0d15133d08c4dfa4909ec8335f76edaf735ae39cf",
+        "include/reshade_api_pipeline.hpp": "b32e15acdb09b211f3f3d0dbb4cf96c499bb2095d9f8343dedc064d89ee2dc66",
+        "include/reshade_api_resource.hpp": "c51990d57d3e2f81818a91bb612ef4a9d3667b0a10d260ef723d6e124fe8610c",
+        "include/reshade_api.hpp": "db19051ef285a7a1a3721f2711de973be8805d4ca39a38fbadade7fd22100a17",
+        "include/reshade_events.hpp": "907b6fbcdebcd0b5c40097bb2830a897c20e5bdb7a5e34298e132debdb790cb9",
+        "include/reshade_overlay.hpp": "771f0cdde2dacd21cfe04664e1aaaddae43114a1abb51bb63af5645a88c217a6",
+        "include/reshade.hpp": "fbe822c05d028efd5395d95f9ab3cc62eee490968b0c05a361f08846cb981576",
+        "deps/imgui/imgui.h": "2ca314d19c7e1ea85687a9c1e37079e0cc823939a551b3e6b2453ff0af9fbf13",
+        "deps/imgui/imconfig.h": "fb8e32b9af9aa7dad5ec5c5bc862537f5624cb39a814e6d3b36b4629a50b6599"
+      },
+      "commit": "4a50d1eddace85734871d91792ff214f13f66c01",
+      "id": "reshade"
+    },
+    {
+      "relative": "external/Streamline",
+      "files": {
+        "include/sl_appidentity.h": "1337385ac9867d66fa6beb34c750e79aaf25a74a156a47e83f24937299dade87",
+        "include/sl_consts.h": "17de74afda2cb96204ff380464bed926f660d92015fe0304dff4e329509c88b9",
+        "include/sl_core_api.h": "328dc3a2c1dee579c200ca97e2d5b1ec38c893be4ba2745ef5ad506af7172e81",
+        "include/sl_core_types.h": "d0a4bc9d2efac5aa2d6171eb93f10e59a856c334a786536c0a871608ee8a877f",
+        "include/sl_deepdvc.h": "c6086ffe6b1e00588368fdb91e4ab9dd9617624e0e4344cd503a2ca73e46d1a4",
+        "include/sl_device_wrappers.h": "af7741305b1a468c3a83efaa2005ecd53d2ffd7aadb8ec6868c9dcb4a8a8e3a1",
+        "include/sl_directsr.h": "65d4e68b2a0f0425ea4d381379172197b81352a50a5e399a8e8f51953e765c71",
+        "include/sl_dlss_d.h": "a726e8135f2e36ad3939ce852530a879e1d909b85539c20c8cb5029ab122f2c4",
+        "include/sl_dlss_g.h": "1fc18cbe004e280df1f787276d08a1b28b8a8c4c65856fbaa659f56dff6a915d",
+        "include/sl_dlss.h": "d2c8c61fa71794c8ba424cebce5b3079ebfab8e47ed98b4b00cf8b257ecfd6b5",
+        "include/sl_helpers_vk.h": "82604567d239d00ac0ac2270cec744f6f11266e1d9d5187a95d4954f76d8c41c",
+        "include/sl_helpers.h": "f4c5f8e1c8becaf03ec0411dd2237cac3d156988950b93c2498f59ccc3db3261",
+        "include/sl_hooks.h": "cfeff70a52e1cc012cf4c955a15cc9d0b290f7e084dcb3c0168a9af06ff8f122",
+        "include/sl_matrix_helpers.h": "a65758d85abba1e12845d266d7d5e36aaefa952383cdf093f3143cd6d8653341",
+        "include/sl_nis.h": "f45be3cf149200e1eae081cd144c95726a7a290a89822a5d52b9f538e52484aa",
+        "include/sl_nvperf.h": "025f9f1c8482e75a90f8b8efccdc9cfc53a9fc8b05ba3acc6c3783708b66bd69",
+        "include/sl_pcl.h": "f43c5135fc8d5349ccd345e424f8cf1f61953a9f17e9897204b0741a3ab7b0fb",
+        "include/sl_reflex.h": "3b623a1189e04a686384d224a58c4ad9974c4e6e3204077676f6ec529475164c",
+        "include/sl_result.h": "2a0f6c12863bdc00b38910a5ec85d1f083c5671ee817a920afe626ac2a9100f7",
+        "include/sl_security.h": "a36b1c20394402bee7ce738089a5a1305ff6e9dd9dd517566154ce834f7c32b4",
+        "include/sl_struct.h": "885d694bb26a6319279efa74ee16b7c6eaad23febe3251b0a6623d53ca028bb9",
+        "include/sl_template.h": "af2d4a61361f2603872dcb6edc86cc9e18912762a5c03e6a782ff39a8c3b871b",
+        "include/sl_version.h": "46c827879cd81f459db908544f054c5620640a6f3801763aeebb12cc29f17807",
+        "include/sl.h": "e1e81a7428d15b30db37587e9469bd68a56d630d820a4accec0aee3b17e157dd"
+      },
+      "commit": "e8aaa6eaac968711fb62473d4ae8256dde20919b",
+      "id": "streamline"
+    },
+    {
+      "relative": "external/DLSS",
+      "files": {
+        "include/nvsdk_ngx_defs_dlssd.h": "019036e5157c82431cb6aba7c0ff76110dae196300a3ea211d3b75376e137e1d",
+        "include/nvsdk_ngx_defs_dlssg.h": "c45756c6e97c524365ebaa74362b6b0aadcf57b4320f6e504d09047e0cf16a8c",
+        "include/nvsdk_ngx_defs_vk.h": "43b821c5d297d86165e6d2f96a476f5c30f2158c7d5a0451425c6b927abfec88",
+        "include/nvsdk_ngx_defs.h": "a9481cbc78d53ee56639f0a573ec095c6c1ea1e5f296d139c20c42bf342c2e1b",
+        "include/nvsdk_ngx_helpers_dlssd_cuda.h": "32a74447c395586dd8c8c4d1ef29df1a327a040dc12b01a101723dc083c47bf1",
+        "include/nvsdk_ngx_helpers_dlssd_vk.h": "89351368b07b0afa28e0923de1b0276991efb9b5e95922c89047dfcfce70bb7d",
+        "include/nvsdk_ngx_helpers_dlssd.h": "be5ecfc8f5ecb17861600485ce9fb617dc56faa5f79ee1525081a54bf4281475",
+        "include/nvsdk_ngx_helpers_dlssg_vk.h": "1d66e940bee5483a6e6e57ab9496367e1b1950511e6f09aef41c31086ca21bb0",
+        "include/nvsdk_ngx_helpers_dlssg.h": "cae8dfbecdeb4cf84de73dec7ef547a017ea9d85830e0bdc5312f10083565fab",
+        "include/nvsdk_ngx_helpers_vk.h": "754697d9faa93913985fc91fceae2073763461710d742a1f262ced2a7b6b62c9",
+        "include/nvsdk_ngx_helpers.h": "c46628f150c6edee245758c878fc0af2b70f7ce582744729647cdb1969c21895",
+        "include/nvsdk_ngx_params_dlssd.h": "7e4fc6d5c84b436d31e289f863762a178ab2ef5d8c1ff40b614b01b342385f05",
+        "include/nvsdk_ngx_params_dlssg.h": "82b1d573b4b48d4cefc26ac01162a45646d99f0b84806dac9db3516cc5f733b5",
+        "include/nvsdk_ngx_params.h": "51a1f94116cf82f95c63a2c197371ed22e08bddb09918d36cc6e2ac712753c80",
+        "include/nvsdk_ngx_vk.h": "3be54d0103cce02174fd34912c60c9f40c73b5eec919e42613a2268c589c53ad",
+        "include/nvsdk_ngx.h": "35d19dba363786d27d11536a4628a430596477f39dbfed5eae482132ae6e794a"
+      },
+      "commit": "a291cc7d2cc642a51566f3dfd5376f635cd1b284",
+      "id": "dlss"
+    }
+  ],
+  "detours": {
+    "repository": "https://github.com/microsoft/Detours",
+    "archiveSha256": "1ba48ada2f1c799bbaf04839dbcf39be1d1a3e8fac32603d0dd8ced35d922087",
+    "commit": "9764cebcb1a75940e68fa83d6730ffaf0f669401"
+  },
+  "abi": {
+    "msvcToolset": "14.44.35207",
+    "reshadeApi": 18,
+    "architecture": "x64",
+    "encoding": "UTF-8",
+    "windowsSdk": "10.0.26100.0",
+    "imguiVersion": 19250
+  }
+}

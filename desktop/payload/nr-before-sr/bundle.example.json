@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-05T00:00:00.000Z",
+  "files": {
+    "ReShade64.dll": "replace-with-sha256",
+    "nr-before-sr.zh-CN.addon64": "replace-with-sha256",
+    "nrchain_nvngx.dll": "replace-with-sha256",
+    "nvngx_dlssnr.dll": "replace-with-sha256",
+    "nr_before_sr.ini": "replace-with-sha256"
+  }
+}
