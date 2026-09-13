@@ -15,6 +15,10 @@ const REQUIRED_RESOURCES = [
 ];
 const REQUIRED_ROOT_FILES = ['启动诊断.cmd', 'startup-diagnostics.ps1', '兼容启动.cmd', 'startup-compatible.ps1'];
 
+const LEGACY_FG_METADATA_FILES = Object.freeze(['manifest.json', 'LICENSE', 'MINHOOK-LICENSE.txt', 'UAL-LICENSE', 'global.ini']);
+const LEGACY_FG_ROLES = Object.freeze(['core', 'asi', 'overlay', 'ual', 'ualConfig']);
+const LEGACY_FG_BINARY = /\.(?:dll|asi|addon(?:32|64)?)$/i;
+
 function fail(message, details = {}) { throw Object.assign(new Error(message), { code: 'ERR_EXTERNAL_PACKAGE_INVALID', details }); }
 
 function isNonemptyFile(file) {
@@ -48,6 +52,28 @@ function walkNames(root, limit = 10000) {
   return rows;
 }
 
+function verifyLegacyFgMetadata(resources) {
+  const root = path.join(resources, 'fg-components');
+  const files = walkNames(root).map(name => String(name).replace(/\\/g, '/'));
+  const expected = [...LEGACY_FG_METADATA_FILES];
+  const missing = expected.filter(name => !files.includes(name));
+  const unexpected = files.filter(name => !expected.includes(name));
+  const binaries = files.filter(name => LEGACY_FG_BINARY.test(path.posix.basename(name)));
+  if (binaries.length) fail('外部组件版旧 FG 目录中不应包含二进制文件。', { files: binaries });
+  if (missing.length || unexpected.length) fail('外部组件版旧 FG 元数据清单不完整或包含未授权文件。', { missing, files: unexpected });
+  let manifest;
+  try { manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8')); }
+  catch (error) { fail('外部组件版旧 FG manifest.json 无效。', { cause: error.message }); }
+  if (!manifest || manifest.version !== 1 || manifest.protocol !== 11 || typeof manifest.id !== 'string' || !manifest.id ||
+      !manifest.files || LEGACY_FG_ROLES.some(role => {
+        const row = manifest.files[role];
+        return !row || typeof row.file !== 'string' || path.basename(row.file) !== row.file || !/^[a-f0-9]{64}$/i.test(String(row.sha256 || ''));
+      }) || !Array.isArray(manifest.ualProxyNames) || manifest.ualProxyNames.length < 1 ||
+      manifest.ualProxyNames.some(name => !['dinput8.dll', 'version.dll', 'winmm.dll'].includes(String(name).toLowerCase())))
+    fail('外部组件版旧 FG manifest.json 结构无效。');
+  return { files: expected.map(name => 'fg-components/' + name), manifestId: manifest.id, metadataOnly: true };
+}
+
 function verifyExternalPackage(selected) {
   const resources = resourcesDirectory(selected), archive = path.join(resources, 'app.asar');
   const asarEntries = asar.listPackage(archive);
@@ -66,13 +92,9 @@ function verifyExternalPackage(selected) {
   if (missing.length) fail('外部组件版缺少有效的开源组件、许可证或系统辅助脚本。', { files: missing });
   const missingRoot = REQUIRED_ROOT_FILES.filter(name => !isNonemptyFile(path.join(path.dirname(resources), name)));
   if (missingRoot.length) fail('外部组件版根目录缺少有效的启动诊断文件。', { files: missingRoot });
-  const fgManifest = JSON.parse(fs.readFileSync(path.join(resources, 'fg-components', 'manifest.json'), 'utf8'));
-  for (const row of Object.values(fgManifest.files || {})) {
-    if (!row || typeof row.file !== 'string' || path.basename(row.file) !== row.file || !fs.existsSync(path.join(resources, 'fg-components', row.file)))
-      fail('外部组件版 FG 资源不完整。', { file: row && row.file });
-  }
+  const legacyMetadata = verifyLegacyFgMetadata(resources);
   return { ok: true, resources, asarEntries: asarEntries.length, payloadBundled: false,
-    retained: REQUIRED_RESOURCES, retainedRootFiles: REQUIRED_ROOT_FILES, forbiddenFiles: [] };
+    retained: REQUIRED_RESOURCES, retainedRootFiles: REQUIRED_ROOT_FILES, legacyMetadata, forbiddenFiles: [] };
 }
 
 if (require.main === module) {
@@ -80,4 +102,4 @@ if (require.main === module) {
   catch (error) { console.error(JSON.stringify({ ok: false, error: error.message, details: error.details || {} }, null, 2)); process.exitCode = 1; }
 }
 
-module.exports = { verifyExternalPackage, resourcesDirectory, FORBIDDEN, REQUIRED_RESOURCES, REQUIRED_ROOT_FILES };
+module.exports = { verifyExternalPackage, verifyLegacyFgMetadata, resourcesDirectory, FORBIDDEN, REQUIRED_RESOURCES, REQUIRED_ROOT_FILES, LEGACY_FG_METADATA_FILES, LEGACY_FG_ROLES };

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { prepareCoreCatalog } = require('../scripts/prepare-core-catalog');
+const { inspectManifest } = require('../scripts/stage-manager-distribution.cjs');
 
 test('build preparation retains visible update-only candidate labels and the existing default', () => {
   const candidates = {
@@ -104,16 +105,14 @@ test('beta0.4.7 full DX11 package replaces 0.4.6 while retaining the stable base
   assert.deepEqual(prepareCoreCatalog(bundle).bundle, bundle);
 });
 
-test('release resources exclude superseded 0.4.5 and original 0.4.6 while retaining hotfix', () => {
-  const filters = require('../package.json').build.extraResources.find(row => row.from === 'payload').filter;
-  const minimatch = require('minimatch'), matches = typeof minimatch === 'function' ? minimatch : minimatch.minimatch;
-  const included = file => filters.some(pattern => !pattern.startsWith('!') && matches(file, pattern)) &&
-    !filters.some(pattern => pattern.startsWith('!') && matches(file, pattern.slice(1)));
-  for (const version of ['0.4.5', '0.4.5-ota', '0.4.6', '0.4.6-ota'])
-    assert.equal(included(`nr-before-sr/versions/${version}/nr-before-sr.zh-CN.addon64`), false, `${version} is retired`);
-  for (const version of ['0.2.0-beta.2', '0.3.3-dev-r4', '0.3.3.5', '0.4.2', '0.4.6-hotfix.1'])
-    assert.equal(included(`nr-before-sr/versions/${version}/nr-before-sr.zh-CN.addon64`), true, `${version} remains distributable`);
-  assert.equal(included('nr-before-sr/bundle.json'), true);
+test('dynamic staging rejects explicit D13 and D14 Core selections before packaging', async t => {
+  const root = temporary(t);
+  for (const version of ['0.5-dline13', '0.5-dline14']) {
+    const file = path.join(root, version + '.json');
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, packageVersion: '0.5.0-beta.1', core: { version, payloadRoot: '.' } }));
+    await assert.rejects(inspectManifest(file, 'base'), /D13\/D14/);
+  }
+  assert.deepEqual(require('../package.json').build.extraResources, []);
 });
 
 test('PE manifest verification reads PE32 and PE32+ resources including UTF-16', t => {

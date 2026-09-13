@@ -54,7 +54,9 @@
 | `base` | Electron、默认 Core、ReShade、`nrchain_nvngx.dll`、MFG 0.9、Bridge candidate-staged/候选包，以及清单中 `includeIn` 命中的小组件 | 两个大型 `nvngx_dlssnr.dll`、未列入 staging 的 Feeder/Vulkan/legacy runtime |
 | `offline` | base 全部内容，加 RTX40 一份和 RTX50 一份 `nvngx_dlssnr.dll`，以及同样命中的小组件 | 其他重复的 Feeder/Vulkan/legacy runtime |
 
-stage 位于 `desktop/.packaging-stage/<flavor>`，被 Git 忽略，只用于当前构建。交付位于仓库外的 `../deliveries/`。构建清理的路径被限制在这两个目录，避免把用户的源目录当作输出。
+stage 位于 `desktop/.packaging-stage/<flavor>`，被 Git 忽略，只用于当前构建。交付位于本仓根目录的 `deliveries/`（从 desktop 看是 `../deliveries/`），也被 Git 忽略。构建清理限于这两个输出区域。
+
+两种 flavor 都保留系统辅助脚本，以及 `fg-components` 的五个恢复元数据和许可证文件，供旧安装记录识别与恢复使用；该静态清单不会附带旧 FG/UAL 二进制。
 
 ## 命令
 
@@ -62,7 +64,7 @@ stage 位于 `desktop/.packaging-stage/<flavor>`，被 Git 忽略，只用于当
 # 共享 CLI/Desktop contract 生成需要仓库根目录的 TypeScript 依赖
 npm ci
 cd desktop
-npm install
+npm ci
 $env:DLSS5_MANAGER_STAGING = 'C:\path\manager-distribution-staging.json'
 
 # 只读核对外部输入，不生成交付物
@@ -77,9 +79,23 @@ npm run build:offline
 # 只需要 portable 时
 npm run build:portable
 npm run build:offline:portable
+
+# 无需 Core/NR 资产的外部组件版，适合验证桌面源码打包
+npm run build:external
 ```
 
-`build-manager.cjs` 会先从仓库根目录生成共享 CLI/Desktop contract，再生成 stage、运行图标生成和 Electron Builder。独立运行 `desktop` 的 `npm start` 也会先生成该 contract。它不调用旧的全量 `extraResources` 列表，因此不会把 `resources/feeder-runtime`、`resources/vulkan-runtime`、`resources/legacy-runtime` 中的 runtime 重复复制进包；基础包只复制上述四个 Vulkan ReShade layer 文件。输出目录写入 `packaging-report.json`，其中包含 flavor、Core 版本、MFG 摘要和最终 artifact 路径。
+`build-manager.cjs` 会先从仓库根目录生成共享 CLI/Desktop contract，再生成 stage、运行图标生成、核对实际打包资源的分发策略和调用 Electron Builder。独立运行 `desktop` 的 `npm start`、`test:unit`、`test:game-page` 和 `build:external` 也会生成该 contract。它不调用旧的全量 `extraResources` 列表，因此不会把 `resources/feeder-runtime`、`resources/vulkan-runtime`、`resources/legacy-runtime` 中的 runtime 重复复制进包；基础包只复制上述四个 Vulkan ReShade layer 文件。
+
+base/offline 输出目录写入 `build-config.json` 和 `packaging-report.json`；后者记录 flavor、Core 版本、MFG 摘要、最终 artifact 路径，以及本次构建配置的路径与 SHA-256。配置保留实际 stage 的绝对路径，只供本地验包，不提交 Git。`--dry-run` 会生成 stage 并返回规划结果，不删除既有交付目录，也不创建离线 ZIP。
+
+验包时，使用该次构建保存的配置，并保留对应源代码、stage 和 Electron 依赖。配置必须位于待验 `win-unpacked` 目录之外：
+
+```powershell
+node scripts/verify-distribution-policy.js --build-config ../deliveries/DLSS5-Manager-0.5.0-beta.1-base/build-config.json
+node scripts/verify-manager-release.js --dir ../deliveries/DLSS5-Manager-0.5.0-beta.1-base/win-unpacked --build-config ../deliveries/DLSS5-Manager-0.5.0-beta.1-base/build-config.json --nsis-dir "$env:LOCALAPPDATA/electron-builder/Cache/nsis/nsis-3.0.4.1" --output build/base-verification.json
+```
+
+验证器按实际配置检查 stage 和附带文件的摘要；动态构建未提供配置时直接报错，避免把空静态资源列表误判为验包通过。`--nsis-dir` 应指向该次构建所用、含 `elevate.exe` 的可信 NSIS 工具目录；更换 builder 工具版本或缓存位置后相应更新。`build:external` 使用单独的静态资源白名单，输出到 `desktop/dist-external/`，并自动运行 `verify:external`。
 
 当前实际构建的 base 与 offline 报告都记录同一个 D16 source package：`1613306` bytes、上述 SHA-256；这能追溯到 D16 canonical 包，不会把旧 D13/D14/D15 目录误当作默认 Core。
 

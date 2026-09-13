@@ -22,7 +22,7 @@ const skippedDirectories = new Set([
   ".git", "node_modules", "dist", "release", "releases", "deliveries",
   ".packaging-stage", "coverage", "build", "out", "output",
 ]);
-const allowedGeneratedPrefixes = ["desktop/.packaging-stage/"];
+const allowedGeneratedPrefixes = ["desktop/.packaging-stage/", "desktop/dist-external/"];
 const privateKeyHeader = /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/;
 const found = [];
 
@@ -73,7 +73,7 @@ try {
 }
 for (const file of tracked) {
   const name = file.split("/").at(-1) || "";
-  if (looksBlocked(file, name) && isAllowedGenerated(`${file}/`)) found.push({ file, reason: "tracked-payload-in-stage" });
+  if (looksBlocked(file, name) && isAllowedGenerated(`${file}/`)) found.push({ file, reason: "tracked-payload-in-generated-output" });
 }
 
 if (found.length > 0) {

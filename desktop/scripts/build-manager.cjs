@@ -8,19 +8,13 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const { stageDistribution } = require('./stage-manager-distribution.cjs');
+const { resourceCopies, STATIC_RESOURCE_FILES, LEGACY_FG_RESOURCE_FILES, ALL_STATIC_RESOURCE_FILES } = require('./static-resources.cjs');
+const { verifyDistributionPolicy } = require('./verify-distribution-policy.js');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(APP_ROOT, '..');
 const DEFAULT_MANIFEST = process.env.DLSS5_MANAGER_STAGING || path.resolve(APP_ROOT, '..', 'manager-distribution-staging.json');
 const PACKAGE = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8'));
-const STATIC_RESOURCE_FILES = [
-  ['src/product/nvapi-drs.ps1', 'nvapi-drs.ps1'],
-  ['src/product/nvapi-profile.ps1', 'nvapi-profile.ps1'],
-  ['src/product/windows-registry-values.ps1', 'windows-registry-values.ps1'],
-  ['src/product/launcher-locations.ps1', 'launcher-locations.ps1'],
-  ['src/product/game-launch-broker.ps1', 'game-launch-broker.ps1']
-];
-
 function fail(message) { throw new Error(message); }
 
 function parseArgs(args) {
@@ -50,13 +44,6 @@ function assertOutsideRepo(directory) {
   }
 }
 
-function ensureExistingRows(rows) {
-  for (const [source, target] of rows) {
-    if (!fs.existsSync(path.join(APP_ROOT, source))) fail(`打包辅助文件缺失：${source}`);
-    if (!target) fail(`打包辅助文件目标为空：${source}`);
-  }
-}
-
 function runIconBuild() {
   const electron = path.join(APP_ROOT, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
   const result = spawnSync(electron, ['scripts/build-icon.js'], { cwd: APP_ROOT, stdio: 'inherit', windowsHide: true, shell: process.platform === 'win32' });
@@ -75,8 +62,7 @@ function runSharedContractBuild() {
 }
 
 function staticResources() {
-  ensureExistingRows(STATIC_RESOURCE_FILES);
-  return STATIC_RESOURCE_FILES.map(([from, to]) => ({ from, to }));
+  return resourceCopies({ root: APP_ROOT });
 }
 
 function hashFile(file) {
@@ -128,18 +114,31 @@ function buildConfig({ stageRoot, flavor, outputRoot, portableOnly }) {
 
 async function buildManager(options = {}) {
   const flavor = options.flavor || 'base';
-  const outputRoot = path.resolve(options.outputRoot || path.join(APP_ROOT, '..', 'deliveries', `DLSS5-Manager-${PACKAGE.version}-${flavor}`));
+  const outputRoot = path.resolve(options.outputRoot || path.join(APP_ROOT, '..', 'deliveries', 'DLSS5-Manager-' + PACKAGE.version + '-' + flavor));
+  const dryRun = options.dryRun === true;
   assertOutsideRepo(outputRoot);
-  fs.mkdirSync(path.dirname(outputRoot), { recursive: true });
-  if (fs.existsSync(outputRoot)) fs.rmSync(outputRoot, { recursive: true, force: true });
+  if (!dryRun) {
+    fs.mkdirSync(path.dirname(outputRoot), { recursive: true });
+    if (fs.existsSync(outputRoot)) fs.rmSync(outputRoot, { recursive: true, force: true });
+  }
   runSharedContractBuild();
   const stageRoot = path.join(APP_ROOT, '.packaging-stage', flavor);
   const stage = await stageDistribution({ manifestFile: options.manifestFile || DEFAULT_MANIFEST, flavor, outputRoot: stageRoot });
   const config = buildConfig({ stageRoot, flavor, outputRoot, portableOnly: options.portableOnly === true });
   const summary = { packageVersion: PACKAGE.version, flavor, stage, outputRoot, portableOnly: options.portableOnly === true };
+  if (dryRun) {
+    if (flavor === 'offline') summary.runtimePackage = { dryRun: true, entries: ['RTX40/nvngx_dlssnr.dll', 'RTX50/nvngx_dlssnr.dll'] };
+    return summary;
+  }
+  fs.mkdirSync(outputRoot, { recursive: true });
+  const buildConfigPath = path.join(outputRoot, 'build-config.json');
+  fs.writeFileSync(buildConfigPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+  summary.buildConfig = { path: buildConfigPath, sha256: await hashFile(buildConfigPath) };
   if (flavor === 'offline') summary.runtimePackage = await createOfflineRuntimeZip(stageRoot, outputRoot);
-  if (options.dryRun) return summary;
   runIconBuild();
+  const distributionPolicy = await verifyDistributionPolicy(APP_ROOT, { buildConfig: config });
+  if (!distributionPolicy?.ok) fail('分发策略校验失败：' + JSON.stringify(distributionPolicy));
+  summary.distributionPolicy = distributionPolicy;
   let build;
   try { ({ build } = require('electron-builder')); }
   catch (error) { fail(`缺少 electron-builder；请先在 desktop 执行 npm install。${error.message}`); }
@@ -154,4 +153,4 @@ if (require.main === module) {
     .catch(error => { console.error(JSON.stringify({ ok: false, error: error.message, details: error.details }, null, 2)); process.exitCode = 1; });
 }
 
-module.exports = { buildManager, buildConfig, parseArgs, STATIC_RESOURCE_FILES, runSharedContractBuild };
+module.exports = { buildManager, buildConfig, parseArgs, staticResources, STATIC_RESOURCE_FILES, LEGACY_FG_RESOURCE_FILES, ALL_STATIC_RESOURCE_FILES, runSharedContractBuild };

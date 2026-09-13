@@ -10,6 +10,7 @@
     "prestart": "node ../scripts/build-desktop-contract.mjs",
     "start": "electron .",
     "test": "npm run test:unit && npm run test:ui-contract",
+    "pretest:unit": "node ../scripts/build-desktop-contract.mjs",
     "test:unit": "node --test --test-concurrency=1 test/*.test.js",
     "test:ui-contract": "node scripts/check-ui.js",
     "verify:vendor": "node scripts/verify-vendor.js",
@@ -24,13 +25,14 @@
     "build:offline:portable": "node scripts/build-manager.cjs --flavor offline --portable",
     "verify:fg-components": "node scripts/verify-fg-components.js",
     "verify:execution-level": "node scripts/verify-execution-level.js",
-    "build:external": "npm run icon && npm run verify:vendor && npm run verify:fg-components && npm run verify:fg-mfgunlock && electron-builder --win --config scripts/external-build-config.cjs && npm run verify:external",
+    "build:external": "node ../scripts/build-desktop-contract.mjs && npm run icon && npm run verify:vendor && electron-builder --win --config scripts/external-build-config.cjs && npm run verify:external",
     "verify:external": "node scripts/verify-external-package.cjs dist-external/win-unpacked",
     "verify:fg-mfgunlock": "node scripts/verify-fg-mfgunlock.js",
     "verify:feeder-runtime": "node scripts/verify-feeder-runtime.js",
     "verify:legacy-runtime": "node scripts/verify-legacy-runtime.js",
     "verify:loading-helper": "node scripts/verify-loading-helper.js",
     "verify:distribution": "node scripts/verify-distribution-policy.js",
+    "pretest:game-page": "node ../scripts/build-desktop-contract.mjs",
     "test:game-page": "electron test/game-page-frontend.electron.cjs"
   },
   "dependencies": {

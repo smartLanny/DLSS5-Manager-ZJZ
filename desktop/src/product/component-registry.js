@@ -59,8 +59,12 @@ function selectNativeComponents(payloadDir, payload, { api, bridgeId, installedH
   }
   const pinned = bridgeByHash(installedHash);
   const imports = importedBridges(componentRoot, payload.versionInfo, installedHash, gameId);
-  const imported = bridgeId ? imports.find(row => row.id === bridgeId) : imports.find(row => row.installed) ||
-    (!installedHash && imports.find(row => row.compatible && row.ready));
+  // Imported candidates are opt-in. A new install has no ownership evidence,
+  // so keep the payload's verified companion instead of silently adopting a
+  // candidate that only passed metadata checks. An existing hash may repair
+  // the exact imported component it already owns.
+  const imported = bridgeId ? imports.find(row => row.id === bridgeId) :
+    (installedHash ? imports.find(row => row.installed) : null);
   if (imported) {
     if (!imported.compatible || !imported.ready) fail('COMPONENT_BRIDGE_CORE', imported.contract.message);
     const stat = fs.lstatSync(imported.file);

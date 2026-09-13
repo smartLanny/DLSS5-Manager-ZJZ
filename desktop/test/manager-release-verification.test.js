@@ -85,3 +85,32 @@ test('report output must be outside the read-only candidate tree', () => {
   assert.throws(() => parseArguments(['--dir', 'candidate', '--output', 'candidate/../candidate/report.json']), /outside/);
   assert.equal(parseArguments(['--dir', 'candidate', '--output', 'report.json']).output, 'report.json');
 });
+
+test('dynamic stage configuration is required and hashes its absolute source inventory', async t => {
+  const input = await fixture(t), file = path.join(input.sourceRoot, 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(file, 'utf8')), config = structuredClone(pkg.build);
+  config.extraResources[0].from = path.join(input.sourceRoot, config.extraResources[0].from);
+  pkg.scripts = { 'build:base': 'dynamic-manager-build' }; pkg.build.extraResources = [];
+  fs.writeFileSync(file, JSON.stringify(pkg));
+  await assert.rejects(verifyManagerRelease(input), /require --build-config/);
+  await assert.rejects(verifyManagerRelease({ ...input, buildConfig: { ...config, files: [] } }), /must include files/);
+  const report = await verifyManagerRelease({ ...input, buildConfig: config });
+  assert.equal(report.ok, true); assert.equal(report.explicitBuildConfig, true);
+  assert.ok(report.files.some(row => row.kind === 'extra-resource' && row.file === 'resources/runtime/active.bin'));
+  put(input.sourceRoot, 'resources/runtime/active.bin', 'changed staged component');
+  const changed = await verifyManagerRelease({ ...input, buildConfig: config });
+  assert.equal(changed.ok, false);
+  assert.ok(changed.failed.some(row => row.file === 'resources/runtime/active.bin'));
+});
+
+test('a candidate cannot supply its own supposedly trusted build configuration', async t => {
+  const input = await fixture(t), pkg = JSON.parse(fs.readFileSync(path.join(input.sourceRoot, 'package.json'), 'utf8'));
+  const buildConfigFile = path.join(input.directory, 'build-config.json');
+  fs.writeFileSync(buildConfigFile, JSON.stringify(pkg.build));
+  await assert.rejects(verifyManagerRelease({ ...input, buildConfigFile }), /outside the candidate/);
+  const trusted = path.join(input.sourceRoot, 'trusted-build.json');
+  fs.writeFileSync(trusted, JSON.stringify(pkg.build));
+  fs.unlinkSync(buildConfigFile);
+  assert.equal((await verifyManagerRelease({ ...input, buildConfigFile: trusted })).ok, true);
+  assert.equal(parseArguments(['--dir', input.directory, '--build-config', trusted]).buildConfigFile, trusted);
+});

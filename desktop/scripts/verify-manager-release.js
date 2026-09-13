@@ -9,6 +9,7 @@ const asar = require('@electron/asar');
 const minimatchModule = require('minimatch');
 const minimatch = minimatchModule.minimatch || minimatchModule;
 const { verifyExecutable } = require('./verify-execution-level');
+const { verificationConfig } = require('./build-verification-config.cjs');
 
 const STARTUP_FILES = [
   'main.js', 'preload.js', 'src/product/startup-diagnostics.js', 'src/product/startup-elevation.js',
@@ -57,12 +58,14 @@ function matches(file, filters) {
   return (!include.length || include.some(pattern => minimatch(file, pattern, { dot: true }))) &&
     !filters.filter(value => value.startsWith('!')).some(pattern => minimatch(file, pattern.slice(1), { dot: true }));
 }
-function sourceCopies(sourceRoot, specs, destinationPrefix = '') {
+function sourceCopies(sourceRoot, specs, destinationPrefix = '', { allowAbsoluteSources = false } = {}) {
   const rows = [];
   for (const spec of specs || []) {
     if (!spec || typeof spec.from !== 'string' || typeof spec.to !== 'string') throw new Error('Expected explicit from/to build copy specifications.');
-    const from = relativePath(slash(spec.from)), to = relativePath(slash(spec.to));
-    const source = path.join(sourceRoot, from), stat = fs.statSync(source);
+    const from = allowAbsoluteSources && path.isAbsolute(spec.from) ? path.resolve(spec.from) : relativePath(slash(spec.from));
+    const to = relativePath(slash(spec.to));
+    const source = path.resolve(sourceRoot, from), stat = fs.lstatSync(source);
+    if (stat.isSymbolicLink()) throw new Error(`Build source must not be a filesystem link: ${from}`);
     if (stat.isFile()) rows.push({ source: from, file: slash(path.join(destinationPrefix, to)) });
     else if (stat.isDirectory()) {
       const names = walk(source).filter(file => matches(file, spec.filter));
@@ -114,12 +117,15 @@ function startupContract(read) {
     { name: 'startup-ui', ok: /<script\s+src=["']startup-ui\.js["']/.test(html) && /startupReady/.test(preload) }
   ];
 }
-async function verifyManagerRelease({ directory, sourceRoot = path.resolve(__dirname, '..'), electronDist, nsisDir } = {}) {
+async function verifyManagerRelease({ directory, sourceRoot = path.resolve(__dirname, '..'), electronDist, nsisDir, buildConfig, buildConfigFile } = {}) {
   if (!directory) throw new Error('Provide the full win-unpacked directory.');
   directory = path.resolve(directory); sourceRoot = path.resolve(sourceRoot);
   if (fs.lstatSync(directory).isSymbolicLink()) throw new Error('Candidate root must be a real directory.');
   const inventory = walk(directory, { rejectLinks: true });
   const sourcePackage = readJson(path.join(sourceRoot, 'package.json'));
+  const resolved = verificationConfig(sourceRoot, sourcePackage, { buildConfig, buildConfigFile, directory });
+  const config = resolved.config;
+  if (!config.files?.length) throw new Error('Trusted release build configuration must include files.');
   if (sourcePackage.main !== 'main.js' || !sourcePackage.build?.productName) throw new Error('Unexpected trusted manager package identity.');
   electronDist = path.resolve(electronDist || path.dirname(require('electron')));
   const archive = path.join(directory, 'resources/app.asar');
@@ -140,7 +146,7 @@ async function verifyManagerRelease({ directory, sourceRoot = path.resolve(__dir
       rows.push({ kind, file, ...actual, expectedSha256: expected.sha256, ok: actual.sha256 === expected.sha256 && actual.bytes === expected.bytes });
     } catch (error) { rows.push({ kind, file, ok: false, error: error.message }); }
   }
-  for (const file of archiveSourceFiles(sourceRoot, sourcePackage.build.files)) {
+  for (const file of archiveSourceFiles(sourceRoot, config.files)) {
     try {
       const info = asar.statFile(archive, path.normalize(file), false);
       if (info.unpacked || info.link || info.files) throw new Error('Expected a regular archived source file.');
@@ -156,10 +162,10 @@ async function verifyManagerRelease({ directory, sourceRoot = path.resolve(__dir
   const runtime = [...runtimeFiles, ...walk(path.join(electronDist, 'locales')).map(file => `locales/${file}`)];
   for (const file of runtime) await compareFile('electron-runtime', file, path.join(electronDist, file));
   await compareFile('electron-runtime', 'LICENSE.electron.txt', path.join(electronDist, 'LICENSE'));
-  for (const row of sourceCopies(sourceRoot, sourcePackage.build.extraResources, 'resources'))
-    await compareFile('extra-resource', row.file, path.join(sourceRoot, row.source));
-  for (const row of sourceCopies(sourceRoot, sourcePackage.build.extraFiles))
-    await compareFile('root-helper', row.file, path.join(sourceRoot, row.source));
+  for (const row of sourceCopies(sourceRoot, config.extraResources, 'resources', { allowAbsoluteSources: resolved.explicit }))
+    await compareFile('extra-resource', row.file, path.resolve(sourceRoot, row.source));
+  for (const row of sourceCopies(sourceRoot, config.extraFiles, '', { allowAbsoluteSources: resolved.explicit }))
+    await compareFile('root-helper', row.file, path.resolve(sourceRoot, row.source));
   if (inventory.includes('resources/elevate.exe')) {
     if (!nsisDir) rows.push({ kind: 'builder-helper', file: 'resources/elevate.exe', ok: false, error: 'Provide --nsis-dir for the trusted NSIS build binary directory containing elevate.exe.' });
     else await compareFile('builder-helper', 'resources/elevate.exe', path.join(path.resolve(nsisDir), 'elevate.exe'));
@@ -177,14 +183,14 @@ async function verifyManagerRelease({ directory, sourceRoot = path.resolve(__dir
   return { ok: executionLevel.ok && !failed.length, staticOnly: true, launched: false,
     scope: 'Files and hashes versus trusted build source and Electron runtime; actual EXE RT_MANIFEST; no startup or NSIS success claim.',
     version: candidatePackage.version, electronVersion: fs.readFileSync(path.join(electronDist, 'version'), 'utf8').trim(),
-    directory, sourceRoot, electronDist, nsisDir: nsisDir ? path.resolve(nsisDir) : null, candidateFiles: inventory.length, verifiedFiles: rows.length,
+    directory, sourceRoot, electronDist, nsisDir: nsisDir ? path.resolve(nsisDir) : null, buildConfigFile: resolved.file, explicitBuildConfig: resolved.explicit, candidateFiles: inventory.length, verifiedFiles: rows.length,
     executable: { file: path.basename(executable), ...executableHash, executionLevel }, archive: archiveBefore, contracts, failed, files: rows };
 }
 function parseArguments(args) {
   const result = {};
   for (let index = 0; index < args.length; index++) {
-    const key = { '--dir': 'directory', '--source': 'sourceRoot', '--electron-dist': 'electronDist', '--nsis-dir': 'nsisDir', '--output': 'output' }[args[index]];
-    if (!key || !args[index + 1] || args[index + 1].startsWith('--')) throw new Error('Usage: verify-manager-release.js --dir <win-unpacked> [--source <trusted-source>] [--electron-dist <electron-dist>] [--nsis-dir <nsis-bin>] [--output <report.json>]');
+    const key = { '--dir': 'directory', '--source': 'sourceRoot', '--electron-dist': 'electronDist', '--nsis-dir': 'nsisDir', '--output': 'output', '--build-config': 'buildConfigFile' }[args[index]];
+    if (!key || !args[index + 1] || args[index + 1].startsWith('--')) throw new Error('Usage: verify-manager-release.js --dir <win-unpacked> [--source <trusted-source>] [--build-config <trusted JSON>] [--electron-dist <electron-dist>] [--nsis-dir <nsis-bin>] [--output <report.json>]');
     result[key] = args[++index];
   }
   if (!result.directory) throw new Error('Provide --dir <win-unpacked>.');
