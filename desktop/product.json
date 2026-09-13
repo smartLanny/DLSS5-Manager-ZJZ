@@ -5,6 +5,6 @@
   "bilibiliUrl": "https://space.bilibili.com/941799",
   "qqGroup": "392308850",
   "releaseUrl": "https://github.com/smartLanny/DLSS5-Manager-ZJZ/releases",
-  "runtimePacksUrl": "https://github.com/smartLanny/DLSS5-Manager-ZJZ/blob/codex/full-manager-compat-20260912/docs/RUNTIME-PACKS.md",
+  "runtimePacksUrl": "https://github.com/smartLanny/DLSS5-Manager-ZJZ/blob/main/docs/RUNTIME-PACKS.md",
   "vcRuntimeUrl": "https://aka.ms/vc14/vc_redist.x64.exe"
 }

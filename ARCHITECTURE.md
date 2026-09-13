@@ -11,7 +11,7 @@
 | Core | 外部活动任务产物 | NR 算法与 Addon | 默认 Core 必须在 staging 清单中明确版本；拒绝 D13/D14 冒充最新 |
 | NR runtime | 外部授权目录 | RTX20–40 共享 RTX40 runtime、RTX50 runtime | 基础包不嵌入；offline 包各放一份，禁止 Feeder/Vulkan/legacy 重复携带 |
 | MFG | 外部官方 0.9 Addon | RTX40 的 MFG Unlock 入口 | 0.9 固定 bytes/SHA；0.7 仅回滚，由 Manager 清单登记 |
-| DX11 Bridge | `bridge-dlc/manifest.json`（stage） | 候选来源和兼容状态登记 | 当前只允许 `reserved`；独立兼容任务验证后才可启用 |
+| DX11 Bridge | `bridge-dlc/manifest.json` 与小组件清单（stage） | 候选来源、逐游戏 pin 和接口预检 | 缺包时 `reserved`；已暂存包为 `candidate-staged`，不据此宣称游戏兼容 |
 | 可选小组件 | `resources/components/`（stage） | 外部清单提供的 Bridge、Feeder、host、Vulkan 文件 | 必须逐文件 pin；不允许 `nvngx_dlssnr.dll` 混入 |
 
 ## 运行时数据流
@@ -23,16 +23,16 @@
        ├─ RTX40 / RTX50 nvngx runtime（offline flavor 才复制）
        ├─ MFG 0.9（固定摘要）
        ├─ 外部 staging 小组件（可选，逐文件摘要）
-       └─ Bridge reservation（无二进制、无兼容宣称）
+       └─ Bridge reservation / 显式暂存的候选包（无兼容宣称）
        │
        ▼
 desktop/.packaging-stage/<flavor>
        │
        ▼
-Electron Builder → 仓库外 deliveries/
+Electron Builder → 根目录 deliveries/（Git 忽略）
 ```
 
-`desktop/scripts/stage-manager-distribution.cjs` 是唯一 payload 组装入口。它逐文件检查普通文件、大小和 SHA-256，拒绝符号链接，拒绝 D13/D14 版本，并且只把 Core 允许的三类小文件、固定 ReShade/chain、授权 runtime、MFG 0.9 放入 stage。`desktop/scripts/build-manager.cjs` 以 stage 生成动态 electron-builder 配置，不继承旧的 Feeder/Vulkan/legacy 全家桶资源列表。
+`desktop/scripts/stage-manager-distribution.cjs` 是唯一发行 payload 组装入口。它逐文件检查普通文件、大小和 SHA-256，拒绝符号链接、D13/D14 默认版本和未列出的资源；允许明确列出的 Core、ReShade/chain、按显卡族 runtime、MFG 0.9、小组件、加载助手及四文件 Vulkan ReShade layer。`desktop/scripts/build-manager.cjs` 以 stage 生成动态 electron-builder 配置，不继承旧的 Feeder/Vulkan/legacy 全量资源列表。
 
 ## 基础包和离线包
 
@@ -49,4 +49,4 @@ Feeder、Vulkan 和 legacy x86/DX9 属于独立路线，当前打包入口不把
 
 ## 未来接口
 
-Bridge 任务可以在不改变 Manager UI 的情况下，把 `bridge.status` 从 `reserved` 更新为经过独立验收的登记项。Runtime、Feeder 和 Vulkan 若要重新进入发行包，必须新增明确的 flavor/白名单和不重复 runtime 的体积审计，不能恢复旧的整包 `extraResources` 列表。
+Bridge、Feeder、host 和 Vulkan 的新版本按已有清单、接口与路线合同接入，见 [COMPONENT-PACKS.md](docs/COMPONENT-PACKS.md)。来源校验、预检通过和真实游戏验收分别记录；显式 staging 候选不会自动变成稳定兼容记录。需要新增资源种类时，扩展对应白名单和测试，保持 NR runtime 按显卡族共享，不能恢复旧的整包 `extraResources` 列表。

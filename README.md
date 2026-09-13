@@ -2,6 +2,22 @@
 
 这是装机宅 DLSS5 Manager 的公开集成仓库：根目录保留 MIT CLI / 配方壳，`desktop/` 承载迁入的 Electron Manager 源码。两者共用 pin、组件边界和拆包策略，源码树不提交 NVIDIA runtime、Addon 成品或签名材料。
 
+当前桌面开发版本为 **0.5.0-beta.1**。本仓作为 Manager 的协作开发入口，包含桌面界面、主进程、安装与恢复、组件库、米哈游流程、反馈及测试；Core 算法和 GPU 后端继续在各自的组件仓库维护。
+
+## 从源码开始改 UI
+
+Windows 10/11、Node.js 22 或更新版本。在仓库根目录执行：
+
+```powershell
+npm ci
+npm --prefix desktop ci
+npm run start:desktop
+```
+
+UI 源码位于 `desktop/src/renderer/`。启动桌面界面不需要先编译 Core 或准备 NVIDIA DLL；安装和实际游戏联调才需要经校验的外部组件。仓库已包含固定版本的上游源码，无需访问私有 lab 或另行初始化 submodule。
+
+修改后运行 `npm run check` 和 `npm --prefix desktop run test:ui-contract`。游戏卡片、米哈游和反馈有使用模拟数据的 Electron 测试与截图入口，详见 [UI 开发指南](docs/UI-DEVELOPMENT.md)。多人协作流程和分层约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## 发行边界
 
 - **基础 Manager 包**：Electron UI、默认 Core、ReShade、`nrchain_nvngx.dll` 等小型配套、MFG Unlock 0.9 登记与安装资源。
@@ -11,7 +27,7 @@
 - **DX11 Bridge**：当前 staging 已携带 `1.4.13-pre7` 的 manager-core-compat 候选包及 importer manifest；包内记录为 `candidate-staged`，独立游戏兼容验证完成前不会把它宣称为已兼容。
 - **旧 Manager 源码**：迁移快照已冻结；这不冻结仍在活跃 Core 任务中的组件产物。原始迁移清单保持不变，增量记录见 [docs/MANAGER-MIGRATION-INCREMENTAL.md](docs/MANAGER-MIGRATION-INCREMENTAL.md)。
 
-二进制输入通过仓库外的 staging 清单提供，构建只复制清单白名单。交付目录默认位于仓库旁的 `deliveries/`，不会进入 Git。
+二进制输入通过外部 staging 清单提供，构建只复制清单白名单。交付目录位于本仓根目录的 `deliveries/`，由 Git 忽略；构建不会把交付物加入源码提交。
 
 ## CLI 壳
 

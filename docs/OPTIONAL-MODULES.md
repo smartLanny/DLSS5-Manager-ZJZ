@@ -1,6 +1,8 @@
 # 可选模块（挂钩，不覆盖旧构建）
 
-这些能力在产品 Manager 里存在或计划存在。本 MIT 壳只留 **模块 id + 默认关闭 + 可读拒绝**，避免用旧发行包盖掉新壳。
+本页只描述根目录 **CLI 的 optional 命令**。完整 Electron Manager 已迁入 `desktop/`，其中的米哈游管理、反馈打包和组件库已有实现；不能用下表的 CLI 占位状态推断桌面功能缺失。桌面开发与分工见 [UI-DEVELOPMENT.md](UI-DEVELOPMENT.md)。
+
+CLI 的这些模块仍只保留 **模块 id + 默认关闭 + 可读拒绝**，不从命令行调用桌面的游戏安装、GPU 或反馈保存流程。
 
 | id | 意图 | 默认 | 拒绝码 |
 | --- | --- | --- | --- |
@@ -19,6 +21,6 @@ CLI：`dlss5-manager-zjz optional` 列出；带模块 id 会按上表抛错。
 - **不可以** 拷贝该仓 Electron/CJS 实现或把 `trusted-keys` / 签名脸搬过来
 - **不可以** 把私有 lab 的 NR 成品或防再分发逻辑搬过来
 
-反馈方向（独立重述）：本机预览 → 用户确认 → 公开文本脱敏；原始路径/截图不进公开报告。本骨架尚未实现打包器。
+CLI 反馈方向（独立重述）：本机预览 → 用户确认 → 公开文本脱敏；原始路径/截图不进公开报告。CLI optional 槽不执行打包；桌面反馈实现在 `desktop/src/compatibility/` 和对应 renderer / IPC 中。
 
 D14 / 多 hook 继续在 lab **#190**。本仓配方把 `d14-core` 标成 optionalSlots，安装 dry-run 默认跳过。
