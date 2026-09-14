@@ -9,13 +9,15 @@
   <link rel="stylesheet" href="workspace-layout.css">
   <link rel="stylesheet" href="game-page.css">
   <link rel="stylesheet" href="compatibility-panel.css">
+  <link rel="stylesheet" href="redesign.css">
+  <link rel="stylesheet" href="theme.css">
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark"><img src="app-icon.png" alt=""></div>
-        <div><h1 id="brandName">DLSS 5 AI 超分</h1><p id="brandEdition">装机宅版</p></div>
+        <div class="brand-mark"><img src="brand-mark.png" alt=""></div>
+        <div class="brand-copy"><div class="brand-line"><h1 id="brandName">DLSS 5</h1><span class="brand-badge">超分</span></div><p id="brandEdition">装机宅版</p></div>
       </div>
       <nav>
         <button class="nav active" data-view="games"><span class="nav-icon nav-icon-games" aria-hidden="true"></span>游戏</button>
@@ -37,18 +39,20 @@
     <main>
       <header class="titlebar">
         <div class="page-title"><h2 id="pageTitle">我的游戏</h2><p id="pageSubtitle">选择游戏，确认兼容性后安装</p></div>
+        <div class="product-wordmark" aria-hidden="true"><span>GAME</span><i>/</i><span>MOD</span><i>/</i><span>PLAY</span></div>
         <div class="title-actions">
-          <button class="window-button" id="minBtn" aria-label="最小化">—</button>
-          <button class="window-button close" id="closeBtn" aria-label="关闭">×</button>
+          <button class="window-button" id="minBtn" aria-label="最小化"><span class="ui-icon icon-minus" aria-hidden="true"></span></button>
+          <button class="window-button" id="maxBtn" aria-label="最大化或还原"><span class="ui-icon icon-square" aria-hidden="true"></span></button>
+          <button class="window-button close" id="closeBtn" aria-label="关闭"><span class="ui-icon icon-close" aria-hidden="true"></span></button>
         </div>
       </header>
 
       <section class="view active" id="view-games">
-        <div class="library-header"><div><h3>游戏库</h3><p class="summary" id="gameSummary"></p></div><div class="library-actions"><button class="button primary" id="addGameBtn">添加游戏</button><button class="button subtle" id="addExeBtn">选择 EXE</button><button class="button subtle" id="refreshBtn">重新扫描</button></div></div>
+        <div class="library-header"><div><h3>游戏库</h3><p class="summary" id="gameSummary"></p></div><div class="library-actions"><button class="button primary" id="addGameBtn"><span class="ui-icon icon-plus" aria-hidden="true"></span>添加游戏</button><button class="button subtle" id="addExeBtn">选择 EXE</button><button class="button subtle" id="refreshBtn"><span class="ui-icon icon-disc" aria-hidden="true"></span>扫描本机</button></div></div>
         <div class="notice hidden" id="hardwareNotice"></div>
         <div class="notice hidden" id="payloadNotice"></div>
         <div class="toolbar-row">
-          <div class="search"><span>⌕</span><input id="searchInput" placeholder="搜索游戏" autocomplete="off"></div>
+          <div class="search"><span class="ui-icon icon-search" aria-hidden="true"></span><input id="searchInput" placeholder="搜索游戏名称" autocomplete="off"></div>
           <select id="gameFilter" aria-label="筛选游戏"><option value="all">全部游戏</option><option value="installed">已安装</option><option value="supported">可安装</option><option value="unsupported">暂不支持</option></select>
         </div>
         <div class="game-list" id="gameList"></div>
@@ -90,14 +94,29 @@
 
       <section class="view" id="view-addons">
         <div class="panel" id="componentLibraryPanel">
-          <h3>运行库与桥接组件</h3>
-          <p>RTX 20／30／40 共用一套 NR 运行库，RTX 50 使用单独运行库。导入和选择来源不会改动已安装游戏。</p>
-          <div class="control-row"><button class="button primary" id="importComponentBtn">导入组件包／DLL</button><button class="button" id="importComponentDirBtn">导入组件目录</button><button class="button" id="refreshComponentsBtn">刷新组件</button><button class="button" id="checkComponentUpdatesBtn">检查更新</button><button class="button" id="componentRuntimeHelpBtn">运行库下载说明</button></div>
-          <p id="componentLibraryMessage" class="config-note" role="status"></p>
-          <div id="componentLibraryRows"></div>
-          <div id="componentUpdateRows"></div>
-          <details><summary>选择输入桥配套</summary><div class="control-row"><select id="componentProviderSelect" aria-label="输入桥组件包"></select><button class="button" id="selectComponentProviderBtn">用于支持的安装路线</button></div><p id="componentProviderStatus" class="config-note"></p></details>
-          <details><summary>为游戏切换 DX11 桥接组件</summary><div class="control-row"><select id="componentGameSelect" aria-label="选择游戏"></select><select id="componentBridgeSelect" aria-label="选择桥接版本"></select><button class="button" id="applyBridgeComponentBtn">应用到此游戏</button></div><p id="componentBridgeStatus" class="config-note"></p></details>
+          <div class="component-library-hero">
+            <div class="component-library-heading"><span class="component-kicker">本地组件仓库</span><h3>运行库与桥接组件</h3><p>统一管理 NR 运行库、图形桥和多帧生成组件。导入只会加入本地仓库，不会立即改动游戏。</p></div>
+            <div class="component-primary-actions"><button class="button primary" id="importComponentBtn">导入组件包</button><button class="button" id="importComponentDirBtn">选择组件目录</button></div>
+          </div>
+          <div class="component-library-toolbar">
+            <p id="componentLibraryMessage" class="config-note component-library-message" role="status"></p>
+            <div class="component-tool-actions"><button class="button subtle" id="refreshComponentsBtn">刷新</button><button class="button subtle" id="checkComponentUpdatesBtn">检查更新</button><button class="button subtle" id="componentRuntimeHelpBtn">下载说明</button></div>
+          </div>
+          <section class="component-section" aria-labelledby="componentInstalledTitle">
+            <div class="component-section-head"><div><h4 id="componentInstalledTitle">已导入组件</h4><p>可用于后续安装或指定游戏，已安装的游戏保持不变。</p></div></div>
+            <div id="componentLibraryRows" class="component-package-list"></div>
+          </section>
+          <details class="component-repository">
+            <summary><span><strong>在线组件仓库</strong><small>下载并校验后保存到本地缓存</small></span><span id="componentDownloadCount" class="component-summary-count">正在检查</span></summary>
+            <div id="componentUpdateRows" class="component-download-list"></div>
+          </details>
+          <details class="component-advanced">
+            <summary><span><strong>高级桥接设置</strong><small>仅在自动选择不合适时调整</small></span></summary>
+            <div class="component-advanced-grid">
+              <section class="component-setting-card"><h4>默认输入桥配套</h4><p>为后续支持的安装路线选择配套组件。</p><div class="component-setting-controls"><select id="componentProviderSelect" aria-label="输入桥组件包"></select><button class="button" id="selectComponentProviderBtn">保存配套</button></div><p id="componentProviderStatus" class="config-note"></p></section>
+              <section class="component-setting-card"><h4>DX11 游戏桥接</h4><p>为单个游戏切换已导入的桥接版本。</p><div class="component-setting-controls component-setting-controls-wide"><select id="componentGameSelect" aria-label="选择游戏"></select><select id="componentBridgeSelect" aria-label="选择桥接版本"></select><button class="button" id="applyBridgeComponentBtn">应用</button></div><p id="componentBridgeStatus" class="config-note"></p></section>
+            </div>
+          </details>
         </div>
         <div class="component-sources-layout">
         <div class="panel payload-source-panel">
@@ -140,6 +159,21 @@
 
       <section class="view" id="view-settings">
         <div class="workspace-intro"><h3>管理器偏好</h3><p>游戏画面参数和核心版本在各自页面设置。</p></div>
+        <div class="panel settings-panel">
+          <h3>界面</h3>
+          <label class="setting-row">
+            <div><strong>外观</strong><p>跟随 Windows 切换主题，也可以固定使用浅色或深色。</p></div>
+            <select id="themeSelect" aria-label="界面外观">
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
+          </label>
+          <label class="setting-row">
+            <div><strong>界面动画</strong><p>页面切换、展开内容和弹窗使用短过渡。关闭后立即停用。</p></div>
+            <input type="checkbox" id="animationsToggle" checked>
+          </label>
+        </div>
         <div class="panel settings-panel">
           <h3>扫描范围</h3>
           <label class="setting-row">

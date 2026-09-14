@@ -1918,8 +1918,14 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return refreshCollection(games);
     },
     updateSettings: async patch => {
-      const allowed = ['scanDrives', 'addonVersion'];
+      const allowed = ['scanDrives', 'addonVersion', 'animationsEnabled', 'theme'];
       if (!patch || Object.keys(patch).some(key => !allowed.includes(key))) throw appError('ERR_BAD_REQUEST');
+      if (Object.prototype.hasOwnProperty.call(patch, 'animationsEnabled') && typeof patch.animationsEnabled !== 'boolean') {
+        throw appError('ERR_BAD_REQUEST');
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'theme') && !['system', 'light', 'dark'].includes(patch.theme)) {
+        throw appError('ERR_BAD_REQUEST');
+      }
       if (Object.prototype.hasOwnProperty.call(patch, 'addonVersion') &&
           patch.addonVersion !== null && typeof patch.addonVersion !== 'string') {
         throw appError('ERR_BAD_REQUEST');

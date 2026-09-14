@@ -33,7 +33,8 @@
     "verify:loading-helper": "node scripts/verify-loading-helper.js",
     "verify:distribution": "node scripts/verify-distribution-policy.js",
     "pretest:game-page": "node ../scripts/build-desktop-contract.mjs",
-    "test:game-page": "electron test/game-page-frontend.electron.cjs"
+    "test:game-page": "electron test/game-page-frontend.electron.cjs",
+    "demo:ui": "electron test/game-page-frontend.electron.cjs --demo"
   },
   "dependencies": {
     "yauzl": "^2.10.0"

@@ -137,10 +137,11 @@ button, input, select { -webkit-app-region: no-drag; }
 .addon-tag { font-size: 11px; }
 .addon-guide-version { background: transparent; color: var(--green); }
 .addon-guide-card.featured { background: var(--green-soft); }
-.settings-panel .setting-row { min-height: 82px; }
+#view-settings .settings-panel { padding-top: 18px; padding-bottom: 14px; }
+.settings-panel .setting-row { min-height: 0; padding-top: 13px; padding-bottom: 13px; }
 .setting-row p { max-width: 620px; line-height: 1.7; font-size: 12px; }
 .setting-row > b { font-size: 12px; text-align: right; max-width: 40%; overflow-wrap: anywhere; }
-.settings-panel > h3 { font-size: 15px; margin-bottom: 12px; }
+.settings-panel > h3 { font-size: 15px; margin-bottom: 8px; }
 .repair-head select { max-width: 45%; min-width: 220px; }
 .diagnostic-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
 .diagnostic-heading p { font-size: 12px; line-height: 1.6; }
@@ -150,7 +151,7 @@ button, input, select { -webkit-app-region: no-drag; }
 .feedback-controls select { min-width: 200px; }
 .feedback-controls .check-line { font-size: 12px; }
 .repair-actions .danger { margin-left: auto; }
-.info-row { min-height: 55px; }
+.info-row { min-height: 0; padding-top: 13px; padding-bottom: 13px; }
 .info-row b { font-size: 12px; }
 .toast { max-width: min(560px, calc(100vw - 40px)); font-size: 13px; line-height: 1.6; }
 @media (max-width: 1120px) {

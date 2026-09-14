@@ -203,11 +203,11 @@ async function iconDataFor(file, currentIcon = null) {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1180,
-    height: 780,
+    width: 1400,
+    height: 860,
     minWidth: 900,
     minHeight: 620,
-    backgroundColor: '#0c0e10',
+    backgroundColor: '#fbfbfa',
     icon: path.join(__dirname, 'build', 'icon.png'),
     frame: false,
     autoHideMenuBar: true,
@@ -566,6 +566,11 @@ function registerIpc() {
   call('compatibility-close', token => compatibilityFeedback.close(token));
 
   ipcMain.on('window-minimize', () => win && win.minimize());
+  ipcMain.on('window-maximize', () => {
+    if (!win) return;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  });
   ipcMain.on('window-close', () => win && win.close());
 }
 

@@ -7,6 +7,8 @@ const { TextDecoder } = require('util');
 
 const DEFAULTS = Object.freeze({
   version: 1,
+  animationsEnabled: true,
+  theme: 'system',
   scanDrives: false,
   scanFolders: [],
   manualGames: [],
@@ -99,6 +101,8 @@ function validate(value) {
     ...DEFAULTS,
     ...state,
     version: 1,
+    animationsEnabled: state.animationsEnabled !== false,
+    theme: ['system', 'light', 'dark'].includes(state.theme) ? state.theme : 'system',
     scanDrives: state.scanDrives === true,
     scanFolders: uniquePaths(state.scanFolders),
     manualGames: uniquePaths(state.manualGames),

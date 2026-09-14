@@ -51,6 +51,7 @@ function installMock(features, options = {}) {
   const mock = window.__gpMock = { calls: [], plans: new Map(), assessments: { fixture: assessment, 'fixture-two': second, 'fixture-hoyo': hoyo, 'fixture-dx9': dx9 },
     baseline: clone(assessment), secondBaseline: clone(second), features, removed: new Set(), delays: options.captureOnly ? {} : { 'fixture:installation': 5000 }, pending: 0,
     failApply: false, listeners: new Set(), mounts: new Map(), plan: null, policyEnabled: false, policyApplied: 0,
+    settings: { animationsEnabled: true, theme: process.env.GAME_UI_THEME || 'system', scanDrives: false, addonVersion: null },
     selectedLauncher: 'C:\\UI-fixture\\HoYoPlay\\launcher.exe',
     resetPolicy: () => ipcRenderer.invoke('game-page-fixture-native-policy', 'reset'),
     mutatePolicy: kind => ipcRenderer.invoke('game-page-fixture-native-policy', 'mutate', { kind }) };
@@ -74,10 +75,15 @@ function installMock(features, options = {}) {
   } });
   const payload = { ready: true, selectedVersion: '0.4.7beta', versions: { '0.4.7beta': { label: 'beta0.4.7', variants: { RTX40: { ready: true, files: [] } } } }, source: { mode: 'bundled', path: 'C:\\UI-fixture\\payload', ready: true } };
   const games = () => Object.values(mock.assessments).filter(row => !mock.removed.has(row.gameId)).map(row => row.game);
+  const componentCatalog = [
+    ['mfg', '0.9'], ['bridge', '1.4.13-pre7'], ['bridge', '1.4.13-pre8'], ['bridge', '1.4.13-pre6'],
+    ['feeder', '1.16.0-beta.1'], ['feeder', '0.15.1'], ['feeder', '0.15.0'], ['mfg', '0.8'], ['mfg', '0.7']
+  ].map(([kind, version], index) => ({ id: `fixture-component-${index}`, kind, version, variant: index % 2 ? 'x64' : '', downloadUrl: `https://github.com/fixture/component-${index}` }));
   const empty = async () => ok(null);
   const forbidden = name => async (...args) => { mock.calls.push([name, ...args]); throw Error('unexpected direct mutation: ' + name); };
   window.manager = {
-    boot: async () => ok({ product: { name: 'DLSS 5 AI 超分管理器', edition: '装机宅版', version: '0.4.8-beta.3 · UI fixture' }, settings: {}, hardware, payload, addons: assessment.coreVersions, games: games() }),
+    boot: async () => ok({ product: { name: 'DLSS 5 AI 超分管理器', edition: '装机宅版', version: '0.4.8-beta.3 · UI fixture' }, settings: mock.settings, hardware, payload, addons: assessment.coreVersions, games: games() }),
+    updateSettings: async patch => { mock.settings = { ...mock.settings, ...clone(patch) }; mock.calls.push(['update-settings', clone(patch)]); return ok(mock.settings); },
     listGames: async () => ok(games()), refresh: async () => { mock.calls.push(['refresh']); return ok(games()); },
     assessGame: async (id, options) => {
       const sections = options?.sections;
@@ -91,7 +97,16 @@ function installMock(features, options = {}) {
     },
     readPayloadSource: async () => ok({ settings: {}, payload, addons: assessment.coreVersions }), getStartupContext: async () => ok({ mode: 'normal', sandbox: true, privilege: 'standard', operation: {} }),
     getGameIcon: empty, fetchGameArt: empty, listAddons: async () => ok([]), onAddonImported() {}, onSrModelApplied() {}, onLaunchSettingsApplied() {},
-    startupReady() {}, startupFailed: message => { mock.calls.push(['startup-failed', message]); }, minimize() {}, close() {}, diagnose: async () => ok({ components: [], checks: [], issues: [] }),
+    listComponents: async () => ok({ warnings: ['尚未导入运行库，请选择与显卡对应的组件。'], packages: [], catalog: { checkedAt: new Date().toISOString(), packages: componentCatalog } }),
+    checkComponentUpdates: async () => ok([]), downloadComponent: async () => ok({ changedGames: false }),
+    inspectComponentProviders: async () => ok({ packages: [], selectedId: null, selectedByRoute: {}, reason: '尚未导入输入桥配套。' }),
+    componentChoices: async () => ok({ bridges: [] }), pickComponent: empty,
+    activateComponentRuntime: empty, activateComponentCore: empty, selectComponentProvider: empty, applyBridgeComponent: empty,
+    startupReady() {}, startupFailed: message => { mock.calls.push(['startup-failed', message]); },
+    minimize() { if (options.demo) ipcRenderer.send('game-page-fixture-window', 'minimize'); },
+    maximize() { if (options.demo) ipcRenderer.send('game-page-fixture-window', 'maximize'); },
+    close() { if (options.demo) ipcRenderer.send('game-page-fixture-window', 'close'); },
+    diagnose: async () => ok({ components: [], checks: [], issues: [] }),
     onLaunchSession: callback => { mock.listeners.add(callback); return () => mock.listeners.delete(callback); },
     previewOperation: async (id, request) => {
       mock.calls.push(['preview', clone(request), id]);
