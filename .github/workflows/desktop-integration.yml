@@ -44,7 +44,7 @@ jobs:
         run: python desktop/scripts/prepare-ui-test-reshade.py
       - name: Settings and upgrade preservation
         working-directory: desktop
-        run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js test/core-menu.test.js test/game-assessment.test.js test/package-release-policy.test.js
+        run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js test/core-menu.test.js test/game-assessment.test.js test/package-release-policy.test.js test/packaged-validation-environment.test.js
       - name: Unified game page
         run: npm --prefix desktop run test:game-page
       - name: HoYoShade workflow
@@ -59,30 +59,24 @@ jobs:
         run: npm --prefix desktop run build:external
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Packaged startup and isolation proof
+      - name: Packaged startup or explicit hosted-environment limitation
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         working-directory: desktop
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force build/validation | Out-Null
-          $name = (Get-Content package.json -Raw | ConvertFrom-Json).build.productName
-          $exe = (Resolve-Path "dist-external/win-unpacked/$name.exe").Path
-          node scripts/startup-runtime-smoke.js --executable "$exe" --logs build/validation/startup --output build/validation/startup.json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/startup-uninstrumented-smoke.js --executable "$exe" --isolation-proof build/validation/startup.json --logs build/validation/uninstrumented --output build/validation/uninstrumented.json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: node scripts/validate-packaged-startup.cjs
       - name: Stage validation notes and checksums
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         shell: pwsh
         run: |
           Copy-Item docs/PR5-TESTING.md desktop/dist-external/TESTING.md
+          Copy-Item desktop/build/validation/packaged-startup-status.json desktop/dist-external/STARTUP-STATUS.json
           $lines = Get-ChildItem desktop/dist-external/*.exe | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $($_.Name)"
           }
           if (-not $lines) { throw 'No built executables' }
           $lines | Set-Content desktop/dist-external/SHA256SUMS.txt -Encoding utf8
-          "Source commit: $env:GITHUB_SHA`nCore/NR runtime bundled: no`nReal-game validation: pending" | Set-Content desktop/dist-external/BUILD.txt -Encoding utf8
+          $startup = (Get-Content desktop/dist-external/STARTUP-STATUS.json -Raw | ConvertFrom-Json).status
+          "Source commit: $env:GITHUB_SHA`nCore/NR runtime bundled: no`nPackaged ordinary-token startup: $startup (see STARTUP-STATUS.json)`nReal-game validation: pending`nCandidate only; not a stable release" | Set-Content desktop/dist-external/BUILD.txt -Encoding utf8
       - name: Preserve test application
         if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: actions/upload-artifact@v4
@@ -93,6 +87,7 @@ jobs:
             desktop/dist-external/TESTING.md
             desktop/dist-external/SHA256SUMS.txt
             desktop/dist-external/BUILD.txt
+            desktop/dist-external/STARTUP-STATUS.json
           if-no-files-found: error
           retention-days: 14
       - name: Preserve diagnostic reports
