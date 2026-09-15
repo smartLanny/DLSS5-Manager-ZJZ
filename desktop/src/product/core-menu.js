@@ -24,7 +24,9 @@ function coreMenu(rows, { installedVersion = null, defaultVersion = null } = {})
     const item = matches.find(row => row.id === installedVersion) || matches.find(row => row.id === defaultVersion) ||
       (matches.length === 1 ? matches[0] : null);
     if (item) {
-      result.push({ ...item, label: `${choice.label}${choice.key === 'd21' && !installedVersion && item.id === defaultVersion ? '（新安装默认）' : ''}` });
+      const suffix = choice.key === '047' && !installedVersion && item.id === defaultVersion
+        ? '（新安装推荐）' : choice.key === 'd21' ? '（测试）' : '';
+      result.push({ ...item, label: `${choice.label}${suffix}` });
       selected.add(item.id);
     } else {
       result.push({ id: `unavailable-core-${choice.key}`, label: `${choice.label}（${matches.length ? '请在组件管理中确认版本' : '组件未准备'}）`,
@@ -42,14 +44,15 @@ function coreMenu(rows, { installedVersion = null, defaultVersion = null } = {})
 }
 
 function preferredBundleDefault(bundle) {
-  const matches = CORE_CHOICES.at(-1).ids.filter(id => Object.hasOwn(bundle.versions || {}, id));
+  const matches = CORE_CHOICES.find(choice => choice.key === '047').ids.filter(id => Object.hasOwn(bundle.versions || {}, id));
   if (matches.length !== 1) return null;
   const id = matches[0], entry = bundle.versions[id];
-  // Default must be a complete source entry, not a core-only patch or a renamed
-  // D12/D20. Existing payload verification still owns hashes and API eligibility.
-  return entry && entry.coreUpdateOnly !== true && entry.comparisonOnly !== true &&
-    entry.supportsPresent === true && Array.isArray(entry.inputInterfaces) && entry.inputInterfaces.includes('NGX-D3D12-Feature1')
-    ? id : null;
+  // Public installs stay on the complete 0.4.7 package. D21 is deliberately a
+  // user-selected candidate until its game/hardware acceptance gates are met.
+  const fullPackage = entry && entry.coreUpdateOnly !== true && entry.comparisonOnly !== true &&
+    (entry.compatibility === 'dx11' || entry.supportsPresent === true &&
+      Array.isArray(entry.inputInterfaces) && entry.inputInterfaces.includes('NGX-D3D12-Feature1'));
+  return fullPackage ? id : null;
 }
 
 module.exports = { CORE_CHOICES, choiceFor, coreMenu, preferredBundleDefault };

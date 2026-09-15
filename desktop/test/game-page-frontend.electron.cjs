@@ -36,11 +36,12 @@ const readinessMode = process.env.GAME_UI_READINESS_CAPTURE === '1';
 const hoyoReadinessMode = process.env.GAME_UI_HOYO_READINESS_CAPTURE === '1';
 const versionMode = process.env.GAME_UI_VERSION_CONTRACT === '1';
 const targetedMode = process.env.GAME_UI_TARGETED === '1';
+const maintenanceSwitchMode = process.env.GAME_UI_MAINTENANCE_SWITCH === '1';
 const demoMode = process.argv.includes('--demo');
 const captureArtworkUrl = process.env.GAME_UI_CAPTURE_ARTWORK
   ? `file:///${encodeURI(path.resolve(process.env.GAME_UI_CAPTURE_ARTWORK).replace(/\\/g, '/'))}`
   : '';
-const preload = path.join(temporary, 'preload.cjs'); fs.writeFileSync(preload, `(${installMock.toString()})(${JSON.stringify(features)},${JSON.stringify({ captureOnly: captureOnly || hoyoMode || versionMode || readinessMode || hoyoReadinessMode || targetedMode || demoMode, demo: demoMode, paths: addonPolicyFixture.paths })});${hoyoMode || hoyoReadinessMode ? `(${installHoYoMock.toString()})();` : ''}`);
+const preload = path.join(temporary, 'preload.cjs'); fs.writeFileSync(preload, `(${installMock.toString()})(${JSON.stringify(features)},${JSON.stringify({ captureOnly: captureOnly || hoyoMode || versionMode || readinessMode || hoyoReadinessMode || targetedMode || maintenanceSwitchMode || demoMode, demo: demoMode, paths: addonPolicyFixture.paths })});${hoyoMode || hoyoReadinessMode ? `(${installHoYoMock.toString()})();` : ''}`);
 let win;
 ipcMain.on('game-page-fixture-window', (event, action) => {
   if (!demoMode || event.sender !== win?.webContents) return;
@@ -69,6 +70,33 @@ app.whenReady().then(async () => {
     webPreferences: { preload, sandbox: true, contextIsolation: false, nodeIntegration: false, backgroundThrottling: false, offscreen: !demoMode } });
   try {
     await win.loadFile(path.resolve(__dirname, '../src/renderer/index.html'));
+    if (maintenanceSwitchMode) {
+      const result = await win.webContents.executeJavaScript(`(async () => {
+        const until = async (predicate, label) => {
+          const end = Date.now() + 5000;
+          while (!predicate()) {
+            if (Date.now() > end) throw Error('timeout: ' + label);
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+        };
+        document.querySelector('.nav[data-view="repair"]').click();
+        await until(() => document.querySelector('#repairMaintenance [data-gp-action="open-folder"]'), 'first maintenance game');
+        const select = document.getElementById('repairGameSelect');
+        select.value = 'fixture-two';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        await until(() => window.__gpMock.calls.some(row => row[0] === 'assess-resolved' && row[1] === 'fixture-two' && row[2] === 'enhancements') &&
+          document.querySelector('#repairMaintenance [data-gp-action="open-folder"]'), 'second maintenance game');
+        document.querySelector('#repairMaintenance [data-gp-action="open-folder"]').click();
+        document.querySelector('#repairMaintenance [data-gp-action="feedback"]').click();
+        await until(() => window.__gpMock.calls.some(row => row[0] === 'feedback'), 'maintenance actions');
+        const actions = window.__gpMock.calls.filter(row => row[0] === 'open-folder' || row[0] === 'feedback');
+        const expected = JSON.stringify([['open-folder', 'fixture-two'], ['feedback', 'fixture-two']]);
+        if (JSON.stringify(actions) !== expected) throw Error('maintenance actions escaped the selected game: ' + JSON.stringify(actions));
+        return { writes: actions.length, actions };
+      })()`);
+      console.log(JSON.stringify({ ok: true, scope: 'maintenance-game-switch', sandbox: win.webContents.getLastWebPreferences().sandbox, ...result }, null, 2));
+      win.destroy(); app.exit(0); return;
+    }
     if (demoMode) {
       await win.webContents.executeJavaScript(`(() => { document.body.dataset.demoMode = 'true'; const banner = document.createElement('div'); banner.className = 'demo-mode-banner'; banner.textContent = '交互演示 · 所有操作仅作用于内存测试数据'; document.body.appendChild(banner); })()`);
       win.on('closed', () => app.quit());

@@ -22,6 +22,28 @@ test('known runtime import verifies PE/hash and deduplicates without changing ga
   fs.appendFileSync(f.dll, 'changed'); await assert.rejects(f.lib.importComponent(f.dll), /尚未识别/);
   assert.equal((await f.lib.inventory()).packages.length, 1);
 });
+test('a selected component-library root keeps large objects out of userData', async t => {
+  const userData = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-small-state-'));
+  const dataRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-large-data-'));
+  t.after(() => { fs.rmSync(userData,{recursive:true,force:true}); fs.rmSync(dataRoot,{recursive:true,force:true}); });
+  const lib = createComponentLibrary({ userData, root: path.join(dataRoot, 'component-library'), catalog:{packages:[]} });
+  assert.equal(lib.root, path.join(dataRoot, 'component-library'));
+  assert.equal(fs.existsSync(path.join(userData, 'component-library')), false);
+});
+test('a verified Core package commits addon and chain together or not at all', async t => {
+  const f = setup(t), addon = Buffer.from(f.bytes), chain = Buffer.from(f.bytes);
+  addon[100] = 1; chain[100] = 2;
+  const input = { id:'0.5-dline21', version:'0.5 D21', variant:'zh-CN', architecture:'x64', interface:'NGX-D3D12-Feature1',
+    inputInterfaces:['NGX-D3D12-Feature1'], supportsPresent:true, validation:'candidate', stableRelease:false, coreUpdateOnly:true,
+    files:[{name:'nr-before-sr.zh-CN.addon64',bytes:addon,sha256:hash(addon)},{name:'nrchain_nvngx.dll',bytes:chain,sha256:hash(chain)}] };
+  await f.lib.importVerifiedCore(input);
+  const inventory = await f.lib.inventory(), row = inventory.packages.find(item => item.id === input.id);
+  assert.deepEqual(row.files.map(file => file.name).sort(), ['nr-before-sr.zh-CN.addon64','nrchain_nvngx.dll']);
+  assert.equal(row.coreUpdateOnly, true);
+  const before = fs.readFileSync(path.join(f.lib.root,'inventory.json'));
+  await assert.rejects(f.lib.importVerifiedCore({ ...input, id:'0.5-dline21-bad', files:[input.files[0],{...input.files[1],sha256:'0'.repeat(64)}] }), /摘要/);
+  assert.deepEqual(fs.readFileSync(path.join(f.lib.root,'inventory.json')), before);
+});
 test('runtime overlay supports a base missing NVIDIA DLL and does not duplicate by route', async t => {
   const f = setup(t), base = path.join(f.root, 'base');
   for (const family of ['RTX40','RTX50']) {

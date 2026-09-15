@@ -3,11 +3,16 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const yauzl = require('yauzl');
+const { hashRegularFile } = require('./streamed-file-digest');
+const { noLinks } = require('./launch-safety');
 
 const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 const MAX_METADATA_BYTES = 1024 * 1024;
 const DX11_CARRIER = 'dlss5-native-carrier-045-dx11-compat.addon64';
+const D21_ARCHIVE_SHA256 = 'cf6d486a4525c75c5279446bd596b6008fc1eb5e3a8b1863a2ee15f249148107';
+const D21_ADDON_SHA256 = '5fb873dab6f03f27c0b37380dff7ab5ad4ebc0ca295feadba06d00a28a1c9c78';
+const D21_BRIDGE_SHA256 = '1acf3cbe509a031be1763a8231cd81e6019aa3532368cd0b08a6c17bc94b70a2';
 const PAIRED_OTA_PROFILES = Object.freeze({
   'beta0.4.5-dx11-compat': Object.freeze({
     coreName: 'dlss5-ai渲染超分版-beta0.4.5-dx11-compat-@野生的装机宅-bilibili.addon64',
@@ -189,7 +194,7 @@ function instructionText(entries, names) {
   return bytes.toString('utf8');
 }
 
-function result(manifest, addon, bridge, carrier, compatibility, instructions) {
+function result(manifest, addon, bridge, carrier, compatibility, instructions, extra = {}) {
   return {
     manifest,
     addonName: addon.name,
@@ -202,11 +207,12 @@ function result(manifest, addon, bridge, carrier, compatibility, instructions) {
     carrier: carrier ? carrier.data : null,
     carrierSha256: carrier ? carrier.sha256 : null,
     compatibility,
-    instructions
+    instructions,
+    ...extra
   };
 }
 
-function standardPackage(entries) {
+function standardPackage(entries, archiveSha256) {
   const manifest = parseJson(entries.get('ota-manifest.json'), 'OTA manifest');
   if (!manifest || manifest.schema !== 'nr-branch-ota-v1' || !Array.isArray(manifest.files)) {
     throw new Error('unsupported OTA manifest');
@@ -224,7 +230,16 @@ function standardPackage(entries) {
   if (addonRows.length !== 1) throw new Error('OTA package contains an unexpected carrier or addon64');
   const bridge = exactlyOne(rows, item => /^nrchain_nvngx\.dll$/i.test(item.name), 'nrchain_nvngx.dll');
   const instructions = instructionText(entries, ['Instructions.txt']);
-  return result(manifest, addon, bridge, null, null, instructions);
+  const exactD21 = archiveSha256 === D21_ARCHIVE_SHA256 && manifest.version === 'beta0.5-dline21-223fix2' &&
+    manifest.display_version === '0.5 D21 累计常规版' && manifest.sourceCommit === '3a119c364a75aa5f52d81193fe35ccaf4bf6eddd' &&
+    manifest.core_pe_version === '0.5.1.23' && manifest.channel === 'd21-cumulative-upgrade' &&
+    addon.sha256 === D21_ADDON_SHA256 && bridge.sha256 === D21_BRIDGE_SHA256;
+  return result(manifest, addon, bridge, null, null, instructions, { archiveSha256,
+    ...(exactD21 ? { canonicalCore: { id:'0.5-dline21', version:'0.5 D21 累计常规版', variant:'zh-CN',
+      architecture:'x64', interface:'NGX-D3D12-Feature1', inputInterfaces:['NGX-D3D12-Feature1'],
+      supportsPresent:true, capabilities:['same-frame-output'], validation:'candidate', stableRelease:false,
+      coreUpdateOnly:true,
+      blockers:['新游戏、RTX40 与具体游戏仍需实机验收'] } } : {}) });
 }
 
 function dx11Package(entries) {
@@ -263,11 +278,14 @@ async function readOtaPackage(file) {
   if (typeof file !== 'string' || !/\.zip$/i.test(file) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
     throw new Error('invalid OTA package');
   }
+  const stat = fs.statSync(file);
+  if (stat.size > MAX_TOTAL_BYTES) throw new Error('OTA archive too large');
+  const archiveSha256 = await hashRegularFile(file, { assertPath:noLinks, maxBytes:MAX_TOTAL_BYTES });
   const entries = await readZipEntries(file);
   const standard = entries.has('ota-manifest.json');
   const dx11 = entries.has('build-info.json') || entries.has('SHA256.json');
   if (standard && dx11) throw new Error('ambiguous OTA metadata');
-  if (standard) return standardPackage(entries);
+  if (standard) return standardPackage(entries, archiveSha256);
   if (dx11) {
     if (!entries.has('build-info.json') || !entries.has('SHA256.json')) throw new Error('DX11 OTA metadata missing');
     return dx11Package(entries);

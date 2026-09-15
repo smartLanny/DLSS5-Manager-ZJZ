@@ -15,7 +15,9 @@ const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
 
 function validateRequest(domain, input) {
   if (!Object.hasOwn(IDS,domain) || !input || typeof input !== 'object' || Array.isArray(input)) fail('SETTINGS_INPUT','图像设置请求无效。');
-  const allowed = domain === 'sr' ? ['backend','quality','renderPercent','preset'] : ['backend','mode','multiplier','targetFps','experimental56'];
+  const allowed = domain === 'sr' ? ['backend','quality','renderPercent','preset'] : ['backend','mode','multiplier','targetFps','experimental56',
+    'runtimeMode','hdrMode','depthEdgeGuard','freezeFallback','reflexSourceCap','maxCount','temporalFix','blackwellFrameworkKernels',
+    'thinGeometryIntermediateScatter','thinGeometryValidatedWarpBlend','thinGeometryPreviousScatter','raiseFrameCeiling'];
   if (Object.keys(input).some(k=>!allowed.includes(k))) fail('SETTINGS_INPUT','请求含不属于此设置域的字段。');
   if (domain === 'sr' && !['native','optiscaler'].includes(input.backend) || domain === 'fg' && !['nvidia','rtx40','mfgunlock'].includes(input.backend)) fail('SETTINGS_BACKEND','请选择已安装的对应后端。');
   const request = structuredClone(input);

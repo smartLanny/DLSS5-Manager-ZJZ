@@ -6,11 +6,12 @@
 
 清单要提供：
 
-- 活动 Core payload 根目录和明确的 Core 版本；版本名含 D13/D14 时直接拒绝。
-- 可选但推荐提供已验收 Core 原始包的 bytes、SHA-256、source commit 和 source-manifest SHA-256；当前 canonical 输入是 D16 `7b056439a981b1392d66d40a746a9fbd2299ca94`，ZH 包为 1613306 bytes，SHA-256 为 `54b7928201f8e9a97d7779373a786650014f8006567da64d1ef931a5829f9b3b`。
+- 活动 Core payload 根目录、`core.version` 新安装默认值和 `core.versions` 同包版本白名单；默认值必须是完整的 `0.4.7beta`，版本名含 D13/D14 时直接拒绝。
+- 每个白名单版本会固化为自己经过哈希校验的 Core、`nrchain_nvngx.dll` 和配置。D21 只保留测试身份，不能成为默认项。精确文件尚未准备好的版本不要写进白名单，Manager 会把对应菜单项显示为“组件未准备”，不得用相近版本替代。
+- 可选但推荐提供已验收 Core 原始包的 bytes、SHA-256、source commit 和 source-manifest SHA-256。D21 累计常规版只能使用精确 OTA 身份；原始包和清单校验信息不得靠改名推断。
 - 授权 runtime 根目录下的 RTX40、RTX50 `nvngx_dlssnr.dll`，各自的 bytes 和 SHA-256。两族各一份，RTX40 作为 RTX20/30/40 的共享安装族。
 - 官方 MFG 0.9 Addon，固定为 601088 bytes、`64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`。
-- Bridge 的登记信息来自 staging 清单；没有候选小组件时保留 `reserved`。当前清单提供带 importer manifest 的 `1.4.13-pre7` 候选，因此 stage 的 `resources/bridge-dlc/manifest.json` 记录为 `candidate-staged`，带候选 addon SHA 和文件摘要，但不会把候选宣称为兼容。独立验收完成后再更新状态和相应 pin。
+- Bridge 的登记信息来自 staging 清单；没有候选小组件时保留 `reserved`。当前清单提供官方 release 的 `1.4.13-pre8` 候选（固定 tag、commit、bytes 与 SHA-256），因此 stage 的 `resources/bridge-dlc/manifest.json` 记录为 `candidate-staged`，但 `defaultEligible=false`，不会替换现有固定 Bridge，也不会把候选宣称为兼容。独立验收完成后再更新状态和相应 pin；已被取代的 pre7 会被 beta2 清单生成器拒绝。
 - 可选的 `components` 数组。它是小组件的唯一外部注入入口，允许 `bridge`、`feeder`、`host`、`vulkan` 四类；每个文件都要声明来源、stage 相对路径、bytes 和 SHA-256。
 - 可选的 `resources` 数组。它只允许当前 Manager 仍需的 HoYoShade、loading-helper、REFramework 入口和 Vulkan ReShade layer 文件，目标路径固定在原来的 `resources/` 子目录；每个文件同样要声明 bytes 和 SHA-256。
 
@@ -45,7 +46,7 @@
 
 `resources` 入口不会恢复 `feeder-runtime`、`legacy-runtime` 或旧 FG/Vulkan runtime DLL；它只补齐现有业务代码实际读取的 profile/helper/REFramework 小资源，以及 Bridge/Vulkan 动态 provider 复用的 ReShade layer。当前 Vulkan ReShade allow-list 是 `LICENSE.md`、`recipe.json`、`ReShade64.dll`、`ReShade64.json` 四个文件。
 
-当前外部 staging 还登记了四个 `NRExternalProviderV1` 候选：stable AMD OF `0.15.1`（DX12/x64，默认候选）、preview OF `1.16.0-beta.1`（DX12/x64，可选）、D16 legacy host `0.15.1-d16-adapter-r3`（DX9/DX10/DX11/DX12，mixed，默认候选）和 Vulkan `vulkan-d15-r3`（Vulkan/x64，默认候选）。它们保留各自的 `component-manifest.json`、`external-provider-package.json`、许可证、shader/config 和 provenance；Core addon、同源 `nrchain_nvngx.dll`、`nr_before_sr.ini` 与大型 NR runtime 由当前 Core/Runtime 库存注入。provider 自有 `dlss5-feed.cfg` 或 `ReShadePreset.ini` 仍是路线配置，不是 Core 配置。所有版本仍保持候选状态，未因此宣称游戏兼容。
+0.5.0-beta.2 的外部 staging 登记三个 `NRExternalProviderV1` 候选：stable AMD OF `0.15.1`（DX12/x64）、legacy host `0.15.1-d16-adapter-r3`（DX9/DX10/DX11/DX12，mixed）和 Vulkan `vulkan-d15-r3`（Vulkan/x64）。旧包中的 preview OF `1.16.0-beta.1` 不进入本次清单。它们保留各自的 `component-manifest.json`、`external-provider-package.json`、许可证、shader/config 和 provenance；Core addon、同源 `nrchain_nvngx.dll`、`nr_before_sr.ini` 与大型 NR runtime 由当前 Core/Runtime 库存注入。provider 自有 `dlss5-feed.cfg` 或 `ReShadePreset.ini` 仍是路线配置，不是 Core 配置。所有版本仍保持候选状态，未因此宣称游戏兼容。
 
 ## 两种 flavor
 
@@ -54,7 +55,7 @@
 | `base` | Electron、默认 Core、ReShade、`nrchain_nvngx.dll`、MFG 0.9、Bridge candidate-staged/候选包，以及清单中 `includeIn` 命中的小组件 | 两个大型 `nvngx_dlssnr.dll`、未列入 staging 的 Feeder/Vulkan/legacy runtime |
 | `offline` | base 全部内容，加 RTX40 一份和 RTX50 一份 `nvngx_dlssnr.dll`，以及同样命中的小组件 | 其他重复的 Feeder/Vulkan/legacy runtime |
 
-stage 位于 `desktop/.packaging-stage/<flavor>`，被 Git 忽略，只用于当前构建。交付位于本仓根目录的 `deliveries/`（从 desktop 看是 `../deliveries/`），也被 Git 忽略。构建清理限于这两个输出区域。
+未传 `--work-root` 时，stage 位于 `desktop/.packaging-stage/<flavor>`，交付位于仓库根目录的 `deliveries/`；两处都被 Git 忽略。磁盘空间紧张或不希望占用 C 盘时，应传入专用的非系统盘工作目录，例如 `--work-root D:\DLSS5-Build`。脚本只会清理带自身标记的 stage 和明确的新交付目录，拒绝把无关目录当成构建缓存覆盖。
 
 两种 flavor 都保留系统辅助脚本，以及 `fg-components` 的五个恢复元数据和许可证文件，供旧安装记录识别与恢复使用；该静态清单不会附带旧 FG/UAL 二进制。
 
@@ -76,9 +77,15 @@ npm run build:base
 # 本地离线整合包：NSIS + portable，额外注入两个 runtime
 npm run build:offline
 
+# C 盘空间紧张：全部 stage 和交付物放到指定的 D 盘工作目录
+node scripts/build-manager.cjs --flavor offline --work-root D:\DLSS5-Build
+
 # 只需要 portable 时
 npm run build:portable
 npm run build:offline:portable
+
+# 本机缺少 NSIS 签名/符号链接条件时，生成可直接解压测试的完整目录 ZIP
+node scripts/build-manager.cjs --flavor offline --unpacked-zip --work-root D:\DLSS5-Build
 
 # 无需 Core/NR 资产的外部组件版，适合验证桌面源码打包
 npm run build:external
@@ -91,13 +98,13 @@ base/offline 输出目录写入 `build-config.json` 和 `packaging-report.json`�
 验包时，使用该次构建保存的配置，并保留对应源代码、stage 和 Electron 依赖。配置必须位于待验 `win-unpacked` 目录之外：
 
 ```powershell
-node scripts/verify-distribution-policy.js --build-config ../deliveries/DLSS5-Manager-0.5.0-beta.1-base/build-config.json
-node scripts/verify-manager-release.js --dir ../deliveries/DLSS5-Manager-0.5.0-beta.1-base/win-unpacked --build-config ../deliveries/DLSS5-Manager-0.5.0-beta.1-base/build-config.json --nsis-dir "$env:LOCALAPPDATA/electron-builder/Cache/nsis/nsis-3.0.4.1" --output build/base-verification.json
+node scripts/verify-distribution-policy.js --build-config ../deliveries/DLSS5-Manager-0.5.0-beta.2-base/build-config.json
+node scripts/verify-manager-release.js --dir ../deliveries/DLSS5-Manager-0.5.0-beta.2-base/win-unpacked --build-config ../deliveries/DLSS5-Manager-0.5.0-beta.2-base/build-config.json --nsis-dir "$env:LOCALAPPDATA/electron-builder/Cache/nsis/nsis-3.0.4.1" --output build/base-verification.json
 ```
 
 验证器按实际配置检查 stage 和附带文件的摘要；动态构建未提供配置时直接报错，避免把空静态资源列表误判为验包通过。`--nsis-dir` 应指向该次构建所用、含 `elevate.exe` 的可信 NSIS 工具目录；更换 builder 工具版本或缓存位置后相应更新。`build:external` 使用单独的静态资源白名单，输出到 `desktop/dist-external/`，并自动运行 `verify:external`。
 
-当前实际构建的 base 与 offline 报告都记录同一个 D16 source package：`1613306` bytes、上述 SHA-256；这能追溯到 D16 canonical 包，不会把旧 D13/D14/D15 目录误当作默认 Core。
+0.5.0-beta.2 实际离线清单只启用四个精确来源：`0.2.0-beta.2`、`0.4.2`、`0.4.7beta`、`0.5-dline21`，默认是 `0.4.7beta`。精确 `0.3.3.4` 与 `0.4.7 Corefix8` 原文件尚未准备，因此只在 UI 中显示“组件未准备”，不进入 `core.versions`，也不允许用近似文件替代。D21 来自清单固定的累计常规 OTA 身份，只作为可见的显式测试更新项；新游戏必须先建立已安装的 DX12 基线，不能把 D21 当成无基线的首次安装。
 
 MFG provider pin 位于 `desktop/src/product/fg-mfgunlock-providers.json`，资源目录的 `manifest.json` 只负责声明当前 stage 的文件。运行时先用 provider pin 验证资源目录，再按 provider 读取 addon；因此官方 release 增加新 provider 时可以登记新 JSON 记录，不必把每个版本再写进 JS。
 

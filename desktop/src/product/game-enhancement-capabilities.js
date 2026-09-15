@@ -5,6 +5,7 @@ const path = require('node:path');
 // Dynamic Multi Frame Generation and 6X Mode. Setting enumeration is separate.
 // https://www.nvidia.com/en-us/geforce/news/dlss-4-5-rtx-path-tracing-game-announcements-gdc-2026/
 const NVIDIA_FG_DRIVER = Object.freeze({ standard: 57216, advanced: 59579 });
+const MFG_DYNAMIC_DRIVER = 59541;
 
 // Static DLL evidence is not a runtime capability or a generated-frame result.
 // Manager-owned external NR assets can never upgrade a game's SR/FG eligibility.
@@ -69,12 +70,18 @@ function assessEnhancementState({ domain, request = {}, game = {}, hardware = {}
     add('SETTINGS_MFG_RUNTIME_UNCONFIRMED', capabilities.mfgUnlock?.api && capabilities.mfgUnlock.api !== 'dx12'
       ? '当前 MFG Unlock 配套仅对已确认的 DX12 路线开放。'
       : '尚未确认已有 x64 DLSS-G 310.x 或更新运行库，不能准备 MFG Unlock。');
-  // This addon only raises game requests; it does not implement Dynamic.
-  // The native integration alone proves no >2x NVIDIA override capacity.
-  const declaredMultipliers = backend === 'mfgunlock' ? (capabilities.mfgUnlock?.available === true && Array.isArray(capabilities.mfgUnlock.multipliers) ? capabilities.mfgUnlock.multipliers : [])
+  // MFG 0.9 supports absolute fixed requests and a tightly gated Dynamic path.
+  // The native integration alone proves neither Dynamic support nor >2x capacity.
+  const mfg = capabilities.mfgUnlock || {};
+  const versionIs = (value, expected) => typeof value === 'string' && (value === expected || value.startsWith(expected + '.'));
+  const mfgDynamicReady = backend === 'mfgunlock' && mfg.available === true && mfg.api === 'dx12' && mfg.providerVersion === '0.9' &&
+    versionIs(mfg.dlssgVersion, '310.9.1') && versionIs(mfg.streamlineVersion, '2.14.1') &&
+    mfg.dynamicSupportObserved === true && mfg.dynamicSupported === true && driver.available === true &&
+    Number.isInteger(driver.version) && driver.version >= MFG_DYNAMIC_DRIVER;
+  const declaredMultipliers = backend === 'mfgunlock' ? (mfg.available === true && Array.isArray(mfg.multipliers) ? mfg.multipliers : [])
     : Array.isArray(capabilities.multipliers) ? capabilities.multipliers : [2];
   let multipliers = [...new Set(declaredMultipliers.filter(value => Number.isInteger(value) && value >= 2 && value <= 6))];
-  let modes = backend === 'mfgunlock' ? (capabilities.mfgUnlock?.available === true ? ['follow', ...(multipliers.length ? ['fixed'] : [])] : []) : backend === 'nvidia'
+  let modes = backend === 'mfgunlock' ? (mfg.available === true ? ['follow', ...(multipliers.length ? ['fixed'] : []), ...(mfgDynamicReady ? ['dynamic'] : [])] : []) : backend === 'nvidia'
     ? ['off', 'fixed', ...(capabilities.dynamic === true ? ['dynamic'] : [])] : [];
   let capabilityOptions = null;
   if (domain === 'fg' && backend === 'nvidia') {
@@ -103,7 +110,11 @@ function assessEnhancementState({ domain, request = {}, game = {}, hardware = {}
   }
   if (domain === 'fg' && request.mode && !['restore', ...modes, ...(backend === 'rtx40' ? ['follow', 'fixed', 'dynamic'] : [])].includes(request.mode)) {
     const row = capabilityOptions?.modes.find(value => value.value === request.mode);
-    if (!blockers.some(value => value.code === row?.code)) add(row?.code || 'SETTINGS_MODE_UNSUPPORTED', row?.message || '当前后端及游戏证据未确认支持此补帧模式。');
+    const dynamicMfg = backend === 'mfgunlock' && request.mode === 'dynamic';
+    if (!blockers.some(value => value.code === row?.code || dynamicMfg && value.code === 'SETTINGS_MFG_DYNAMIC_UNCONFIRMED'))
+      add(dynamicMfg ? 'SETTINGS_MFG_DYNAMIC_UNCONFIRMED' : row?.code || 'SETTINGS_MODE_UNSUPPORTED', dynamicMfg
+        ? 'Dynamic MFG 仅在已观察到 D3D12、MFG 0.9、DLSS-G 310.9.1、Streamline 2.14.1、驱动 595.41+ 且运行库报告支持时开放。'
+        : row?.message || '当前后端及游戏证据未确认支持此补帧模式。');
   }
   if (domain === 'fg' && request.mode === 'fixed' && !multipliers.includes(request.multiplier)) {
     const row = capabilityOptions?.multipliers.find(value => value.value === request.multiplier);
@@ -128,4 +139,4 @@ function assessEnhancementState({ domain, request = {}, game = {}, hardware = {}
     availableModes: modes, availableMultipliers: multipliers, capabilityOptions, runtimeVerified: false,
     actual: { state: 'unknown', source: null }, officialOverrideCertified: support.source === 'catalog' && support.official === true };
 }
-module.exports = { inspectNativeEnhancementCapabilities, assessEnhancementState, NVIDIA_FG_DRIVER };
+module.exports = { inspectNativeEnhancementCapabilities, assessEnhancementState, NVIDIA_FG_DRIVER, MFG_DYNAMIC_DRIVER };

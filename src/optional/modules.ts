@@ -26,7 +26,7 @@ export const OPTIONAL_MODULES: OptionalModule[] = [
     id: "mfg-dlc-slot",
     title: "MFG DLC 槽",
     enabled: false,
-    summary: "槽位默认绑定 MFG Unlock 0.9；0.7 仅回滚。下载走 pin 源，不进树。",
+    summary: "槽位只允许安装 MFG Unlock 0.9；0.7/0.6.1 只识别历史收据，不能安装或回退。下载走 pin 源，不进树。",
   },
   {
     id: "d14-core",

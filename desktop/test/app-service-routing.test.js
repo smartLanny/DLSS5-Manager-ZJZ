@@ -14,6 +14,7 @@ const { normalizeError } = require('../src/product/errors');
 const { PAYLOAD_FILES, DX11_COMPAT_VERSION, DX11_COMPAT_CARRIER } = require('../src/product/constants');
 const journal = require('../src/core/file-journal');
 const { CARRIER, BRIDGE, zip, dx11Fixture } = require('./helpers/ota-fixture');
+const D21_PACKAGE = 'C:\\Users\\PC\\Downloads\\装机宅DLSS5 0.5版本叠层测试\\OTA覆盖小包-装机宅叠层DLSS5-0.5-D21-累计常规版-中文-OTA.zip';
 
 function makePayload(t, root) {
   const payloadRoot = path.join(root, 'resources', 'payload', 'nr-before-sr');
@@ -519,6 +520,25 @@ test('imported compatibility OTA follows the selected API without mixing package
   assert.equal(imported.label, '0.4.5-DX11-兼容增强');
   assert.equal(persisted.label, '0.4.5-DX11-兼容增强');
 });
+
+test('the exact D21 OTA enters the component library as one Core plus chain and does not create a legacy archive copy',
+  { skip: !fs.existsSync(D21_PACKAGE) }, async t => {
+    const componentLibraryRoot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'manager-d21-library-')), 'components');
+    t.after(() => fs.rmSync(path.dirname(componentLibraryRoot), { recursive:true, force:true }));
+    const f = makeService(t, { componentLibraryRoot });
+    const versions = await f.service.importAddonFile(D21_PACKAGE);
+    const activeBundle = JSON.parse(fs.readFileSync(path.join(componentLibraryRoot, 'bundle.json'), 'utf8'));
+    assert.equal(activeBundle.versions['0.5-dline21']?.coreUpdateOnly, true);
+    const d21 = versions.find(row => row.id === '0.5-dline21');
+    assert.equal(d21?.ready, true); assert.equal(d21?.source, 'external');
+    assert.equal(d21?.coreUpdateOnly, true); assert.equal(d21?.addonOnly, true);
+    assert.equal(f.service.store.read().addonVersion, '0.5-dline21');
+    assert.equal(fs.existsSync(path.join(f.root, 'user-data', 'addon-versions')), false);
+    const inventory = JSON.parse(fs.readFileSync(path.join(componentLibraryRoot, 'inventory.json'), 'utf8'));
+    const imported = inventory.packages.find(row => row.id === '0.5-dline21');
+    assert.equal(imported.coreUpdateOnly, true);
+    assert.deepEqual(imported.files.map(row => row.name).sort(), ['nr-before-sr.zh-CN.addon64','nrchain_nvngx.dll']);
+  });
 
 
 test('failed DX12 transition restores API preference and leaves the changed carrier intact', async t => {

@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('manager', Object.freeze({
   pickComponent: directory => invoke('components-pick', directory === true),
   activateComponentRuntime: id => invoke('components-runtime-activate', id),
   activateComponentCore: id => invoke('components-core-activate', id),
+  moveComponentLibrary: () => invoke('components-storage-pick'),
   componentChoices: id => invoke('game-components', id),
   checkComponentUpdates: () => invoke('components-updates'),
   downloadComponent: id => invoke('components-download', id),

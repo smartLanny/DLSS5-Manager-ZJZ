@@ -325,6 +325,8 @@ test('rename modal saves entered names and cancel leaves the manager untouched',
     window: { manager: { renameGame: async (...args) => { calls.push(args); return { ok: true, value: [] }; } } },
     runAction: async work => work()
   };
+  context.showOverlay = element => element?.classList.remove('is-closing', 'hidden');
+  context.hideOverlay = element => element?.classList.add('hidden');
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../src/shared/api-resolution.js"), "utf8"), context);
   vm.runInContext(source.slice(source.indexOf('function confirmRenameGame('), source.indexOf('async function dismissGameFromList(')), context);

@@ -88,7 +88,7 @@ function createLegacyRuntime(options = {}) {
     return externalProviders.load({ ...input, id: providerId, selection: input.selection || input });
   }
   function validate(recipe) {
-    if (recipe?.externalProvider?.schema === lock.externalProvider?.recipeSchema)
+    if (recipe?.externalProvider && recipe.externalProvider.schema === lock.externalProvider?.recipeSchema)
       return externalProviders.validateRecipe(recipe);
     if (!recipe || !recipe.selection) fail('LEGACY_RECEIPT_INVALID', 'Feeder 收据缺少固定配套选择。');
     // A newly selected external Provider must not reinterpret an existing
@@ -99,7 +99,7 @@ function createLegacyRuntime(options = {}) {
     return recipe;
   }
   function validateStored(recipe) {
-    if (recipe?.externalProvider?.schema === lock.externalProvider?.recipeSchema)
+    if (recipe?.externalProvider && recipe.externalProvider.schema === lock.externalProvider?.recipeSchema)
       return externalProviders.validateRecipe(recipe);
     const hash = fingerprint(recipe);
     if (!lock.restorableRecipeFingerprints?.includes(hash)) return validate(recipe);

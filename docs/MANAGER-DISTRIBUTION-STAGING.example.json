@@ -1,16 +1,15 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "0.5.0-beta.1",
+  "packageVersion": "0.5.0-beta.2",
   "core": {
     "payloadRoot": "C:/path/to/active-core/payload/nr-before-sr",
-    "version": "REPLACE_WITH_ACTIVE_CORE_VERSION",
-    "sourcePackage": {
-      "file": "C:/path/to/verified-core-package.zip",
-      "bytes": 0,
-      "sha256": "REPLACE_WITH_VERIFIED_PACKAGE_SHA256",
-      "sourceCommit": "REPLACE_WITH_VERIFIED_SOURCE_COMMIT",
-      "sourceManifestSha256": "REPLACE_WITH_VERIFIED_SOURCE_MANIFEST_SHA256"
-    }
+    "version": "0.4.7beta",
+    "versions": [
+      "0.2.0-beta.2",
+      "0.4.2",
+      "0.4.7beta",
+      "0.5-dline21"
+    ]
   },
   "runtime": {
     "sourceRoot": "C:/path/to/authorized/manager-major-update-20260911/payload/nr-before-sr",

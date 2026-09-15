@@ -20,6 +20,7 @@ function relativeName(name) {
   return name;
 }
 async function digest(file) { return hashRegularFile(file, { assertPath: noLinks, maxBytes: MAX_FILE }); }
+function digestBytes(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
 async function json(file) {
   await noLinks(file); const stat = await fsp.stat(file);
   if (!stat.isFile() || stat.size > 1024 * 1024) fail('组件清单过大或不是普通文件。');
@@ -55,8 +56,9 @@ async function unpack(file, target) {
     })().catch(stop); }); zip.readEntry();
   }));
 }
-function createComponentLibrary({ userData, catalog = CATALOG }) {
-  const root = path.join(userData, 'component-library'), inventoryFile = path.join(root, 'inventory.json');
+function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALOG }) {
+  const root = path.resolve(selectedRoot || path.join(userData, 'component-library'));
+  const inventoryFile = path.join(root, 'inventory.json');
   const releaseFile = path.join(root, 'release-catalog.json');
   function availableCatalog() {
     let remote = [], checkedAt = null;
@@ -195,6 +197,42 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
       await atomicJson(inventoryFile, data); return { packages: rows, changedGames: false };
     } finally { if (temp && inside(root, temp) && path.basename(temp).startsWith('.import-')) await fsp.rm(temp, { recursive: true, force: true }); }
   }); }
+  async function importVerifiedCore(input) { return serialize(async () => {
+    if (!input || !validId(input.id) || typeof input.version !== 'string' || !input.version || input.version.length > 100 ||
+        input.architecture !== 'x64' || typeof input.interface !== 'string' || !Array.isArray(input.inputInterfaces) ||
+        !Array.isArray(input.files) || input.files.length < 2 || input.files.length > 3) fail('Core 组件身份不完整。');
+    const allowed = new Set(['nr-before-sr.zh-CN.addon64','nrchain_nvngx.dll','nr_before_sr.ini']);
+    const seen = new Set(), staged = [];
+    for (const row of input.files) {
+      if (!row || !allowed.has(row.name) || seen.has(row.name) || !Buffer.isBuffer(row.bytes) || !HASH.test(row.sha256 || '') ||
+          row.bytes.length > MAX_FILE || digestBytes(row.bytes) !== row.sha256) fail('Core 组件文件摘要不符。');
+      seen.add(row.name); staged.push(row);
+    }
+    if (!seen.has('nr-before-sr.zh-CN.addon64') || !seen.has('nrchain_nvngx.dll')) fail('Core 组件必须同时包含 addon 与 nrchain。');
+    await fsp.mkdir(root, { recursive: true });
+    const temp = await fsp.mkdtemp(path.join(root, '.verified-core-'));
+    try {
+      const files = [];
+      for (const row of staged) {
+        const source = path.join(temp, row.name); await fsp.writeFile(source, row.bytes, { flag:'wx' });
+        if (/\.(dll|addon64)$/i.test(row.name) && pe.getBitness(source) !== 64) fail('Core 组件位数与清单不匹配。');
+        files.push({ file:await storeFile(source,row.sha256,row.name), name:row.name, sha256:row.sha256, bytes:row.bytes.length });
+      }
+      const data = await inventory();
+      const record = { id:input.id, kind:'core', version:input.version, variant:input.variant || 'zh-CN', architecture:'x64',
+        interface:input.interface, inputInterfaces:[...input.inputInterfaces], supportsPresent:input.supportsPresent === true,
+        gameApis:['dx12'], capabilities:Array.isArray(input.capabilities) ? input.capabilities.filter(value => typeof value === 'string') : [],
+        validation:input.validation === 'blocked' ? 'blocked' : 'candidate', blockers:Array.isArray(input.blockers) ? input.blockers : [],
+        stableRelease:input.stableRelease === true, coreUpdateOnly:input.coreUpdateOnly === true,
+        source:input.catalogIdentity === true ? 'catalog' : 'user-imported',
+        archiveSha256:HASH.test(input.archiveSha256 || '') ? input.archiveSha256 : null, files, importedAt:new Date().toISOString() };
+      const existing = data.packages.find(row => row.id === record.id);
+      if (existing && JSON.stringify(existing.files) !== JSON.stringify(record.files)) fail('同一 Core ID 对应不同文件，已保留原库存。');
+      if (!existing) data.packages.push(record);
+      await atomicJson(inventoryFile,data);
+      return { packages:[existing || record], changedGames:false };
+    } finally { if (inside(root,temp) && path.basename(temp).startsWith('.verified-core-')) await fsp.rm(temp,{recursive:true,force:true}); }
+  }); }
   async function materializePayload(data, bundledPayloadDir) {
     const base = await json(path.join(bundledPayloadDir, 'bundle.json'));
     if (base.version !== 4) fail('基础包需要 v4 组件清单。');
@@ -234,11 +272,14 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
       if (core.validation === 'blocked' || core.kind !== 'core' || core.architecture !== 'x64') fail('这个 Core 尚不能用于安装。');
       const addons = core.files.filter(f => /\.addon64$/i.test(f.name));
       if (addons.length !== 1) fail('请选择只含一种语言 Core 的组件包。');
-      const versionId = `component-${core.id}`;
+      const canonicalCoreId = core.source === 'catalog' && require('./core-menu').choiceFor(core.id) ? core.id : null;
+      const versionId = canonicalCoreId || `component-${core.id}`;
       if (!validId(versionId)) fail('Core 组件 ID 过长。');
       const entry = { ...base.versions[inheritedVersion], label: `${core.version} · ${core.variant}`, source: 'component-library',
         files: { ...base.versions[inheritedVersion].files }, inputInterfaces: core.inputInterfaces || [core.interface], supportsPresent: core.supportsPresent === true,
-        capabilities: core.capabilities || [], coreUpdateOnly: false, comparisonOnly: false, ota: false, compatibility: null };
+        capabilities: core.capabilities || [], coreUpdateOnly: core.coreUpdateOnly === true, comparisonOnly: false,
+        ota: core.coreUpdateOnly === true, stableRelease: core.stableRelease === true,
+        validation: core.validation || 'candidate', blockers: core.blockers || [], compatibility: null };
       const sources = { 'nr-before-sr.zh-CN.addon64': addons[0] };
       for (const name of ['nrchain_nvngx.dll','nr_before_sr.ini']) { const file = core.files.find(f => path.basename(f.name) === name); if (file) sources[name] = file; }
       for (const [name, file] of Object.entries(sources)) entry.files[name] = file.sha256;
@@ -333,7 +374,7 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
       return await importComponent(file);
     } finally { if (inside(root,temp) && path.basename(temp).startsWith('.download-')) await fsp.rm(temp,{recursive:true,force:true}); }
   }
-  return { root, importComponent, activateRuntime, activateCore, registerPayloadContext, inventory, checkUpdates, downloadComponent, catalog: availableCatalog };
+  return { root, importComponent, importVerifiedCore, activateRuntime, activateCore, registerPayloadContext, inventory, checkUpdates, downloadComponent, catalog: availableCatalog };
 }
 function readCachedComponents(root) {
   const file = path.join(root, 'inventory.json');

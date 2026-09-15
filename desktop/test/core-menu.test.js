@@ -8,9 +8,10 @@ const complete = { supportsPresent: true, inputInterfaces: ['NGX-D3D12-Feature1'
 
 test('five primary choices carry actual identities, not display-name aliases', () => {
   const input = CORE_CHOICES.map(row => ({ id: row.ids[0], ready: true, source: 'external', compatibility: 'dx12' }));
-  const original = structuredClone(input), result = coreMenu(input, { defaultVersion: '0.5-dline21' });
+  const original = structuredClone(input), result = coreMenu(input, { defaultVersion: '0.4.7beta' });
   assert.deepEqual(result.map(row => row.id), input.map(row => row.id));
-  assert.equal(result.length, 5); assert.match(result[4].label, /D21.*新安装默认/);
+  assert.equal(result.length, 5); assert.match(result[3].label, /0\.4\.7.*新安装推荐/);
+  assert.match(result[4].label, /D21.*测试/); assert.doesNotMatch(result[4].label, /默认|推荐/);
   assert.deepEqual(input, original); assert.equal(result[4].compatibility, 'dx12');
 });
 test('missing sources are visible but cannot be installed', () => {
@@ -45,22 +46,22 @@ test('metadata-only and failed verification remain distinct from runtime success
   assert.equal(row.ready, false); assert.equal(row.coreUpdateOnly, true);
   assert.equal(row.verification, 'metadata-only'); assert.equal(row.compatibilityEvidence.actualNrVerified, false);
 });
-test('preparing a validated complete D21 source preserves it as default over 0.4.7', () => {
+test('preparing a validated complete D21 source keeps 0.4.7 as the public new-install default', () => {
   const input = { version: 4, defaultVersion: '0.5-dline21', versions: {
     '0.5-dline21': { ...complete }, '0.4.7beta': { compatibility: 'dx11' }, '0.3.3-dev-r4': {} } };
-  assert.equal(prepareCoreCatalog(input).bundle.defaultVersion, '0.5-dline21');
+  assert.equal(prepareCoreCatalog(input).bundle.defaultVersion, '0.4.7beta');
   assert.deepEqual(input.versions['0.5-dline21'], complete);
 });
-test('D12, D20, mislabeled files and core-only D21 cannot become the D21 default', () => {
-  for (const versions of [{ '0.5-dline12': complete }, { '0.5-dline20': { ...complete, label: '0.5D21' } },
-    { '0.5-dline21': { ...complete, coreUpdateOnly: true } }, { '0.5-dline21': {} },
-    { '0.5-dline21': complete, '0.5D21': complete }]) assert.equal(preferredBundleDefault({ versions }), null);
+test('D21, D12, D20 and mislabeled files cannot become the public new-install default', () => {
+  for (const versions of [{ '0.5-dline21': complete }, { '0.5-dline12': complete }, { '0.5-dline20': { ...complete, label: '0.4.7' } },
+    { '0.4.7beta': { coreUpdateOnly: true } }, { '0.4.7beta': {}, '0.4.7': {} }]) assert.equal(preferredBundleDefault({ versions }), null);
+  assert.equal(preferredBundleDefault({ versions: { '0.4.7beta': { compatibility: 'dx11' }, '0.5-dline21': complete } }), '0.4.7beta');
 });
 
-test('without a complete D21 source the existing full D12 default is not downgraded', () => {
+test('public default changes to 0.4.7 without changing an installed D12 game', () => {
   const input = { version: 4, defaultVersion: '0.5-dline12', versions: {
     '0.5-dline12': { ...complete }, '0.4.7beta': { compatibility: 'dx11' } } };
-  assert.equal(prepareCoreCatalog(input).bundle.defaultVersion, '0.5-dline12');
+  assert.equal(prepareCoreCatalog(input).bundle.defaultVersion, '0.4.7beta');
   const rows = coreMenu([{ id: '0.5-dline12', ready: true }], { installedVersion: '0.5-dline12', defaultVersion: '0.5-dline12' });
   assert.ok(rows.every(row => !String(row.label).includes('新安装默认')));
 });

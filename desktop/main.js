@@ -9,7 +9,7 @@ const { createStartupElevation, withPermissionRecovery } = require('./src/produc
 const { createOperationElevation } = require('./src/product/operation-elevation');
 const { workerArguments, runOperationWorker } = require('./src/product/operation-worker');
 const startup = createStartupDiagnostics();
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, shell, clipboard } = require('electron');
 const operationWorkerRequested = process.argv.some(value => typeof value === 'string' && (value.startsWith('--operation-worker=') || value.startsWith('--hoyo-launch-worker=')));
 let createAppService, createSrModelService, createLaunchSettingsService, createLaunchCoordinator, installGuards, createFgComponents, classifyApi;
 
@@ -202,11 +202,18 @@ async function iconDataFor(file, currentIcon = null) {
 }
 
 function createWindow() {
+  let workArea = null;
+  try { workArea = screen?.getPrimaryDisplay()?.workAreaSize || null; } catch {}
+  const validArea = workArea && Number.isFinite(workArea.width) && Number.isFinite(workArea.height) && workArea.width > 0 && workArea.height > 0;
+  const fit = (desired, floor, available) => validArea ? Math.min(desired, Math.max(Math.min(floor, available), available - 32)) : desired;
+  const width = fit(1400, 480, workArea?.width);
+  const height = fit(860, 360, workArea?.height);
   win = new BrowserWindow({
-    width: 1400,
-    height: 860,
-    minWidth: 900,
-    minHeight: 620,
+    width,
+    height,
+    minWidth: Math.min(900, width),
+    minHeight: Math.min(620, height),
+    center: true,
     backgroundColor: '#fbfbfa',
     icon: path.join(__dirname, 'build', 'icon.png'),
     frame: false,
@@ -464,6 +471,13 @@ function registerIpc() {
   call('game-component-apply', (id, bridge) => service.applyBridgeComponent(id, bridge));
   call('components-runtime-activate', id => service.activateComponentRuntime(id));
   call('components-core-activate', id => service.activateComponentCore(id));
+  call('components-storage-pick', async () => {
+    const current=await service.listComponents();
+    const result=await dialog.showOpenDialog(win,{properties:['openDirectory'],title:'选择组件仓库所在磁盘或目录',
+      defaultPath:path.dirname(current.storage.root)});
+    if (result.canceled || !result.filePaths[0]) return null;
+    return service.moveComponentLibrary(result.filePaths[0]);
+  });
   call('components-pick', async directory => {
     const result = await dialog.showOpenDialog(win, { properties: [directory ? 'openDirectory' : 'openFile'],
       title: '导入运行库或外部组件', ...(directory ? {} : { filters: [{ name: '组件包与模块', extensions: ['zip','json','dll','addon64','addon32'] }] }) });
@@ -590,7 +604,9 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       resourcesPath: process.resourcesPath,
       appDir: __dirname,
       version: app.getVersion(),
-      overrides: { getFeatureEvidence: (id, domain) => featureProbe.inspect(id, domain), getKnownComponents: async id => fgComponents ? [
+      overrides: { applicationDir:app.isPackaged ? path.dirname(process.execPath) : null,
+        portableExecutable:process.env.PORTABLE_EXECUTABLE_FILE || null,
+        getFeatureEvidence: (id, domain) => featureProbe.inspect(id, domain), getKnownComponents: async id => fgComponents ? [
         ...await fgComponents.ownedModuleManifest(id).then(rows => rows.map(row => ({ ...row, owned: true, compatibility: 'compatible' }))),
         ...(typeof fgComponents.catalog === 'function' ? fgComponents.catalog() : []).map(row => ({ sha256: row.sha256, role: 'mfgunlock', compatibility: 'compatible' }))
       ] : [] }

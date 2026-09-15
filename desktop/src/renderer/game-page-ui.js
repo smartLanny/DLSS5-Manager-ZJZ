@@ -40,6 +40,7 @@
       fg: { backend: hasFgComponents(assessment) && settings.fgComponents?.backend || backend, mode: 'restore', multiplier: 2, targetFps: 0, ...(settings.current?.fg?.valid ? settings.current.fg.request : settings.requests?.fg?.request || settings.applied?.fg?.request || {}) } };
   }
   function mount(host, manager, options = {}) {
+    const eventController = new AbortController();
     let id = null, data = null, draft = {}, fields = {}, invalidFields = {}, tab = 'overview', busy = false, launching = false, message = '', error = false,
       modal = null, generation = 0, session = null, unsubscribe = null, disposed = false, tabController = null, capturingHotkey = false, faceStrength = 1,
       readinessState = null, readinessEpoch = -1, readinessOrder = -1, assessmentOrder = 0, launchAttempt = 0;
@@ -223,14 +224,28 @@
           (f.quality === 'custom' ? `<label class="gp-field"><span>输入比例</span><input type="number" min="33" max="100" step="1" value="${esc(f.renderPercent)}" data-gp-group="sr" data-gp-field="renderPercent"${active ? '' : ' disabled'}><small>33–100%。</small></label>` : '');
       } else {
         const modes = info.availableModes || [], multipliers = info.availableMultipliers || [];
-        controls = selectField('fg', 'mode', '补帧模式', Object.entries({ restore: '使用原有设置', follow: '跟随游戏倍率', off: '驱动关闭 FG', fixed: f.backend === 'mfgunlock' ? '请求提高倍率' : '固定总倍率', dynamic: '动态目标帧率' }).map(([key, label]) => option(key, label, f.mode, key !== 'restore' && (!active || !modes.includes(key)))).join(''), !active && !allowRestore) +
-          (f.mode === 'fixed' ? selectField('fg', 'multiplier', '总帧率倍率', [2, 3, 4, 5, 6].map(value => option(value, `${value}×${multipliers.includes(value) ? '' : ' · 待确认支持'}`, f.multiplier, !multipliers.includes(value))).join(''), !active, f.backend === 'mfgunlock' ? '提高较低的游戏请求；不会降低已有的更高倍率。' : '') : '') +
-          (f.mode === 'dynamic' ? `<label class="gp-field"><span>动态目标帧率</span><input type="number" min="0" max="1000" step="1" value="${esc(f.targetFps)}" data-gp-group="fg" data-gp-field="targetFps"${active && modes.includes('dynamic') ? '' : ' disabled'}><small>0 表示自动目标。</small></label>` : '');
+        controls = selectField('fg', 'mode', '补帧模式', Object.entries({ restore: '使用原有设置', follow: '跟随游戏倍率', off: '驱动关闭 FG', fixed: '固定总倍率', dynamic: '动态目标帧率' }).map(([key, label]) => option(key, label, f.mode, key !== 'restore' && (!active || !modes.includes(key)))).join(''), !active && !allowRestore) +
+          (f.mode === 'fixed' ? selectField('fg', 'multiplier', '总帧率倍率', [2, 3, 4, 5, 6].map(value => option(value, `${value}×${multipliers.includes(value) ? '' : ' · 待确认支持'}`, f.multiplier, !multipliers.includes(value))).join(''), !active, f.backend === 'mfgunlock' ? 'MFG 0.9 是绝对倍率，可以提高或降低游戏请求。' : '') : '') +
+          (f.mode === 'dynamic' ? `<label class="gp-field"><span>动态目标帧率</span><input type="number" min="0" max="1000" step="1" value="${esc(f.targetFps)}" data-gp-group="fg" data-gp-field="targetFps"${active && modes.includes('dynamic') ? '' : ' disabled'}><small>0 表示自动目标；只在完整运行时已确认支持时开放。</small></label>` : '');
+        if (f.backend === 'mfgunlock' && f.mode !== 'restore') {
+          const tri = (key, label, note = '') => { const selected = f[key] === true ? 'on' : f[key] === false ? 'off' : f[key]; return selectField('fg', key, label,
+            option('', '保持插件当前设置', selected) + option('on', '开启', selected) + option('off', '关闭', selected), !active, note); };
+          controls += `<details class="gp-capability-details"><summary>高级兼容设置 · 遇到问题时再调整</summary><div class="gp-controls">
+            ${selectField('fg', 'runtimeMode', '运行库策略', option('', '保持插件当前设置', f.runtimeMode) + option('game', '游戏自带（推荐）', f.runtimeMode) + option('local', '优先本地', f.runtimeMode) + option('ota', 'NVIDIA OTA', f.runtimeMode), !active)}
+            ${selectField('fg', 'hdrMode', 'HDR 兼容', option('', '保持插件当前设置', f.hdrMode) + option('native', '原生路径', f.hdrMode) + option('ui-composition', 'UI 合成', f.hdrMode) + option('automatic', '自动选择', f.hdrMode) + option('final-color', '最终颜色', f.hdrMode), !active)}
+            ${selectField('fg', 'depthEdgeGuard', '边缘保护', option('', '保持插件当前设置', f.depthEdgeGuard) + [0, 1, 2, 3, 4].map(value => option(value, value === 0 ? '0 · 关闭' : value, f.depthEdgeGuard)).join(''), !active)}
+            ${selectField('fg', 'maxCount', '运行库报告倍率上限', option('', '保持插件当前设置', f.maxCount) + [2, 3, 4, 5].map(value => option(value, `${value}×`, f.maxCount)).join(''), !active)}
+            ${tri('freezeFallback', '3×/4× 卡死救援', '卡死时尝试软件节奏；正常游戏保持插件设置。')}${f.mode === 'dynamic' ? tri('reflexSourceCap', 'Dynamic Reflex 源帧限制') : ''}
+            ${tri('temporalFix', '时序修复')}${tri('blackwellFrameworkKernels', 'Blackwell 框架内核')}
+            ${tri('thinGeometryIntermediateScatter', '细线中间帧保护')}${tri('thinGeometryValidatedWarpBlend', '细线校验混合')}
+            ${tri('thinGeometryPreviousScatter', '细线上一帧保护', '实验项，可能影响旧游戏。')}${tri('raiseFrameCeiling', '提高帧上限', '仅在确认需要 5×/6× 时考虑。')}
+          </div></details>`;
+        }
       }
       return `<section class="gp-section"><div class="gp-section-title"><div><h3>${sr ? 'DLSS 超分' : f.backend === 'mfgunlock' ? 'RTX40 补帧' : f.backend === 'nvidia' ? 'RTX50 帧生成' : '帧生成'}</h3></div>${badge(info.state || (active ? 'configurable' : 'unavailable'))}</div>
         ${reasons.length && reasons[0] !== activationText ? `<p class="gp-caption" title="${esc(reasons.join('；'))}">${esc(reasons[0])}</p>` : ''}${activationText ? `<p class="gp-caption" role="status">${esc(activationText)}</p>` : ''}${warnings.map(value => `<p class="gp-caption">${esc(value)}</p>`).join('')}
         ${domain === 'fg' && data.enhancements?.current?.fg?.source === 'active-ini' ? `<p class="gp-caption">已读取游戏内保存的当前设置${data.enhancements.current.fg.differsFromLastApplied ? '，与上次管理器请求不同' : ''}。${draft.fg ? '当前草稿保留，应用前会重新核对。' : ''}</p>` : ''}
-        <div class="gp-controls">${controls}</div>${unavailableOptions.length ? `<details class="gp-capability-details"><summary>未开放档位说明</summary>${unavailableOptions.map(row => `<p class="gp-caption"><strong>${esc(row.label)}</strong> · ${esc(row.message)}</p>`).join('')}</details>` : ''}<p class="gp-caption">${owned ? owned.readbackVerified ? '已应用，重启游戏后生效。' : '设置已变化，请重新预览。' : '尚未应用覆盖设置。'}</p>
+        <div class="gp-controls">${controls}</div>${!sr && f.backend === 'mfgunlock' ? `<p class="gp-caption">游戏内菜单：ReShade → Add-ons → MFG Unlock。来源：mavismmg/MFGAdaUnlock-RenoDx 0.9；设置读回不等于生成帧已验证。</p><div class="gp-small-actions">${act('mfg-source', '查看开源项目', busy, 'subtle')}</div>` : ''}${unavailableOptions.length ? `<details class="gp-capability-details"><summary>未开放档位说明</summary>${unavailableOptions.map(row => `<p class="gp-caption"><strong>${esc(row.label)}</strong> · ${esc(row.message)}</p>`).join('')}</details>` : ''}<p class="gp-caption">${owned ? owned.readbackVerified ? '已应用，重启游戏后生效。' : '设置已变化，请重新预览。' : '尚未应用覆盖设置。'}</p>
         <div class="gp-small-actions">${sr ? act('recommend-sr', '恢复推荐', busy || !active || !scope.launchSettingsUi.recommendedPreset(currentHardware()), 'subtle') + act('preview-sr', '预览当前超分设置', busy || data.operation?.pending || !apiReady() || !loaded.has('enhancements') || (!feature('sr').eligible && !(fields.sr.quality === 'game' && data.enhancements?.applied?.sr)), 'subtle') : ''}${allowRestore ? act(`restore-${domain}`, '恢复原设置', busy, 'subtle') : ''}${owned?.requiresReapply ? act('reapply', '重新预览', busy) : ''}</div></section>`;
     }
     function installation() {
@@ -559,7 +574,7 @@
       if (input.tagName === 'SELECT') { const field = input.dataset.gpField; render(); host.querySelector(`[data-gp-group="${group}"][data-gp-field="${field}"]`)?.focus({ preventScroll: true }); }
       else updateBar();
     }
-    host.addEventListener('input', event => { if (event.target.type === 'range' || event.target.type === 'number') change(event.target); });
+    host.addEventListener('input', event => { if (event.target.type === 'range' || event.target.type === 'number') change(event.target); }, { signal: eventController.signal });
     host.addEventListener('change', event => {
       if (event.target.dataset.gpAddonKeep !== undefined && modal?.kind === 'apply') {
         modal.keepChanged = true;
@@ -567,7 +582,7 @@
         host.querySelector('.gp-modal-message').textContent = '保留选择已改变，请先重新预览。'; return;
       }
       if (!['range', 'number'].includes(event.target.type)) change(event.target);
-    });
+    }, { signal: eventController.signal });
     host.addEventListener('click', async event => {
       const tabButton = event.target.closest('[data-gp-tab]'); if (tabButton) { if (!scope.GameDetailTabs) selectTab(tabButton.dataset.gpTab); return; }
       const button = event.target.closest('[data-gp-action]'); if (!button || button.disabled) return; const action = button.dataset.gpAction;
@@ -621,12 +636,13 @@
         else if (action === 'open-folder') unwrap(await manager.openFolder(id));
         else if (action === 'feedback') await manager.exportFeedback(id);
         else if (action === 'anti-cheat') unwrap(await manager.openExternal('antiCheatPolicy'));
+        else if (action === 'mfg-source') unwrap(await manager.openExternal('mfgUnlockUrl'));
         else if (action === 'compatibility-search') unwrap(await manager.openExternal(`gameCompatibility:${id}`));
         else if (action === 'maintenance-tab') selectTab('maintenance');
         else if (action === 'cancel-launch') unwrap(await manager.cancelLaunch(id));
         else if (action === 'launch') await launchGame();
       } catch (failure) { message = failure.message; error = true; render(); }
-    });
+    }, { signal: eventController.signal });
     host.addEventListener('keydown', event => {
       if (capturingHotkey) {
         event.preventDefault(); event.stopPropagation();
@@ -645,9 +661,9 @@
         const focusable = [...host.querySelectorAll('.gp-modal button:not([disabled]),.gp-modal input:not([disabled]),.gp-modal select:not([disabled]),.gp-modal textarea:not([disabled]),.gp-modal summary')], first = focusable[0], last = focusable.at(-1);
         if (event.shiftKey && event.target === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && event.target === last) { event.preventDefault(); first?.focus(); }
       }
-    });
+    }, { signal: eventController.signal });
     if (manager.onLaunchSession) unsubscribe = manager.onLaunchSession(value => { if (!disposed && value.gameId === id) { session = value; if (!modal) render(); } });
-    return { open, resume, refresh, selectTab, resolveReadiness, launchGame, requestLeave, updateLaunchReadiness, previewRepair: () => preview({ repair: true }), hasDraft: dirty, discard: () => { draft = {}; invalidFields = {}; }, getState: () => ({ id, data, draft: structuredClone(draft), fields: structuredClone(fields), tab, busy, launching, readiness: structuredClone(launchReadiness()), readinessOrder, assessmentOrder, loaded: [...loaded] }), dispose: () => { disposed = true; generation++; tabController?.dispose(); unsubscribe?.(); } };
+    return { open, resume, refresh, selectTab, resolveReadiness, launchGame, requestLeave, updateLaunchReadiness, previewRepair: () => preview({ repair: true }), hasDraft: dirty, discard: () => { draft = {}; invalidFields = {}; }, getState: () => ({ id, data, draft: structuredClone(draft), fields: structuredClone(fields), tab, busy, launching, readiness: structuredClone(launchReadiness()), readinessOrder, assessmentOrder, loaded: [...loaded] }), dispose: () => { disposed = true; generation++; eventController.abort(); tabController?.dispose(); unsubscribe?.(); } };
   }
   const api = { mount, recommendedModel, initialFields };
   if (typeof module === 'object' && module.exports) module.exports = api; else scope.GamePageUi = api;

@@ -139,7 +139,8 @@ test('OperationPlan migration preserves the selected MFG provider and current ga
   const f = await fixture(t, { family: 'RTX40', components: { getFeatureEvidence: async () => enhancementEvidence() } });
   await f.apply({ api: 'dx12', version: 'fixture-core-1', deployment: 'local' });
   const selection = { backend: 'mfgunlock', mode: 'fixed', multiplier: 3 }, active = { ...selection, multiplier: 4 };
-  const provider = providerById('mfgunlock-0.6.1');
+  const provider = providerById('mfgunlock-0.9');
+  assert.equal(provider.sha256, MFG_SHA);
   await f.apply({ fg: selection, components: { mfgUnlock: provider.id } });
   assert.equal(hashFile(path.join(f.exeDir, MFG_ADDON)), provider.sha256);
   const config = f.layout().activeConfigPath;
@@ -223,6 +224,7 @@ test('BG3 refuses a newer Bridge, preserves its explicit 1.4.11 pin across Core 
   assert.equal(CURRENT_BRIDGE, '4656d9aac382a6f9b5c8488669aa5365283f03b5b94b2267f1c7f9b53927dc86', 'the pinned 1.4.12 baseline identity');
   const source = process.env.DLSS5_TEST_LEGACY_PAYLOAD_ROOT
     ? path.resolve(process.env.DLSS5_TEST_LEGACY_PAYLOAD_ROOT) : path.join(PROJECT, 'payload/nr-before-sr');
+  if (!fs.existsSync(path.join(source, 'bundle.json'))) return t.skip('optional pinned BG3 payload fixture is unavailable');
   const catalog = JSON.parse(fs.readFileSync(path.join(source, 'bundle.json')));
   assert.ok(catalog.versions[ID], 'the prepared issue #224 comparison payload must exist');
   assert.equal(catalog.versions['0.4.7beta'].files[DX11_COMPAT_CARRIER], CURRENT_BRIDGE);

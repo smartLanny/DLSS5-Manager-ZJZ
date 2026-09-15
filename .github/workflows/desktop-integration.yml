@@ -2,7 +2,7 @@ name: Desktop integration
 
 on:
   push:
-    branches: [codex/pr5-safe-integration-20260915]
+    branches: [main, "codex/**"]
   pull_request:
     paths:
       - 'desktop/**'
@@ -47,6 +47,10 @@ jobs:
         run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js test/core-menu.test.js test/game-assessment.test.js test/package-release-policy.test.js test/packaged-validation-environment.test.js
       - name: Unified game page
         run: npm --prefix desktop run test:game-page
+      - name: Maintenance actions stay bound to the selected game
+        run: npm --prefix desktop run test:game-page
+        env:
+          GAME_UI_MAINTENANCE_SWITCH: '1'
       - name: HoYoShade workflow
         run: npm --prefix desktop run test:game-page
         env:
@@ -98,3 +102,42 @@ jobs:
           path: desktop/build/validation/
           if-no-files-found: ignore
           retention-days: 7
+
+  mfg-09-zh-source-build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify pinned upstream and localized overlay boundary
+        working-directory: desktop
+        run: node scripts/verify-fg-mfgunlock-source.js
+      - name: Prepare pinned build dependencies
+        shell: pwsh
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/clshortfuse/renodx.git desktop/build/renodx-source
+          git -C desktop/build/renodx-source checkout 8d360960a8bdeccada1a1babf7f02215c15c82e8
+          git -C desktop/build/renodx-source submodule update --init --recursive
+          Invoke-WebRequest -Uri https://github.com/microsoft/Detours/archive/9764cebcb1a75940e68fa83d6730ffaf0f669401.zip -OutFile desktop/build/detours-9764ceb.zip
+      - name: Build reproducible Chinese MFG 0.9 panel
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $install) { throw 'Visual Studio C++ Build Tools not found' }
+          $vcvars = Join-Path $install 'VC/Auxiliary/Build/vcvarsall.bat'
+          ./desktop/scripts/build-fg-mfgunlock.ps1 -OutputDirectory ./desktop/build/mfg-0.9-zh -DependencyRoot ./desktop/build/renodx-source -DetoursArchive ./desktop/build/detours-9764ceb.zip -VcVarsAll $vcvars
+      - name: Preserve Chinese MFG 0.9 candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: mfgunlock-0.9-zh-CN-${{ github.sha }}
+          path: |
+            desktop/build/mfg-0.9-zh/renodx-mfgunlock.addon64
+            desktop/build/mfg-0.9-zh/build-mfgunlock.json
+            desktop/build/mfg-0.9-zh/build-mfgunlock.log
+          if-no-files-found: error
+          retention-days: 14

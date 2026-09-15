@@ -85,11 +85,10 @@
  * ---------------------------------------------------------------------------
  * PACING
  *
- * Blackwell paces multi-frame output with hardware flip metering that Ada does
- * not have; left enabled, 3x+ freezes the presented image while audio keeps
- * running. Streamline already ships the software fallback, so the addon only
- * has to force the plugin down it -- see TryPatchFlipMeteringInModule, which
- * derives the field's offset AND its polarity at runtime because both move
+ * Current Streamline runtimes provide working native pacing on Ada after the
+ * capability gates are opened. A separate legacy software-flip fallback is
+ * retained only for integrations that freeze at 3x+; it is opt-in and derives
+ * the provider field's offset and polarity at runtime because both move
  * between plugin builds.
  *
  * None of this makes multi-frame generation correct by NVIDIA's standards on
@@ -122,7 +121,9 @@
 #include "./upstream/loadhook.hpp"
 #include "./upstream/midpoint.hpp"
 #include "./upstream/ngx_hook.hpp"
-#include "./patch_gate.hpp"
+#include "./upstream/pacing_policy.hpp"
+#include "./upstream/thin_geometry.hpp"
+#include "./upstream/blackwell.hpp"
 
 namespace {
 
@@ -136,13 +137,31 @@ constexpr unsigned int kMinCount = 2;
 constexpr unsigned int kMaxCount = 5;
 
 std::atomic_bool g_enabled{true};
+std::atomic_bool g_configured_enabled{true};
 std::atomic<unsigned int> g_max_count{4};
 std::atomic_bool g_force_flip_meter_off{false};
+std::atomic_bool g_configured_force_flip_meter_off{false};
 std::atomic_bool g_temporal_fix{true};
+std::atomic_bool g_configured_temporal_fix{true};
+std::atomic_bool g_blackwell_framework_kernels{true};
+std::atomic_bool g_configured_blackwell_framework_kernels{true};
+// The two complementary thin-geometry mechanisms are the experimental quality
+// default. Persisted user choices still take precedence over these defaults.
+std::atomic_bool g_thin_geometry_validated_warp_blend{true};
+std::atomic_bool g_configured_thin_geometry_validated_warp_blend{true};
+std::atomic_bool g_thin_geometry_previous_scatter{false};
+std::atomic_bool g_configured_thin_geometry_previous_scatter{false};
+// The independently developed intermediate-scatter variant remains paired with
+// validated warp blend by default; either mechanism can still be tested alone.
+std::atomic_bool g_thin_geometry_intermediate_scatter{true};
+std::atomic_bool g_configured_thin_geometry_intermediate_scatter{true};
 // Raising the plugin's own clamp broke GTA V Enhanced -- its 2.9.1.0 plugin was
 // only ever shipped bounded at 3, and lifting that is not the same as it being
 // able to cope. Off by default; updating the plugin is the sound fix.
 std::atomic_bool g_raise_ceiling{false};
+std::atomic<unsigned int> g_configured_runtime_selection_mode{
+    static_cast<unsigned int>(
+        mfgunlock::framecount::RuntimeSelectionMode::kGameDefault)};
 
 enum class DetectedRenderApi : unsigned int {
   kUnknown,
@@ -153,6 +172,71 @@ enum class DetectedRenderApi : unsigned int {
 };
 
 std::atomic<DetectedRenderApi> g_render_api{DetectedRenderApi::kUnknown};
+std::atomic<reshade::api::swapchain*> g_primary_swapchain{nullptr};
+std::atomic<uint64_t> g_primary_swapchain_area{0};
+HMODULE g_self_module = nullptr;
+
+std::string SelfModuleFileName() {
+  std::vector<char> path(32768);
+  const DWORD length = GetModuleFileNameA(
+      g_self_module, path.data(), static_cast<DWORD>(path.size()));
+  if (length == 0 || length >= path.size()) return "renodx-mfgunlock.addon64";
+  const char* slash = std::strrchr(path.data(), '\\');
+  const char* forward = std::strrchr(path.data(), '/');
+  const char* name = slash == nullptr ? forward
+                                     : (forward == nullptr || slash > forward ? slash
+                                                                              : forward);
+  return name == nullptr ? std::string(path.data()) : std::string(name + 1);
+}
+
+std::vector<std::string> ReadConfigArray(const char* section, const char* key) {
+  size_t size = 0;
+  if (!reshade::get_config_value(nullptr, section, key, nullptr, &size) ||
+      size == 0) {
+    return {};
+  }
+  std::string raw(size, '\0');
+  if (!reshade::get_config_value(nullptr, section, key, raw.data(), &size)) {
+    return {};
+  }
+  std::vector<std::string> values;
+  for (size_t offset = 0; offset < raw.size();) {
+    const char* entry = raw.c_str() + offset;
+    const size_t length = std::strlen(entry);
+    if (length == 0) break;
+    values.emplace_back(entry);
+    offset += length + 1;
+  }
+  return values;
+}
+
+bool HasEarlyLoadEntry() {
+  const std::string self = SelfModuleFileName();
+  for (const auto& entry : ReadConfigArray("ADDON", "LoadFromDllMain")) {
+    const char* slash = std::strrchr(entry.c_str(), '\\');
+    const char* forward = std::strrchr(entry.c_str(), '/');
+    const char* name = slash == nullptr ? forward
+                                       : (forward == nullptr || slash > forward ? slash
+                                                                                : forward);
+    if (_stricmp(name == nullptr ? entry.c_str() : name + 1, self.c_str()) == 0)
+      return true;
+  }
+  return false;
+}
+
+bool EnsureEarlyLoadEntry() {
+  if (HasEarlyLoadEntry()) return true;
+  auto values = ReadConfigArray("ADDON", "LoadFromDllMain");
+  values.push_back(SelfModuleFileName());
+  std::string serialized;
+  for (const auto& value : values) {
+    serialized.append(value);
+    serialized.push_back('\0');
+  }
+  reshade::set_config_value(nullptr, "ADDON", "LoadFromDllMain",
+                            serialized.c_str(), serialized.size());
+  return HasEarlyLoadEntry();
+}
 
 const char* RenderApiName(DetectedRenderApi api) {
   switch (api) {
@@ -174,7 +258,6 @@ const char* RenderApiName(DetectedRenderApi api) {
 // scan happily identifies the addon as the DLSS-G plugin and then fails to
 // make sense of it. Harmless where the real plugin is enumerated first;
 // fatal where it is not loaded at all.
-HMODULE g_self_module = nullptr;
 
 std::atomic_bool g_vtable_patched{false};
 std::atomic_bool g_override_reported{false};
@@ -336,6 +419,7 @@ void TryInstallHooks() {
   if (g_hook_attempts >= kMaxHookAttempts) return;
 
   for (const auto* name : kNgxModules) {
+    if (name == nullptr) continue;
     HMODULE mod = GetModuleHandleW(name);
     if (mod == nullptr) continue;
     if (GetProcAddress(mod, "NVSDK_NGX_D3D12_AllocateParameters") == nullptr) continue;
@@ -477,16 +561,17 @@ void RememberDlssgModule(HMODULE mod) {
 }
 
 bool HasKnownDlssgPath(HMODULE mod) {
-  wchar_t module_path[32768] = {};
-  const DWORD length = GetModuleFileNameW(mod, module_path, ARRAYSIZE(module_path));
-  if (length == 0 || length >= ARRAYSIZE(module_path)) return false;
+  std::vector<wchar_t> module_path(32768);
+  const DWORD length = GetModuleFileNameW(
+      mod, module_path.data(), static_cast<DWORD>(module_path.size()));
+  if (length == 0 || length >= module_path.size()) return false;
   for (DWORD i = 0; i < length; ++i) {
     if (module_path[i] >= L'A' && module_path[i] <= L'Z') {
       module_path[i] = static_cast<wchar_t>(module_path[i] - L'A' + L'a');
     }
   }
-  return std::wcsstr(module_path, L"nvngx_dlssg") != nullptr ||
-         std::wcsstr(module_path, L"\\models\\dlssg\\") != nullptr;
+  return std::wcsstr(module_path.data(), L"nvngx_dlssg") != nullptr ||
+         std::wcsstr(module_path.data(), L"\\models\\dlssg\\") != nullptr;
 }
 
 bool IsDlssgProvider(HMODULE mod) {
@@ -538,6 +623,7 @@ constexpr unsigned char kArchOld = 0xB0;  // 0x1b0 GB20x
 constexpr unsigned char kArchNew = 0x90;  // 0x190 AD10x
 
 struct GateSite {
+  HMODULE module;
   unsigned char* address;  // the byte holding the arch id's low octet
   unsigned char original;
 };
@@ -546,7 +632,7 @@ std::atomic_bool g_gate_patched{false};
 std::vector<GateSite> g_gate_sites;
 std::vector<HMODULE> g_gate_modules;
 std::vector<HMODULE> g_gate_rejected_modules;
-int g_gate_attempts = 0;
+std::atomic<int> g_gate_attempts{0};
 
 // Split out so the load-time trigger can patch a module it already holds a
 // handle to. That path runs under the loader lock, where CreateToolhelp32Snapshot
@@ -603,7 +689,7 @@ void PatchArchGatesInModule(HMODULE mod) {
   for (unsigned char* site : found) {
     DWORD old_protect = 0;
     if (VirtualProtect(site, 1, PAGE_EXECUTE_READWRITE, &old_protect) == 0) continue;
-    g_gate_sites.push_back({site, *site});
+    g_gate_sites.push_back({mod, site, *site});
     *site = kArchNew;
     DWORD ignored = 0;
     VirtualProtect(site, 1, old_protect, &ignored);
@@ -636,6 +722,7 @@ void TryPatchDlssgArchGate() {
 void RestoreDlssgArchGate() {
   if (!g_gate_patched.load(std::memory_order_acquire)) return;
   for (const auto& site : g_gate_sites) {
+    if (!mfgunlock::runtimeversion::IsMappedImage(site.module)) continue;
     DWORD old_protect = 0;
     if (VirtualProtect(site.address, 1, PAGE_EXECUTE_READWRITE, &old_protect) != 0) {
       *site.address = site.original;
@@ -658,22 +745,187 @@ void RestoreDlssgArchGate() {
 // smoother than 2x despite double the counter. See midpoint.hpp.
 
 std::atomic_bool g_midpoint_patched{false};
+std::atomic_bool g_blackwell_patched{false};
 struct MidpointModulePatch {
   HMODULE module;
   std::vector<mfgunlock::midpoint::Patch> patches;
   void* allocation;
 };
 std::vector<MidpointModulePatch> g_midpoint_modules;
+struct BlackwellModulePatch {
+  HMODULE module;
+  std::vector<mfgunlock::blackwell::Patch> patches;
+  std::vector<void*> allocations;
+  mfgunlock::blackwell::Result result;
+};
+std::vector<BlackwellModulePatch> g_blackwell_modules;
 std::vector<HMODULE> g_midpoint_rejected_modules;
 std::string g_midpoint_detail;
-int g_midpoint_attempts = 0;
+std::string g_blackwell_detail;
+std::atomic<int> g_midpoint_attempts{0};
+
+struct ThinGeometryModulePatch {
+  HMODULE module = nullptr;
+  std::string provider_version;
+  std::vector<mfgunlock::thingeometry::Redirect> redirects;
+  mfgunlock::thingeometry::Result result;
+  mfgunlock::thingeometry::MechanismResult intermediate_scatter;
+};
+std::vector<ThinGeometryModulePatch> g_thin_geometry_modules;
+std::atomic_bool g_thin_geometry_patched{false};
+std::atomic<int> g_thin_geometry_attempts{0};
+
+bool ThinGeometryRequested() {
+  return g_thin_geometry_validated_warp_blend.load(std::memory_order_relaxed) ||
+         g_thin_geometry_previous_scatter.load(std::memory_order_relaxed) ||
+         g_thin_geometry_intermediate_scatter.load(std::memory_order_relaxed);
+}
+
+bool ModuleHasThinGeometryResult(HMODULE mod) {
+  return std::any_of(
+      g_thin_geometry_modules.begin(), g_thin_geometry_modules.end(),
+      [mod](const ThinGeometryModulePatch& patch) { return patch.module == mod; });
+}
+
+bool ModuleHasTemporalPatch(HMODULE mod) {
+  return std::any_of(g_midpoint_modules.begin(), g_midpoint_modules.end(),
+                     [mod](const MidpointModulePatch& patch) { return patch.module == mod; }) ||
+         std::any_of(g_blackwell_modules.begin(), g_blackwell_modules.end(),
+                     [mod](const BlackwellModulePatch& patch) { return patch.module == mod; });
+}
+
+bool PatchBlackwellInModule(HMODULE mod) {
+  if (mod == nullptr || ModuleHasTemporalPatch(mod)) return false;
+  std::vector<mfgunlock::blackwell::Patch> patches;
+  std::vector<void*> allocations;
+  mfgunlock::blackwell::Result result;
+  std::string detail;
+  std::string provider_version;
+  std::string provider_reason;
+  const bool supported_thin_geometry_provider =
+      mfgunlock::thingeometry::IsSupportedProvider(
+          mod, provider_version, provider_reason);
+  const bool enable_intermediate_scatter =
+      g_thin_geometry_intermediate_scatter.load(std::memory_order_relaxed) &&
+      supported_thin_geometry_provider;
+  if (!mfgunlock::blackwell::Apply(mod, patches, allocations, result, detail,
+                                   enable_intermediate_scatter)) {
+    g_blackwell_detail = detail;
+    return false;
+  }
+
+  g_blackwell_detail = detail;
+  g_blackwell_modules.push_back(
+      {mod, std::move(patches), std::move(allocations), result});
+  g_blackwell_patched.store(true, std::memory_order_release);
+  char module_path[MAX_PATH] = {};
+  GetModuleFileNameA(mod, module_path, MAX_PATH);
+  std::stringstream stream;
+  stream << "mfgunlock: full Blackwell framework kernels applied to " << module_path << " -- "
+         << detail << "; the separate midpoint rewrite is not needed for this provider.";
+  reshade::log::message(reshade::log::level::info, stream.str().c_str());
+  return true;
+}
+
+void LogThinGeometryMechanism(
+    const char* module_path, const std::string& provider_version,
+    const char* mechanism, const char* application_path,
+    const mfgunlock::thingeometry::MechanismResult& result) {
+  std::ostringstream stream;
+  stream << "mfgunlock: Enhanced thin-geometry interpolation: provider="
+         << (module_path[0] == '\0' ? "<unknown>" : module_path)
+         << ", version="
+         << (provider_version.empty() ? "unsupported/unknown" : provider_version)
+         << ", mechanism=" << mechanism
+         << ", detected=" << (result.detected ? "yes" : "no")
+         << ", path=" << application_path
+         << ", applied=" << (result.applied ? "yes" : "no")
+         << ", validation="
+         << (result.detail.empty()
+                 ? (result.applied ? "exact provider and payload match" : "not applied")
+                 : result.detail);
+  reshade::log::message(result.applied ? reshade::log::level::info
+                                      : reshade::log::level::warning,
+                        stream.str().c_str());
+}
+
+void PatchThinGeometryInModule(HMODULE mod) {
+  if (mod == nullptr || !ThinGeometryRequested() ||
+      ModuleHasThinGeometryResult(mod)) {
+    return;
+  }
+  ++g_thin_geometry_attempts;
+
+  ThinGeometryModulePatch module_result;
+  module_result.module = mod;
+  const mfgunlock::thingeometry::Options options{
+      g_thin_geometry_validated_warp_blend.load(std::memory_order_relaxed),
+      g_thin_geometry_previous_scatter.load(std::memory_order_relaxed)};
+  mfgunlock::thingeometry::Apply(mod, options, module_result.redirects,
+                                module_result.result,
+                                module_result.provider_version);
+
+  module_result.intermediate_scatter.requested =
+      g_thin_geometry_intermediate_scatter.load(std::memory_order_relaxed);
+  if (module_result.intermediate_scatter.requested) {
+    std::string provider_reason;
+    if (!mfgunlock::thingeometry::IsSupportedProvider(
+            mod, module_result.provider_version, provider_reason)) {
+      module_result.intermediate_scatter.detail = provider_reason;
+    } else {
+      const auto blackwell = std::find_if(
+          g_blackwell_modules.begin(), g_blackwell_modules.end(),
+          [mod](const BlackwellModulePatch& patch) { return patch.module == mod; });
+      if (blackwell == g_blackwell_modules.end()) {
+        module_result.intermediate_scatter.detail =
+            "requires the exact full Blackwell motion-vector path; current temporal fallback retained";
+      } else {
+        module_result.intermediate_scatter.detected =
+            blackwell->result.intermediate_scatter;
+        module_result.intermediate_scatter.applied =
+            blackwell->result.intermediate_scatter;
+        module_result.intermediate_scatter.detail =
+            blackwell->result.intermediate_scatter
+                ? "exact original Ada cubin hash matched the generated bounded-retention variant"
+                : "exact intermediate-scatter variant did not match; baseline Blackwell cubin retained";
+      }
+    }
+  }
+
+  char module_path[MAX_PATH] = {};
+  GetModuleFileNameA(mod, module_path, MAX_PATH);
+  if (module_result.result.validated_warp_blend.requested) {
+    LogThinGeometryMechanism(
+        module_path, module_result.provider_version,
+        "validated warp blend", "BlendCandidatesFused PTX descriptor redirect",
+        module_result.result.validated_warp_blend);
+  }
+  if (module_result.result.previous_scatter.requested) {
+    LogThinGeometryMechanism(
+        module_path, module_result.provider_version,
+        "previous-to-current scatter retention",
+        "EstimatePrev2CurrScatter PTX descriptor redirect",
+        module_result.result.previous_scatter);
+  }
+  if (module_result.intermediate_scatter.requested) {
+    LogThinGeometryMechanism(
+        module_path, module_result.provider_version,
+        "intermediate scatter retention",
+        "Blackwell EstimateIntermMvecsScatter in-place cubin selection",
+        module_result.intermediate_scatter);
+  }
+
+  if (module_result.result.validated_warp_blend.applied ||
+      module_result.result.previous_scatter.applied ||
+      module_result.intermediate_scatter.applied) {
+    g_thin_geometry_patched.store(true, std::memory_order_release);
+  }
+  g_thin_geometry_modules.push_back(std::move(module_result));
+}
 
 void PatchMidpointInModule(HMODULE mod) {
   if (mod == nullptr) return;
-  const auto already_patched = std::find_if(
-      g_midpoint_modules.begin(), g_midpoint_modules.end(),
-      [mod](const MidpointModulePatch& patch) { return patch.module == mod; });
-  if (already_patched != g_midpoint_modules.end()) return;
+  if (ModuleHasTemporalPatch(mod)) return;
   if (std::find(g_midpoint_rejected_modules.begin(), g_midpoint_rejected_modules.end(), mod) !=
       g_midpoint_rejected_modules.end()) {
     return;
@@ -703,9 +955,33 @@ void PatchMidpointInModule(HMODULE mod) {
   reshade::log::message(reshade::log::level::info, s.str().c_str());
 }
 
+void PatchTemporalInModule(HMODULE mod) {
+  if (mod == nullptr || ModuleHasTemporalPatch(mod)) return;
+  // NGX may map a DriverStore fallback only long enough to inspect it and then
+  // unload it. Once both full-kernel and midpoint validation rejected a module,
+  // never dereference that cached HMODULE again: it may no longer name mapped
+  // memory by the next bounded discovery pass.
+  if (std::find(g_midpoint_rejected_modules.begin(), g_midpoint_rejected_modules.end(), mod) !=
+      g_midpoint_rejected_modules.end()) {
+    return;
+  }
+  const bool prefer_blackwell =
+      g_blackwell_framework_kernels.load(std::memory_order_relaxed);
+  if (prefer_blackwell) {
+    if (PatchBlackwellInModule(mod)) return;
+    char module_path[MAX_PATH] = {};
+    GetModuleFileNameA(mod, module_path, MAX_PATH);
+    std::stringstream stream;
+    stream << "mfgunlock: full Blackwell framework path not available for " << module_path
+           << " -- " << g_blackwell_detail << "; trying the 0.7 midpoint fallback.";
+    reshade::log::message(reshade::log::level::warning, stream.str().c_str());
+  }
+  PatchMidpointInModule(mod);
+}
+
 void TryPatchMidpoint() {
   ++g_midpoint_attempts;
-  for (HMODULE mod : g_dlssg_modules) PatchMidpointInModule(mod);
+  for (HMODULE mod : g_dlssg_modules) PatchTemporalInModule(mod);
 }
 
 // Provider state is normally updated synchronously by the loader hook. The
@@ -720,34 +996,89 @@ void ProcessLoadedDlssgModule(HMODULE mod) {
   }
   RememberDlssgModule(mod);
   if (g_enabled.load(std::memory_order_relaxed)) PatchArchGatesInModule(mod);
-  if (g_temporal_fix.load(std::memory_order_relaxed)) PatchMidpointInModule(mod);
+  if (g_enabled.load(std::memory_order_relaxed) &&
+      g_temporal_fix.load(std::memory_order_relaxed)) {
+    PatchTemporalInModule(mod);
+  }
+  if (g_enabled.load(std::memory_order_relaxed) && ThinGeometryRequested()) {
+    PatchThinGeometryInModule(mod);
+  }
   ReleaseSRWLockExclusive(&g_provider_maintenance_lock);
 }
 
 void RunProviderMaintenance() {
+  std::vector<HMODULE> version_candidates;
   AcquireSRWLockExclusive(&g_provider_maintenance_lock);
   DiscoverDlssgModules();
   if (g_enabled.load(std::memory_order_relaxed)) TryPatchDlssgArchGate();
-  if (g_temporal_fix.load(std::memory_order_relaxed)) TryPatchMidpoint();
+  if (g_enabled.load(std::memory_order_relaxed) &&
+      g_temporal_fix.load(std::memory_order_relaxed)) {
+    TryPatchMidpoint();
+  }
+  if (g_enabled.load(std::memory_order_relaxed) && ThinGeometryRequested()) {
+    for (HMODULE mod : g_dlssg_modules) PatchThinGeometryInModule(mod);
+  }
+  version_candidates = g_gate_modules;
   ReleaseSRWLockExclusive(&g_provider_maintenance_lock);
+  // File-version APIs are deliberately kept out of the loader callback. Only
+  // candidates whose architecture gates were validated are reported here.
+  for (HMODULE module : version_candidates) {
+    mfgunlock::framecount::ObserveDlssgProviderVersion(module);
+  }
 }
 
 void RestoreMidpoint() {
-  if (!g_midpoint_patched.load(std::memory_order_acquire)) return;
   for (auto& module : g_midpoint_modules) {
-    mfgunlock::midpoint::Restore(module.patches, module.allocation);
+    if (mfgunlock::runtimeversion::IsMappedImage(module.module)) {
+      mfgunlock::midpoint::Restore(module.patches, module.allocation);
+    } else {
+      module.patches.clear();
+      if (module.allocation != nullptr) {
+        VirtualFree(module.allocation, 0, MEM_RELEASE);
+        module.allocation = nullptr;
+      }
+    }
+  }
+  for (auto& module : g_blackwell_modules) {
+    if (mfgunlock::runtimeversion::IsMappedImage(module.module)) {
+      mfgunlock::blackwell::Restore(module.patches, module.allocations);
+    } else {
+      module.patches.clear();
+      module.allocations.clear();
+    }
   }
   g_midpoint_modules.clear();
+  g_blackwell_modules.clear();
   g_midpoint_rejected_modules.clear();
   g_midpoint_patched.store(false, std::memory_order_release);
+  g_blackwell_patched.store(false, std::memory_order_release);
+}
+
+void RestoreThinGeometry() {
+  for (auto& module : g_thin_geometry_modules) {
+    if (mfgunlock::runtimeversion::IsMappedImage(module.module)) {
+      mfgunlock::thingeometry::Restore(module.redirects);
+    } else {
+      for (auto& redirect : module.redirects) {
+        redirect.descriptors.clear();
+        if (redirect.allocation != nullptr) {
+          VirtualFree(redirect.allocation, 0, MEM_RELEASE);
+          redirect.allocation = nullptr;
+        }
+      }
+      module.redirects.clear();
+    }
+  }
+  g_thin_geometry_modules.clear();
+  g_thin_geometry_patched.store(false, std::memory_order_release);
 }
 
 // ------------------------------------------------- flip metering (sl.dlss_g)
 //
-// With the gate open, 2x works but 3x/4x freeze the display while audio keeps
-// running -- frames are generated and never reach the screen. Blackwell paces
-// multi-frame output with hardware flip metering; Ada has none, so the present
-// queue waits on something that never happens.
+// Some older integrations can freeze at 3x/4x after the capability gate is
+// opened because their selected flip-metering path never completes on Ada.
+// Current Streamline providers normally pace correctly without any mutation,
+// so this compatibility path is opt-in rather than part of the unlock.
 //
 // Streamline already ships the fallback. sl.dlss_g/ngx.cpp logs
 // "FG1 DLL has been detected: forcing flip-metering off." and writes a flag on
@@ -784,8 +1115,7 @@ std::atomic_bool g_flip_meter_patched{false};
 std::vector<FlipSite> g_flip_meter_sites;
 std::atomic<unsigned int> g_flip_meter_offset{0};
 std::atomic<unsigned int> g_flip_meter_value{0};
-std::atomic_int g_flip_meter_attempts{0};
-SRWLOCK g_flip_meter_lock = SRWLOCK_INIT;
+std::atomic<int> g_flip_meter_attempts{0};
 constexpr int kMaxFlipMeterAttempts = 4000;
 
 // Records the original bytes before writing, so the instruction can be put back
@@ -847,18 +1177,78 @@ bool ModuleImage(HMODULE mod, unsigned char** out_base, const IMAGE_NT_HEADERS64
 constexpr unsigned char kCeilingTarget = 5;  // generated frames == 6x
 
 std::atomic_bool g_ceiling_patched{false};
+std::atomic_bool g_ceiling_plugin_seen{false};
+HMODULE g_ceiling_module = nullptr;
+std::wstring g_ceiling_module_path;
 unsigned char* g_ceiling_site = nullptr;
 unsigned char g_ceiling_original = 0;
 unsigned char g_ceiling_cmov_original = 0;
 unsigned int g_ceiling_compiled = 0;
 unsigned int g_ceiling_effective = 0;
+std::vector<HMODULE> g_ceiling_rejected_modules;
+SRWLOCK g_streamline_maintenance_lock = SRWLOCK_INIT;
+
+bool CeilingPatchStillOwned() {
+  if (!g_ceiling_patched.load(std::memory_order_acquire) ||
+      g_ceiling_module == nullptr || g_ceiling_site == nullptr ||
+      !mfgunlock::runtimeversion::IsMappedImage(g_ceiling_module)) {
+    return false;
+  }
+  std::vector<wchar_t> current_path(32768);
+  const DWORD length = GetModuleFileNameW(
+      g_ceiling_module, current_path.data(),
+      static_cast<DWORD>(current_path.size()));
+  if (length == 0 || length >= current_path.size() ||
+      _wcsicmp(current_path.data(), g_ceiling_module_path.c_str()) != 0) {
+    return false;
+  }
+  unsigned char* base = nullptr;
+  const IMAGE_NT_HEADERS64* nt = nullptr;
+  if (!ModuleImage(g_ceiling_module, &base, &nt)) return false;
+  const uintptr_t offset = reinterpret_cast<uintptr_t>(g_ceiling_site) -
+                           reinterpret_cast<uintptr_t>(base);
+  if (offset > nt->OptionalHeader.SizeOfImage ||
+      nt->OptionalHeader.SizeOfImage - offset < 10) {
+    return false;
+  }
+  return g_ceiling_site[0] == 0xBA && g_ceiling_site[2] == 0 &&
+         g_ceiling_site[3] == 0 && g_ceiling_site[4] == 0 &&
+         g_ceiling_site[5] == 0x3B && g_ceiling_site[6] == 0xCA &&
+         g_ceiling_site[7] == 0x0F && g_ceiling_site[8] == 0x42 &&
+         g_ceiling_site[9] == 0xD2;
+}
+
+void AbandonStaleFrameCountCeiling() {
+  g_ceiling_module = nullptr;
+  g_ceiling_module_path.clear();
+  g_ceiling_site = nullptr;
+  g_ceiling_original = 0;
+  g_ceiling_cmov_original = 0;
+  g_ceiling_compiled = 0;
+  g_ceiling_effective = 0;
+  g_ceiling_patched.store(false, std::memory_order_release);
+  mfgunlock::framecount::g_advertised_max_generated.store(
+      0, std::memory_order_release);
+}
 
 void PatchFrameCountCeiling(HMODULE mod) {
-  if (g_ceiling_patched.load(std::memory_order_acquire)) return;
+  if (g_ceiling_patched.load(std::memory_order_acquire)) {
+    if (CeilingPatchStillOwned()) return;
+    reshade::log::message(
+        reshade::log::level::info,
+        "mfgunlock: the previously patched temporary Streamline wrapper was unloaded; discarding its stale address and waiting for the active wrapper.");
+    AbandonStaleFrameCountCeiling();
+  }
+  if (std::find(g_ceiling_rejected_modules.begin(),
+                g_ceiling_rejected_modules.end(), mod) !=
+      g_ceiling_rejected_modules.end()) {
+    return;
+  }
 
   unsigned char* base = nullptr;
   const IMAGE_NT_HEADERS64* nt = nullptr;
   if (!ModuleImage(mod, &base, &nt)) return;
+  g_ceiling_plugin_seen.store(true, std::memory_order_release);
 
   const unsigned char tail[] = {0x3B, 0xCA, 0x0F, 0x42, 0xD1};
   unsigned char* found = nullptr;
@@ -881,15 +1271,27 @@ void PatchFrameCountCeiling(HMODULE mod) {
   }
 
   if (hits != 1 || found == nullptr) {
+    char module_path[MAX_PATH] = {};
+    GetModuleFileNameA(mod, module_path, MAX_PATH);
     std::stringstream s;
     s << "mfgunlock: found " << hits
-      << " frame-count clamps in the DLSS-G plugin (expected 1); leaving them alone.";
+      << " frame-count clamps in the DLSS-G plugin " << module_path
+      << " (expected 1); leaving it alone.";
     reshade::log::message(reshade::log::level::warning, s.str().c_str());
+    g_ceiling_rejected_modules.push_back(mod);
     return;
   }
 
   DWORD old_protect = 0;
   if (VirtualProtect(found, 10, PAGE_EXECUTE_READWRITE, &old_protect) == 0) return;
+  g_ceiling_module = mod;
+  std::vector<wchar_t> module_path(32768);
+  const DWORD module_path_length = GetModuleFileNameW(
+      mod, module_path.data(), static_cast<DWORD>(module_path.size()));
+  g_ceiling_module_path =
+      module_path_length != 0 && module_path_length < module_path.size()
+          ? std::wstring(module_path.data(), module_path_length)
+          : std::wstring();
   g_ceiling_site = found;
   g_ceiling_original = found[1];
   g_ceiling_cmov_original = found[9];
@@ -922,20 +1324,64 @@ void RestoreFrameCountCeiling() {
   if (!g_ceiling_patched.load(std::memory_order_acquire)) return;
   if (g_ceiling_site == nullptr) return;
   DWORD old_protect = 0;
-  if (VirtualProtect(g_ceiling_site, 10, PAGE_EXECUTE_READWRITE, &old_protect) != 0) {
+  if (CeilingPatchStillOwned() &&
+      VirtualProtect(g_ceiling_site, 10, PAGE_EXECUTE_READWRITE, &old_protect) != 0) {
     g_ceiling_site[9] = g_ceiling_cmov_original;
     g_ceiling_site[1] = g_ceiling_original;
     DWORD ignored = 0;
     VirtualProtect(g_ceiling_site, 10, old_protect, &ignored);
     FlushInstructionCache(GetCurrentProcess(), g_ceiling_site, 10);
   }
+  g_ceiling_module = nullptr;
+  g_ceiling_module_path.clear();
   g_ceiling_site = nullptr;
   g_ceiling_original = 0;
   g_ceiling_cmov_original = 0;
   g_ceiling_compiled = 0;
   g_ceiling_effective = 0;
+  g_ceiling_rejected_modules.clear();
+  g_ceiling_plugin_seen.store(false, std::memory_order_release);
   mfgunlock::framecount::g_advertised_max_generated.store(0, std::memory_order_release);
   g_ceiling_patched.store(false, std::memory_order_release);
+}
+
+void TryPatchFrameCountCeiling() {
+  if (!g_enabled.load(std::memory_order_relaxed)) return;
+  if (g_ceiling_patched.load(std::memory_order_acquire)) {
+    if (CeilingPatchStillOwned()) {
+      mfgunlock::framecount::ObserveStreamlinePluginVersion(g_ceiling_module);
+      return;
+    }
+    AbandonStaleFrameCountCeiling();
+  }
+  AcquireSRWLockExclusive(&g_streamline_maintenance_lock);
+  if (!g_ceiling_patched.load(std::memory_order_relaxed)) {
+    if (HMODULE fast = GetModuleHandleW(L"sl.dlss_g.dll")) {
+      PatchFrameCountCeiling(fast);
+    }
+    if (!g_ceiling_patched.load(std::memory_order_relaxed)) {
+      HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
+      if (snap != INVALID_HANDLE_VALUE) {
+        MODULEENTRY32W me = {};
+        me.dwSize = sizeof(me);
+        if (Module32FirstW(snap, &me)) {
+          do {
+            if (me.hModule == g_self_module ||
+                !ModuleContains(me.hModule, kFlipMarker, sizeof(kFlipMarker) - 1)) {
+              continue;
+            }
+            PatchFrameCountCeiling(me.hModule);
+            if (g_ceiling_patched.load(std::memory_order_relaxed)) break;
+          } while (Module32NextW(snap, &me));
+        }
+        CloseHandle(snap);
+      }
+    }
+  }
+  ReleaseSRWLockExclusive(&g_streamline_maintenance_lock);
+  if (g_ceiling_patched.load(std::memory_order_acquire)) {
+    mfgunlock::framecount::ObserveStreamlinePluginVersion(g_ceiling_module);
+  }
 }
 
 // Handles the DLSS-G Streamline plugin wherever it was loaded from. Returns true
@@ -1107,11 +1553,10 @@ bool TryPatchFlipMeteringInModule(HMODULE mod) {
   return true;
 }
 
-void TryPatchFlipMetering() {
-  const mfgunlock::TryPatchGuard guard(g_flip_meter_lock);
-  if (!guard) return;
+void TryPatchFlipMeteringUnlocked() {
   if (g_flip_meter_patched.load(std::memory_order_acquire)) return;
-  if (g_flip_meter_attempts >= kMaxFlipMeterAttempts) return;
+  if (g_flip_meter_attempts.load(std::memory_order_relaxed) >=
+      kMaxFlipMeterAttempts) return;
 
   HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
   if (snap == INVALID_HANDLE_VALUE) return;
@@ -1127,9 +1572,33 @@ void TryPatchFlipMetering() {
   CloseHandle(snap);
 }
 
+void TryPatchFlipMetering() {
+  AcquireSRWLockExclusive(&g_streamline_maintenance_lock);
+  TryPatchFlipMeteringUnlocked();
+  ReleaseSRWLockExclusive(&g_streamline_maintenance_lock);
+}
+
+void ProcessLoadedStreamlineDlssgPlugin(HMODULE mod) {
+  if (!g_enabled.load(std::memory_order_relaxed)) return;
+  if (!TryAcquireSRWLockExclusive(&g_streamline_maintenance_lock)) {
+    g_provider_rescan_requested.store(true, std::memory_order_release);
+    return;
+  }
+  PatchFrameCountCeiling(mod);
+  if (g_force_flip_meter_off.load(std::memory_order_relaxed)) {
+    TryPatchFlipMeteringInModule(mod);
+  }
+  ReleaseSRWLockExclusive(&g_streamline_maintenance_lock);
+}
+
 void RestoreFlipMetering() {
   if (!g_flip_meter_patched.load(std::memory_order_acquire)) return;
   for (const auto& site : g_flip_meter_sites) {
+    MEMORY_BASIC_INFORMATION info{};
+    if (VirtualQuery(site.address, &info, sizeof(info)) != sizeof(info) ||
+        info.State != MEM_COMMIT || info.Type != MEM_IMAGE) {
+      continue;
+    }
     DWORD old_protect = 0;
     if (VirtualProtect(site.address, site.length, PAGE_EXECUTE_READWRITE, &old_protect) != 0) {
       std::memcpy(site.address, site.original, site.length);
@@ -1140,13 +1609,6 @@ void RestoreFlipMetering() {
   }
   g_flip_meter_sites.clear();
   g_flip_meter_patched.store(false, std::memory_order_release);
-}
-
-void RestorePacingPatches() {
-  const mfgunlock::TryPatchGuard guard(g_flip_meter_lock);
-  if (!guard) return;
-  RestoreFrameCountCeiling();
-  RestoreFlipMetering();
 }
 
 // Keep compatibility retries away from Present. The load-time hook remains the
@@ -1165,13 +1627,20 @@ bool DiscoveryRequirementsMet() {
   const bool provider_ready =
       (!g_enabled.load(std::memory_order_relaxed) ||
        g_gate_patched.load(std::memory_order_acquire)) &&
-      (!g_temporal_fix.load(std::memory_order_relaxed) ||
-       g_midpoint_patched.load(std::memory_order_acquire));
+      (!g_enabled.load(std::memory_order_relaxed) ||
+       !g_temporal_fix.load(std::memory_order_relaxed) ||
+       g_midpoint_patched.load(std::memory_order_acquire) ||
+       g_blackwell_patched.load(std::memory_order_acquire));
   const bool pacing_ready =
       !g_force_flip_meter_off.load(std::memory_order_relaxed) ||
       g_flip_meter_patched.load(std::memory_order_acquire) ||
-      g_flip_meter_attempts >= kMaxFlipMeterAttempts;
-  return provider_ready && pacing_ready &&
+      g_flip_meter_attempts.load(std::memory_order_relaxed) >=
+          kMaxFlipMeterAttempts;
+  const bool wrapper_ready =
+      !g_enabled.load(std::memory_order_relaxed) ||
+      g_ceiling_patched.load(std::memory_order_acquire) ||
+      g_ceiling_plugin_seen.load(std::memory_order_acquire);
+  return provider_ready && pacing_ready && wrapper_ready &&
          mfgunlock::loadhook::g_hooked.load(std::memory_order_acquire) &&
          mfgunlock::framecount::g_hooked.load(std::memory_order_acquire);
 }
@@ -1183,6 +1652,7 @@ void RunBoundedDiscoveryWorker() {
     Sleep(kDiscoveryRetryIntervalMs);
     g_provider_rescan_requested.store(false, std::memory_order_release);
     RunProviderMaintenance();
+    TryPatchFrameCountCeiling();
     if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
     mfgunlock::framecount::TryInstall();
     mfgunlock::loadhook::TryInstall();
@@ -1248,18 +1718,109 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
                              const reshade::api::rect* /*dest_rect*/,
                              uint32_t /*dirty_rect_count*/,
                              const reshade::api::rect* /*dirty_rects*/) {
-  if (swapchain != nullptr) {
+  // A primary swapchain can disappear while an already-existing secondary
+  // survives (resize, launcher/video swapchain, device recreation). Promote
+  // the next presenting swapchain once instead of leaving HDR/API state stale.
+  if (swapchain != nullptr &&
+      g_primary_swapchain.load(std::memory_order_acquire) == nullptr) {
+    reshade::api::swapchain* expected = nullptr;
+    if (g_primary_swapchain.compare_exchange_strong(
+            expected, swapchain, std::memory_order_acq_rel)) {
+      if (auto* device = swapchain->get_device(); device != nullptr) {
+        const auto back_buffer = swapchain->get_back_buffer(0);
+        const auto desc = device->get_resource_desc(back_buffer);
+        g_primary_swapchain_area.store(
+            static_cast<uint64_t>(desc.texture.width) * desc.texture.height,
+            std::memory_order_relaxed);
+        DetectedRenderApi detected = DetectedRenderApi::kOther;
+        switch (device->get_api()) {
+          case reshade::api::device_api::d3d11:
+            detected = DetectedRenderApi::kD3D11;
+            break;
+          case reshade::api::device_api::d3d12:
+            detected = DetectedRenderApi::kD3D12;
+            break;
+          case reshade::api::device_api::vulkan:
+            detected = DetectedRenderApi::kVulkan;
+            break;
+          default:
+            break;
+        }
+        g_render_api.store(detected, std::memory_order_relaxed);
+        mfgunlock::framecount::NotifyDynamicD3D12(
+            detected == DetectedRenderApi::kD3D12);
+      }
+      mfgunlock::framecount::NotifySwapchainTransition();
+    }
+  }
+  if (swapchain != nullptr &&
+      swapchain == g_primary_swapchain.load(std::memory_order_acquire)) {
     const auto color_space = swapchain->get_color_space();
-    const bool hdr = color_space == reshade::api::color_space::scrgb ||
-                     color_space == reshade::api::color_space::hdr10_pq ||
-                     color_space == reshade::api::color_space::hdr10_hlg;
-    mfgunlock::framecount::NotifyHdrState(hdr);
+    if (color_space != reshade::api::color_space::unknown) {
+      const bool hdr = color_space == reshade::api::color_space::scrgb ||
+                       color_space == reshade::api::color_space::hdr10_pq ||
+                       color_space == reshade::api::color_space::hdr10_hlg;
+      mfgunlock::framecount::NotifyHdrState(hdr);
+    }
   }
   StartDiscoveryWorker();
 }
 
-void OnInitSwapchain(reshade::api::swapchain* /*swapchain*/, bool /*resize*/) {
-  mfgunlock::framecount::NotifySwapchainTransition();
+void OnInitSwapchain(reshade::api::swapchain* swapchain, bool /*resize*/) {
+  bool primary_transition = false;
+  if (swapchain != nullptr) {
+    if (auto* device = swapchain->get_device(); device != nullptr) {
+      const auto back_buffer = swapchain->get_back_buffer(0);
+      const auto desc = device->get_resource_desc(back_buffer);
+      const uint64_t area = static_cast<uint64_t>(desc.texture.width) *
+                            static_cast<uint64_t>(desc.texture.height);
+      uint64_t selected_area = g_primary_swapchain_area.load(
+          std::memory_order_relaxed);
+      reshade::api::swapchain* selected = g_primary_swapchain.load(
+          std::memory_order_acquire);
+      if (selected == swapchain || selected == nullptr || area > selected_area) {
+        g_primary_swapchain_area.store(area, std::memory_order_relaxed);
+        g_primary_swapchain.store(swapchain, std::memory_order_release);
+        DetectedRenderApi detected = DetectedRenderApi::kOther;
+        switch (device->get_api()) {
+          case reshade::api::device_api::d3d11:
+            detected = DetectedRenderApi::kD3D11;
+            break;
+          case reshade::api::device_api::d3d12:
+            detected = DetectedRenderApi::kD3D12;
+            break;
+          case reshade::api::device_api::vulkan:
+            detected = DetectedRenderApi::kVulkan;
+            break;
+          default:
+            break;
+        }
+        g_render_api.store(detected, std::memory_order_relaxed);
+        mfgunlock::framecount::NotifyDynamicD3D12(
+            detected == DetectedRenderApi::kD3D12);
+        const auto color_space = swapchain->get_color_space();
+        if (color_space != reshade::api::color_space::unknown) {
+          const bool hdr = color_space == reshade::api::color_space::scrgb ||
+                           color_space == reshade::api::color_space::hdr10_pq ||
+                           color_space == reshade::api::color_space::hdr10_hlg;
+          mfgunlock::framecount::NotifyHdrState(hdr);
+        }
+        primary_transition = true;
+      }
+    }
+  }
+  if (primary_transition) mfgunlock::framecount::NotifySwapchainTransition();
+}
+
+void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool /*resize*/) {
+  reshade::api::swapchain* expected = swapchain;
+  if (g_primary_swapchain.compare_exchange_strong(
+          expected, nullptr, std::memory_order_acq_rel)) {
+    g_primary_swapchain_area.store(0, std::memory_order_relaxed);
+    g_render_api.store(DetectedRenderApi::kUnknown, std::memory_order_relaxed);
+    mfgunlock::framecount::NotifyDynamicD3D12(false);
+    mfgunlock::framecount::NotifySwapchainTransition();
+  }
 }
 
 // These remain immediate, finite retries during graphics-device initialization. They do
@@ -1280,10 +1841,17 @@ void OnInitDevice(reshade::api::device* device) {
       default:
         break;
     }
+    const bool no_primary =
+        g_primary_swapchain.load(std::memory_order_acquire) == nullptr;
+    if (no_primary) {
+      mfgunlock::framecount::NotifyDynamicD3D12(
+          detected == DetectedRenderApi::kD3D12);
+    }
 
-    const DetectedRenderApi previous =
-        g_render_api.exchange(detected, std::memory_order_relaxed);
-    if (previous != detected) {
+    const DetectedRenderApi previous = no_primary
+        ? g_render_api.exchange(detected, std::memory_order_relaxed)
+        : g_render_api.load(std::memory_order_relaxed);
+    if (no_primary && previous != detected) {
       std::stringstream s;
       s << "mfgunlock: ReShade initialized a " << RenderApiName(detected) << " device";
       if (detected == DetectedRenderApi::kVulkan) {
@@ -1296,6 +1864,7 @@ void OnInitDevice(reshade::api::device* device) {
   }
 
   RunProviderMaintenance();
+  TryPatchFrameCountCeiling();
   if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
   mfgunlock::framecount::TryInstall();
   mfgunlock::loadhook::TryInstall();
@@ -1303,6 +1872,7 @@ void OnInitDevice(reshade::api::device* device) {
 
 void OnInitCommandQueue(reshade::api::command_queue* /*queue*/) {
   RunProviderMaintenance();
+  TryPatchFrameCountCeiling();
   if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
   mfgunlock::framecount::TryInstall();
   mfgunlock::loadhook::TryInstall();
@@ -1317,6 +1887,10 @@ void LoadConfig() {
   if (reshade::get_config_value(nullptr, kConfigSection, "Enabled", value)) {
     g_enabled.store(value != 0, std::memory_order_relaxed);
   }
+  g_configured_enabled.store(g_enabled.load(std::memory_order_relaxed),
+                             std::memory_order_relaxed);
+  mfgunlock::framecount::g_addon_enabled.store(
+      g_enabled.load(std::memory_order_relaxed), std::memory_order_relaxed);
   if (reshade::get_config_value(nullptr, kConfigSection, "MaxCount", value)) {
     if (value < static_cast<int>(kMinCount)) value = static_cast<int>(kMinCount);
     if (value > static_cast<int>(kMaxCount)) value = static_cast<int>(kMaxCount);
@@ -1325,37 +1899,119 @@ void LoadConfig() {
   if (reshade::get_config_value(nullptr, kConfigSection, "ForceFlipMeteringOff", value)) {
     g_force_flip_meter_off.store(value != 0, std::memory_order_relaxed);
   }
+  g_configured_force_flip_meter_off.store(
+      g_force_flip_meter_off.load(std::memory_order_relaxed),
+      std::memory_order_relaxed);
   if (reshade::get_config_value(nullptr, kConfigSection, "TemporalFix", value)) {
     g_temporal_fix.store(value != 0, std::memory_order_relaxed);
   }
+  g_configured_temporal_fix.store(
+      g_temporal_fix.load(std::memory_order_relaxed),
+      std::memory_order_relaxed);
+  if (reshade::get_config_value(nullptr, kConfigSection, "BlackwellFrameworkKernels", value)) {
+    g_blackwell_framework_kernels.store(value != 0, std::memory_order_relaxed);
+  }
+  g_configured_blackwell_framework_kernels.store(
+      g_blackwell_framework_kernels.load(std::memory_order_relaxed),
+      std::memory_order_relaxed);
+  if (reshade::get_config_value(nullptr, kConfigSection,
+                                "ThinGeometryValidatedWarpBlend", value)) {
+    g_thin_geometry_validated_warp_blend.store(value != 0,
+                                                std::memory_order_relaxed);
+  }
+  g_configured_thin_geometry_validated_warp_blend.store(
+      g_thin_geometry_validated_warp_blend.load(std::memory_order_relaxed),
+      std::memory_order_relaxed);
+  if (reshade::get_config_value(nullptr, kConfigSection,
+                                "ThinGeometryPreviousScatter", value)) {
+    g_thin_geometry_previous_scatter.store(value != 0,
+                                            std::memory_order_relaxed);
+  }
+  g_configured_thin_geometry_previous_scatter.store(
+      g_thin_geometry_previous_scatter.load(std::memory_order_relaxed),
+      std::memory_order_relaxed);
+  if (reshade::get_config_value(nullptr, kConfigSection,
+                                "ThinGeometryIntermediateScatter", value)) {
+    g_thin_geometry_intermediate_scatter.store(value != 0,
+                                                std::memory_order_relaxed);
+  }
+  g_configured_thin_geometry_intermediate_scatter.store(
+      g_thin_geometry_intermediate_scatter.load(std::memory_order_relaxed),
+      std::memory_order_relaxed);
   if (reshade::get_config_value(nullptr, kConfigSection, "RaiseFrameCeiling", value)) {
     g_raise_ceiling.store(value != 0, std::memory_order_relaxed);
   }
-  if (reshade::get_config_value(nullptr, kConfigSection, "ForceOTAPlugins", value)) {
-    mfgunlock::framecount::g_force_ota.store(value != 0, std::memory_order_relaxed);
+  if (reshade::get_config_value(nullptr, kConfigSection, "RuntimeSelectionMode", value)) {
+    if (value < static_cast<int>(
+                    mfgunlock::framecount::RuntimeSelectionMode::kGameDefault) ||
+        value > static_cast<int>(
+                    mfgunlock::framecount::RuntimeSelectionMode::kForceOta)) {
+      value = static_cast<int>(
+          mfgunlock::framecount::RuntimeSelectionMode::kGameDefault);
+    }
+    mfgunlock::framecount::g_runtime_selection_mode.store(
+        static_cast<unsigned int>(value), std::memory_order_relaxed);
+  } else if (reshade::get_config_value(nullptr, kConfigSection,
+                                       "ForceOTAPlugins", value) && value != 0) {
+    // One-way compatibility with the older boolean setting. Once the new key
+    // is saved it takes precedence, including when explicitly set to default.
+    mfgunlock::framecount::g_runtime_selection_mode.store(
+        static_cast<unsigned int>(
+            mfgunlock::framecount::RuntimeSelectionMode::kForceOta),
+        std::memory_order_relaxed);
   }
+  g_configured_runtime_selection_mode.store(
+      mfgunlock::framecount::g_runtime_selection_mode.load(
+          std::memory_order_relaxed),
+      std::memory_order_relaxed);
   if (reshade::get_config_value(nullptr, kConfigSection, "ForceMultiplier", value)) {
     if (value != 0 && (value < 2 || value > 6)) value = 0;
     mfgunlock::framecount::g_force_multiplier.store(static_cast<unsigned int>(value),
                                                     std::memory_order_relaxed);
+    mfgunlock::framecount::g_fixed_override_status.store(
+        static_cast<unsigned int>(
+            mfgunlock::forcepolicy::IsFixedMultiplier(
+                static_cast<unsigned int>(value))
+                ? mfgunlock::forcepolicy::FixedOverrideStatus::kPending
+                : mfgunlock::forcepolicy::FixedOverrideStatus::kNative),
+        std::memory_order_relaxed);
+  }
+  if (reshade::get_config_value(nullptr, kConfigSection, "DynamicMFG", value)) {
+    mfgunlock::framecount::g_dynamic_mfg_enabled.store(value != 0,
+                                                        std::memory_order_relaxed);
+  }
+  if (reshade::get_config_value(nullptr, kConfigSection, "DynamicTargetFPS", value)) {
+    if (value < 0 || value > 1000) value = 0;
+    mfgunlock::framecount::g_dynamic_target_fps.store(
+        static_cast<unsigned int>(value), std::memory_order_relaxed);
+  }
+  if (reshade::get_config_value(nullptr, kConfigSection,
+                               "DynamicReflexSourceCap", value)) {
+    mfgunlock::framecount::g_dynamic_reflex_source_cap.store(
+        value != 0, std::memory_order_relaxed);
   }
   if (reshade::get_config_value(nullptr, kConfigSection, "HDRCompatibilityMode", value)) {
     if (value < static_cast<int>(mfgunlock::framecount::HdrCompatibilityMode::kNative) ||
         value > static_cast<int>(
                     mfgunlock::framecount::HdrCompatibilityMode::kFinalColorFallback)) {
       value = static_cast<int>(
-          mfgunlock::framecount::HdrCompatibilityMode::kFinalColorFallback);
+          mfgunlock::framecount::HdrCompatibilityMode::kAutomaticHybrid);
     }
     mfgunlock::framecount::g_hdr_compatibility_mode.store(
         static_cast<unsigned int>(value), std::memory_order_relaxed);
   } else if (reshade::get_config_value(nullptr, kConfigSection,
                                        "HDRUIRecomposition", value)) {
+    // Preserve an explicit legacy opt-in. A legacy false value represented the
+    // absence of that experiment, not a deliberate request to bypass every
+    // quality guard, so migrate it to the new recommended automatic mode.
     mfgunlock::framecount::g_hdr_compatibility_mode.store(
         static_cast<unsigned int>(
             value != 0 ? mfgunlock::framecount::HdrCompatibilityMode::kUiRecomposition
-                       : mfgunlock::framecount::HdrCompatibilityMode::kNative),
+                       : mfgunlock::framecount::HdrCompatibilityMode::kAutomaticHybrid),
         std::memory_order_relaxed);
   }
+  // When neither the current nor legacy key exists, this is a fresh
+  // configuration and the atomic's Native default remains active.
   if (reshade::get_config_value(nullptr, kConfigSection, "DepthEdgeGuardLevel", value)) {
     if (value < 0 || value > 4) value = 0;
     mfgunlock::framecount::g_depth_edge_guard_level.store(
@@ -1376,20 +2032,30 @@ extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
     "Reports DLSSG.MultiFrameCountMax so Streamline offers multi-frame generation";
 
-BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID /*lpv_reserved*/) {
+BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
   switch (fdw_reason) {
     case DLL_PROCESS_ATTACH:
       g_self_module = h_module;
       if (!reshade::register_addon(h_module)) return FALSE;
       LoadConfig();
+      if (mfgunlock::framecount::g_runtime_selection_mode.load(
+              std::memory_order_relaxed) !=
+              static_cast<unsigned int>(
+                  mfgunlock::framecount::RuntimeSelectionMode::kGameDefault) &&
+          !HasEarlyLoadEntry()) {
+        reshade::log::message(
+            reshade::log::level::warning,
+            "mfgunlock: a non-default Streamline runtime policy is selected, but the addon is not in ADDON.LoadFromDllMain. Games that call slInit before normal addon loading require early loading; use the overlay button and restart.");
+      }
 
-      // The frame-count override must never ask for more generated frames than
-      // the pacing can deliver, and it is the only code that runs at a moment
-      // when the DLSS-G plugin is guaranteed loaded. Give it both a way to
-      // force the pacing patch and a way to check whether it took.
+      // Current providers keep their native pacing unless the user explicitly
+      // requests the legacy software-flip compatibility path. Only that opt-in
+      // path requires a verified field patch before a raised count is sent.
       mfgunlock::framecount::g_ensure_pacing = []() { TryPatchFlipMetering(); };
       mfgunlock::framecount::g_pacing_ready = []() {
-        return g_flip_meter_patched.load(std::memory_order_acquire);
+        return mfgunlock::pacing::IsReady(
+            g_force_flip_meter_off.load(std::memory_order_relaxed),
+            g_flip_meter_patched.load(std::memory_order_acquire));
       };
 
       // Install load-time discovery before the bootstrap scan. Already mapped
@@ -1397,28 +2063,38 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID /*lpv_reserved*
       // patched directly here without enumerating modules from Present.
       mfgunlock::loadhook::g_on_interposer_loaded = []() { mfgunlock::framecount::TryInstall(); };
       mfgunlock::loadhook::g_on_dlssg_loaded = ProcessLoadedDlssgModule;
+      mfgunlock::loadhook::g_on_dlssg_plugin_loaded = ProcessLoadedStreamlineDlssgPlugin;
       mfgunlock::loadhook::TryInstall();
       RunProviderMaintenance();
+      TryPatchFrameCountCeiling();
       if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
       mfgunlock::framecount::TryInstall();
 
       reshade::register_overlay("MFG Unlock", OnRegisterOverlay);
       reshade::register_event<reshade::addon_event::init_device>(OnInitDevice);
       reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
+      reshade::register_event<reshade::addon_event::destroy_swapchain>(OnDestroySwapchain);
       reshade::register_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
       reshade::register_event<reshade::addon_event::present>(OnPresentStartDiscovery);
       break;
     case DLL_PROCESS_DETACH:
+      // During process termination Windows is already reclaiming every mapped
+      // image. Avoid detour transactions and stale provider-memory restores
+      // under the loader lock; explicit addon unload still performs cleanup.
+      if (lpv_reserved != nullptr) break;
       reshade::unregister_event<reshade::addon_event::present>(OnPresentStartDiscovery);
       reshade::unregister_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);
+      reshade::unregister_event<reshade::addon_event::destroy_swapchain>(OnDestroySwapchain);
       reshade::unregister_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
       reshade::unregister_event<reshade::addon_event::init_device>(OnInitDevice);
       reshade::unregister_overlay("MFG Unlock", OnRegisterOverlay);
       mfgunlock::loadhook::Uninstall();
       mfgunlock::framecount::Uninstall();
+      RestoreThinGeometry();
       RestoreMidpoint();
       RestoreDlssgArchGate();
-      RestorePacingPatches();
+      RestoreFrameCountCeiling();
+      RestoreFlipMetering();
       reshade::unregister_addon(h_module);
       break;
     default:

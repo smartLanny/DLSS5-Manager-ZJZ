@@ -6,5 +6,6 @@
   "qqGroup": "392308850",
   "releaseUrl": "https://github.com/smartLanny/DLSS5-Manager-ZJZ/releases",
   "runtimePacksUrl": "https://github.com/smartLanny/DLSS5-Manager-ZJZ/blob/main/docs/RUNTIME-PACKS.md",
+  "mfgUnlockUrl": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/",
   "vcRuntimeUrl": "https://aka.ms/vc14/vc_redist.x64.exe"
 }

@@ -28,6 +28,15 @@ test('renderer requests compile with the real policy and omit dormant fields', (
       if (backend === 'nvidia' || mode !== 'dynamic') assert.equal(request.experimental56, undefined);
     }
   }
+  const mfgDynamic = ui.createRequest('fg', { backend: 'mfgunlock', mode: 'dynamic', targetFps: '120', multiplier: '6',
+    runtimeMode: 'ota', hdrMode: 'automatic', depthEdgeGuard: '2', freezeFallback: 'on', reflexSourceCap: 'on',
+    temporalFix: '', blackwellFrameworkKernels: '' });
+  assert.deepEqual(mfgDynamic, { backend: 'mfgunlock', mode: 'dynamic', targetFps: 120, runtimeMode: 'ota', hdrMode: 'automatic',
+    depthEdgeGuard: 2, freezeFallback: true, reflexSourceCap: true });
+  assert.deepEqual(policy.validateRequest('fg', mfgDynamic), mfgDynamic);
+  assert.equal(mfgDynamic.multiplier, undefined);
+  assert.deepEqual(ui.createRequest('fg', { backend: 'mfgunlock', mode: 'fixed', multiplier: '2' }),
+    { backend: 'mfgunlock', mode: 'fixed', multiplier: 2 }, 'MFG 0.9 fixed values are absolute requests');
   assert.throws(() => ui.createRequest('fg', { backend: 'rtx40', mode: 'off' }), /有效/);
   assert.throws(() => ui.createRequest('fg', { backend: 'nvidia', mode: 'fixed', multiplier: '7' }), /2–6/);
   assert.throws(() => ui.createRequest('fg', { backend: 'nvidia', mode: 'dynamic', targetFps: '' }), /整数/);

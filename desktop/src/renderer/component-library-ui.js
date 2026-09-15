@@ -14,6 +14,9 @@
       }
     }
     if (data.warnings?.length) message.textContent = data.warnings.join('；');
+    const storage=data.storage || {};
+    $('componentStorageLocation').textContent = storage.root
+      ? `组件大文件：${storage.root}${storage.cDrive ? '（当前在 C 盘；可点“移动仓库”迁往其他盘）' : '（不占用 C 盘组件空间）'}` : '';
     const host = $('componentLibraryRows'); host.replaceChildren();
     const visiblePackages = data.packages.filter(row => !row.internal);
     for (const item of visiblePackages) {
@@ -98,6 +101,10 @@
   const importSelected = directory => perform(async () => { const value = unwrap(await window.manager.pickComponent(directory)); return value ? '组件已导入缓存，未修改游戏。' : '已取消导入。'; });
   $('importComponentBtn').onclick = () => importSelected(false);
   $('importComponentDirBtn').onclick = () => importSelected(true);
+  $('moveComponentStorageBtn').onclick = () => perform(async () => {
+    const value=unwrap(await window.manager.moveComponentLibrary());
+    return value ? value.message : '已取消移动。';
+  });
   $('refreshComponentsBtn').onclick = () => perform(async () => '组件列表已刷新。');
   $('componentGameSelect').onchange = () => refreshBridgeChoices().catch(error => { message.textContent = error.message; });
   $('applyBridgeComponentBtn').onclick = () => perform(async () => {

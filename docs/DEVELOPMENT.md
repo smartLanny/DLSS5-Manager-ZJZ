@@ -33,7 +33,7 @@ npm --prefix desktop run test:game-page
 
 `npm run check` 检查共享合同、CLI 和源码无载荷，不代替 Windows 桌面、GPU 或游戏验收。桌面完整测试为 `npm --prefix desktop test`；原生和历史用例所需外部夹具见 [LOCAL-BASIC-TESTS.md](LOCAL-BASIC-TESTS.md)。
 
-安装 / 保存 / 启动 / 恢复变动须验证原文件保留、预览后变化拒绝、失败恢复和实际调用方。UI 检查至少覆盖 1100×780、900×620、浅深主题、动画开关、长列表和焦点。不得通过删除失败断言宣称通过。
+安装 / 保存 / 启动 / 恢复变动须验证原文件保留、预览后变化拒绝、失败恢复和实际调用方。UI 检查至少覆盖 1100×780、900×620，以及 200% 缩放下约 960×520 的紧凑工作区；同时覆盖浅深主题、动画开关、长列表和焦点。不得通过删除失败断言宣称通过。
 
 ## CLI
 
@@ -64,6 +64,9 @@ $env:DLSS5_MANAGER_STAGING = 'C:\path\manager-distribution-staging.json'
 npm --prefix desktop run verify:staging
 npm --prefix desktop run build:base
 npm --prefix desktop run build:offline
+
+# 空间紧张时，把 stage 和交付物放到非系统盘；在 desktop 目录执行：
+node scripts/build-manager.cjs --flavor offline --unpacked-zip --work-root D:\DLSS5-Build
 ```
 
 构建仅复制白名单和逐文件 bytes / SHA-256 对应的输入。base 包携带小组件，offline 才加入按显卡族区分的大型 NR runtime。Bridge / Feeder / host / Vulkan 等可选配套单独提供；不能从历史目录顺手复制未审查二进制，也不能混用不同 Core 的 chain。
@@ -72,7 +75,7 @@ npm --prefix desktop run build:offline
 
 ## 组件兼容性与回退
 
-权威 pin 在 [config/pins.json](../config/pins.json) 和 [DLC-PIN.md](DLC-PIN.md)。当前记录 MFG 0.9 为目标默认、0.7 为回退；BG3 Bridge 保留 1.4.11，不因上游出现 latest / 预发布就自动替换。
+权威 pin 在 [config/pins.json](../config/pins.json) 和 [DLC-PIN.md](DLC-PIN.md)。当前新安装只提供 MFG 0.9；0.7/0.6.1 仅用于历史收据恢复，不能作为回退选择。BG3 Bridge 保留 1.4.11，不因上游出现 latest / 预发布就自动替换。
 
 展示名和菜单项不是成品身份，也不构成兼容性证据。D21 的默认策略需要实际完整包；D12 不得重新标为 D21。已有游戏选择优先于新的全局默认。缺可选桥接配套时只阻止对应操作，保留原游戏与 Core。
 

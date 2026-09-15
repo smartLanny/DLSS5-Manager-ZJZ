@@ -35,6 +35,10 @@ const QUIET_READ_ACTIONS = new Set(['boot', 'games-refresh', 'games-list', 'game
 
 function createAppService({ userData, resourcesPath, appDir, documentsDir, version = '0.0.0', overrides = {} }) {
   const store = createStore(path.join(userData, 'settings.json'));
+  const storageApi = require('./component-storage');
+  const storageState = store.read();
+  const componentStorage = storageApi.resolveComponentStorage({ userData, configuredRoot:storageState.componentLibraryPath,
+    portableExecutable:overrides.portableExecutable, applicationDir:overrides.applicationDir });
   const library = overrides.library || createLibraryWorkerClient({ documentsDir });
   const installer = overrides.installer || createInstaller();
   const externalDeployment = overrides.externalDeployment || createExternalRuntime({ userData,
@@ -55,9 +59,20 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     resolveFeederLogDirectory: game => feeder.feedbackLogDirectory(game) });
   const payloadInspection = createPayloadInspectionCache();
   const bundledPayloadDir = payloadRoot(fs.existsSync(path.join(resourcesPath || '', 'payload')) ? resourcesPath : appDir);
-  const componentLibrary = require('./component-library').createComponentLibrary({ userData });
+  const componentLibrary = require('./component-library').createComponentLibrary({ userData,
+    root:overrides.componentLibraryRoot || componentStorage.root });
   let seedPromise;
   const componentSeedErrors = [];
+  const managedStorageSources = [componentStorage.legacyRoot,
+    overrides.applicationDir && path.join(path.resolve(overrides.applicationDir),'DLSS5-Manager-Data','component-library'),
+    overrides.portableExecutable && path.join(path.dirname(path.resolve(overrides.portableExecutable)),'DLSS5-Manager-Data','component-library'),
+    storageState.componentLibraryPreviousPath]
+    .filter(value => typeof value === 'string' && path.isAbsolute(value));
+  const storageFinalization = storageState.componentLibraryPath && !overrides.componentLibraryRoot
+    ? storageApi.finalizeComponentStorageMove({ userData, configuredRoot:componentLibrary.root, allowedSources:managedStorageSources })
+      .then(async result => { if (result.removedSource && storageState.componentLibraryPreviousPath) await store.write({componentLibraryPreviousPath:null}); return result; })
+      .catch(error => { componentSeedErrors.push(`旧组件仓库尚未清理：${error.message}`); return {removedSource:false,error}; })
+    : Promise.resolve({removedSource:false});
   const bundledComponentIds = new Set();
   function seedBundledComponents() {
     if (seedPromise) return seedPromise;
@@ -1718,8 +1733,15 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
 
   return {
     product: { ...PRODUCT, version },
-    listComponents: async () => { await seedBundledComponents(); await refreshProviderSources({ selectDefault: true });
-      return { ...(await componentLibrary.inventory()), catalog: componentLibrary.catalog(), warnings:[...componentSeedErrors] }; },
+    listComponents: async () => { await storageFinalization; await seedBundledComponents(); await refreshProviderSources({ selectDefault: true });
+      return { ...(await componentLibrary.inventory()), catalog: componentLibrary.catalog(),
+        storage:{ root:componentLibrary.root, mode:componentStorage.mode, cDrive:/^c:/i.test(componentLibrary.root) }, warnings:[...componentSeedErrors] }; },
+    moveComponentLibrary: async destinationBase => {
+      await storageFinalization; await fs.promises.mkdir(componentLibrary.root,{recursive:true});
+      const moved=await storageApi.moveComponentStorage({userData,source:componentLibrary.root,destinationBase});
+      await store.write({componentLibraryPath:moved.target,componentLibraryPreviousPath:moved.source});
+      return {...moved,message:'组件仓库已完整复制并校验。重启管理器后会使用新位置并清理旧副本。'};
+    },
     inspectComponentProviders: () => feeder.inspectProviders(providerContext()),
     selectComponentProvider: async id => {
       if (id !== null) await refreshProviderSources({ force: true });
@@ -1757,7 +1779,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     withError,
     validateLaunch,
     boot: async () => {
-      await seedBundledComponents();
+      await storageFinalization; await seedBundledComponents();
       const providerRefresh = await refreshProviderSources({ selectDefault: true });
       if (providerRefresh.reason && providerRefresh.code && !componentSeedErrors.includes(providerRefresh.reason))
         componentSeedErrors.push(`外部 Provider 当前未刷新：${providerRefresh.reason}`);
@@ -1974,6 +1996,20 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         throw appError('ERR_ADDON_INVALID');
       }
       if (/\.zip$/i.test(file)) {
+        let ota, otaError;
+        try { ota = await readOtaPackage(file); } catch (error) { otaError = error; }
+        if (ota?.canonicalCore) {
+          const core = ota.canonicalCore;
+          await componentLibrary.importVerifiedCore({ ...core, catalogIdentity:true, archiveSha256:ota.archiveSha256, files:[
+            { name:'nr-before-sr.zh-CN.addon64', bytes:ota.addon, sha256:ota.addonSha256 },
+            { name:'nrchain_nvngx.dll', bytes:ota.bridge, sha256:ota.bridgeSha256 }
+          ] });
+          const source = await componentLibrary.activateCore(core.id, bundledPayloadDir);
+          await selectPayloadSource(source.payloadDir);
+          await store.write({ addonVersion:core.id });
+          await refreshProviderSources({ selectDefault:true, force:true });
+          return listAddonVersions();
+        }
         let modern;
         try { modern = await componentLibrary.importComponent(file); } catch { /* Historical OTA packages retain their own reader. */ }
         if (modern?.packages.length === 1 && modern.packages[0].kind === 'core') {
@@ -1982,11 +2018,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           await refreshProviderSources({ selectDefault: true, force: true });
           return listAddonVersions();
         }
-        let ota;
-        try { ota = await readOtaPackage(file); }
-        catch (error) {
-          if (error?.code === 'ERR_OTA_CORE_ONLY') throw appError('ERR_OTA_CORE_ONLY');
-          throw appError('ERR_ADDON_INVALID', { reason: error && error.message ? error.message : 'invalid-ota' });
+        if (!ota) {
+          if (otaError?.code === 'ERR_OTA_CORE_ONLY') throw appError('ERR_OTA_CORE_ONLY');
+          throw appError('ERR_ADDON_INVALID', { reason: otaError?.message || 'invalid-ota' });
         }
         const digest = sha256(file);
         const id = `imported-${digest.slice(0, 12)}`;

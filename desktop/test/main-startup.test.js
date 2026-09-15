@@ -47,7 +47,8 @@ function harness(options = {}) {
   const ipcMain = new EventEmitter(); ipcMain.handle = (name, fn) => handles.set(name, (event, ...args) => fn(event && Object.hasOwn(event, 'sender') ? event : { ...event, sender: latestWindow?.webContents }, ...args));
   const dialog = { async showMessageBox(arg) { dialogs.push(arg); if (options.dialogFailure) throw new Error('dialog unavailable'); return { response: options.dialogResponse ?? 1 }; },
     async showSaveDialog() { return { canceled: true }; }, showErrorBox(title, detail) { errors.push({ title, detail }); }, async showOpenDialog() { return { canceled: true, filePaths: [] }; } };
-  const electron = { app, BrowserWindow, ipcMain, dialog, shell: { showItemInFolder() {}, async openExternal(url) { options.externalUrls?.push(url); }, async openPath() { return ''; } }, clipboard: { writeText() {} } };
+  const screen = { getPrimaryDisplay: () => ({ workAreaSize: options.workAreaSize || { width: 1920, height: 1080 } }) };
+  const electron = { app, BrowserWindow, ipcMain, dialog, screen, shell: { showItemInFolder() {}, async openExternal(url) { options.externalUrls?.push(url); }, async openPath() { return ''; } }, clipboard: { writeText() {} } };
   const service = { store: { readRecoveryStatus: () => ({ state: 'ok' }), read: () => ({ gameOverrides: {} }) }, withError: options.withError || (fn => fn()), install: options.install || (async () => ({})),
     boot: async () => ({}), refresh: async () => ({}), listGames: async () => [{ id: 'game', name: 'Fixture Game' }], product: {},
     getLayout: () => ({ mode: 'local', loadingMode: 'proxy', runtimeDir: 'C:\\game', activeConfigPath: 'C:\\game\\ReShade.ini' }),
@@ -141,6 +142,17 @@ function harness(options = {}) {
 
 function saw(h, stage) { return h.logs.some(row => row.stage === stage); }
 function dialogTitle(h, text) { return h.dialogs.some(row => String(row.message || row.title).includes(text)); }
+
+test('high-DPI compact work areas keep the first window fully on screen and resizable', async () => {
+  const h = harness({ workAreaSize: { width: 960, height: 520 } });
+  await settle();
+  const config = h.window.config;
+  assert.ok(config.width <= 960 && config.height <= 520);
+  assert.ok(config.minWidth <= config.width && config.minHeight <= config.height);
+  assert.ok(config.width >= 600 && config.height >= 420);
+  assert.equal(config.center, true);
+  h.window.emit('closed');
+});
 
 test('cleanup IPC serializes managed restoration before read-only external preview', async () => {
   const order = [];

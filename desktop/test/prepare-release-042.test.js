@@ -10,23 +10,23 @@ const {
 } = require('../scripts/prepare-release-042');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const REAL_ZIP = path.resolve(PROJECT_ROOT, '..', '交付', 'beta0.4.2-完整压缩包',
+const REAL_ZIP = path.resolve(PROJECT_ROOT, '..', '..', '交付', 'beta0.4.2-完整压缩包',
   'DLSS5-beta0.4.2-RTX50-中文完整包.zip');
-const EXPERIMENT_ZIP = path.resolve(PROJECT_ROOT, '..', 'deliveries',
+const EXPERIMENT_ZIP = path.resolve(PROJECT_ROOT, '..', '..', 'deliveries',
   'beta0.4.2-native-bridge-exp1-r1', 'beta0.4.2-DX11兼容-exp1-windows-x64.zip');
 const FIXED_BRIDGE = '46041a5ff91ae2fd907e310d132aabc3c4a1ecd48dace511b8672909d5d9c2fb';
 
-function makeFixture(t) {
+function makeFixture(t, { fixedBridge = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'manager-042-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'versions'), { recursive: true });
+  const fixedManifest = {};
   for (const family of ['RTX40', 'RTX50']) {
     const fixed = path.join(root, 'fixed', family);
     fs.mkdirSync(fixed, { recursive: true });
-    fs.copyFileSync(
-      path.join(PROJECT_ROOT, 'payload', 'nr-before-sr', 'fixed', family, 'nrchain_nvngx.dll'),
-      path.join(fixed, 'nrchain_nvngx.dll')
-    );
+    const bridgeFile = path.join(fixed, 'nrchain_nvngx.dll');
+    fs.writeFileSync(bridgeFile, fixedBridge || Buffer.from(`fixture-${family}-bridge`));
+    fixedManifest[family] = { files: { 'nrchain_nvngx.dll': require('node:crypto').createHash('sha256').update(fs.readFileSync(bridgeFile)).digest('hex') } };
   }
   const keep = {
     '0.3.3.5': {
@@ -42,10 +42,7 @@ function makeFixture(t) {
     version: 4,
     generatedAt: '2026-09-07T23:23:19.537Z',
     defaultVersion: '0.4.6-hotfix.1',
-    fixed: {
-      RTX40: { files: { 'nrchain_nvngx.dll': FIXED_BRIDGE } },
-      RTX50: { files: { 'nrchain_nvngx.dll': FIXED_BRIDGE } }
-    },
+    fixed: fixedManifest,
     versions: keep
   }, null, 2) + '\n');
   return { root, keep };
@@ -61,7 +58,7 @@ test('real beta0.4.2 Chinese ZIP is paired, D3D12-only, carrier-free, and idempo
     assert.equal(source.files.config.length, FILES.config.bytes);
     assert.equal(source.files.bridge.length, FILES.bridge.bytes);
 
-    const fixture = makeFixture(t);
+    const fixture = makeFixture(t, { fixedBridge: source.files.bridge });
     await prepare(REAL_ZIP, { root: fixture.root });
     const firstBundle = fs.readFileSync(path.join(fixture.root, 'bundle.json'), 'utf8');
     const bundle = JSON.parse(firstBundle);

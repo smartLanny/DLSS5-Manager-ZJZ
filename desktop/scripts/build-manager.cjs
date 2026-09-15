@@ -18,18 +18,43 @@ const PACKAGE = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 
 function fail(message) { throw new Error(message); }
 
 function parseArgs(args) {
-  const result = { flavor: 'base', manifestFile: DEFAULT_MANIFEST, portableOnly: false, outputRoot: null, dryRun: false };
+  const result = { flavor: 'base', manifestFile: DEFAULT_MANIFEST, portableOnly: false, unpackedZip: false, outputRoot: null, workRoot: null, dryRun: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--flavor' && args[i + 1]) result.flavor = args[++i];
     else if (args[i] === '--manifest' && args[i + 1]) result.manifestFile = args[++i];
     else if (args[i] === '--out' && args[i + 1]) result.outputRoot = args[++i];
+    else if (args[i] === '--work-root' && args[i + 1]) result.workRoot = args[++i];
     else if (args[i] === '--portable') result.portableOnly = true;
+    else if (args[i] === '--unpacked-zip') result.unpackedZip = true;
     else if (args[i] === '--dry-run') result.dryRun = true;
-    else throw new Error('用法：node scripts/build-manager.cjs [--flavor base|offline] [--manifest <json>] [--out <repo外目录>] [--portable] [--dry-run]');
+    else throw new Error('用法：node scripts/build-manager.cjs [--flavor base|offline] [--manifest <json>] [--work-root <外部工作目录>] [--out <交付目录>] [--portable|--unpacked-zip] [--dry-run]');
   }
   if (!['base', 'offline'].includes(result.flavor)) throw new Error(`未知打包 flavor：${result.flavor}`);
+  if (result.portableOnly && result.unpackedZip) throw new Error('--portable 与 --unpacked-zip 不能同时使用。');
   result.manifestFile = path.resolve(result.manifestFile);
   return result;
+}
+
+function strictChild(root, target, label) {
+  const resolvedRoot = path.resolve(root), resolvedTarget = path.resolve(target);
+  const relative = path.relative(resolvedRoot, resolvedTarget);
+  if (resolvedRoot === path.parse(resolvedRoot).root || !relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    fail(`${label} 必须严格位于 Manager 工作目录内：${resolvedTarget}`);
+  }
+  return resolvedTarget;
+}
+
+function resolveBuildRoots(options = {}) {
+  const flavor = options.flavor || 'base';
+  if (options.workRoot) {
+    const workRoot = path.resolve(options.workRoot);
+    const stageRoot = strictChild(workRoot, path.join(workRoot, 'stage', flavor), 'stage 目录');
+    const outputRoot = strictChild(workRoot, options.outputRoot || path.join(workRoot, 'deliveries', `DLSS5-Manager-${PACKAGE.version}-${flavor}`), '交付目录');
+    return { workRoot, stageRoot, outputRoot };
+  }
+  const outputRoot = path.resolve(options.outputRoot || path.join(APP_ROOT, '..', 'deliveries', `DLSS5-Manager-${PACKAGE.version}-${flavor}`));
+  assertOutsideRepo(outputRoot);
+  return { workRoot: path.join(APP_ROOT, '.packaging-stage'), stageRoot: path.join(APP_ROOT, '.packaging-stage', flavor), outputRoot };
 }
 
 function assertOutsideRepo(directory) {
@@ -87,9 +112,23 @@ async function createOfflineRuntimeZip(stageRoot, outputRoot) {
   return { file: archive, bytes: stat.size, sha256: await hashFile(archive), entries };
 }
 
-function buildConfig({ stageRoot, flavor, outputRoot, portableOnly }) {
+async function createUnpackedZip(outputRoot, flavor) {
+  let path7za;
+  try { path7za = require('7zip-bin').path7za; }
+  catch (error) { fail(`免安装 ZIP 需要 7zip-bin：${error.message}`); }
+  const unpacked = path.join(outputRoot, 'win-unpacked');
+  if (!fs.existsSync(path.join(unpacked, `${PACKAGE.build.productName}.exe`))) fail('免安装目录缺少 Manager 主程序。');
+  const archive = path.join(outputRoot, `DLSS5-Manager-${PACKAGE.version}-${flavor}-unpacked.zip`);
+  const result = spawnSync(path7za, ['a', '-tzip', archive, '.', '-mx=1'], { cwd:unpacked, encoding:'utf8', windowsHide:true, maxBuffer:8*1024*1024 });
+  if (result.error || result.status !== 0) fail(`免安装 ZIP 生成失败：${result.stderr || result.error?.message || result.status}`);
+  const stat = fs.statSync(archive);
+  return { file:archive, bytes:stat.size, sha256:await hashFile(archive) };
+}
+
+function buildConfig({ stageRoot, flavor, outputRoot, portableOnly, unpackedZip = false, electronDist = null }) {
   const config = structuredClone(PACKAGE.build || {});
   config.directories = { ...(config.directories || {}), output: outputRoot };
+  if (electronDist) config.electronDist = path.resolve(electronDist);
   // Never inherit the historical all-in-one resource list. The staged tree is
   // the allow-list for this build; optional small components only arrive through
   // the explicit external manifest and large NR runtime stays split out.
@@ -105,27 +144,34 @@ function buildConfig({ stageRoot, flavor, outputRoot, portableOnly }) {
     ...staticResources()
   ];
   config.extraFiles = PACKAGE.build?.extraFiles || [];
-  config.win = { ...(config.win || {}), target: portableOnly ? ['portable'] : ['nsis', 'portable'] };
+  config.win = { ...(config.win || {}), target: unpackedZip ? ['dir'] : portableOnly ? ['portable'] : ['nsis', 'portable'] };
+  if (unpackedZip) config.win.signAndEditExecutable = false;
   config.portable = { ...(config.portable || {}), artifactName: `DLSS5-Manager-${PACKAGE.version}-${flavor}-portable.exe` };
   config.nsis = { ...(config.nsis || {}), artifactName: `DLSS5-Manager-${PACKAGE.version}-${flavor}-Setup.exe` };
   config.publish = null;
   return config;
 }
 
+function explicitTargets(options = {}) {
+  if (options.unpackedZip !== true) return undefined;
+  const { Platform, Arch } = require('electron-builder');
+  return Platform.WINDOWS.createTarget('dir', Arch.x64);
+}
+
 async function buildManager(options = {}) {
   const flavor = options.flavor || 'base';
-  const outputRoot = path.resolve(options.outputRoot || path.join(APP_ROOT, '..', 'deliveries', 'DLSS5-Manager-' + PACKAGE.version + '-' + flavor));
+  const roots = resolveBuildRoots(options), outputRoot = roots.outputRoot;
   const dryRun = options.dryRun === true;
-  assertOutsideRepo(outputRoot);
   if (!dryRun) {
     fs.mkdirSync(path.dirname(outputRoot), { recursive: true });
-    if (fs.existsSync(outputRoot)) fs.rmSync(outputRoot, { recursive: true, force: true });
+    if (fs.existsSync(outputRoot)) fail(`交付目录已存在，拒绝覆盖：${outputRoot}`);
   }
   runSharedContractBuild();
-  const stageRoot = path.join(APP_ROOT, '.packaging-stage', flavor);
-  const stage = await stageDistribution({ manifestFile: options.manifestFile || DEFAULT_MANIFEST, flavor, outputRoot: stageRoot });
-  const config = buildConfig({ stageRoot, flavor, outputRoot, portableOnly: options.portableOnly === true });
-  const summary = { packageVersion: PACKAGE.version, flavor, stage, outputRoot, portableOnly: options.portableOnly === true };
+  const stageRoot = roots.stageRoot;
+  const stage = await stageDistribution({ manifestFile: options.manifestFile || DEFAULT_MANIFEST, flavor, outputRoot: stageRoot, allowedRoot: roots.workRoot });
+  const config = buildConfig({ stageRoot, flavor, outputRoot, portableOnly: options.portableOnly === true, unpackedZip:options.unpackedZip === true,
+    electronDist: options.electronDist || process.env.ELECTRON_OVERRIDE_DIST_PATH || null });
+  const summary = { packageVersion: PACKAGE.version, flavor, stage, outputRoot, portableOnly: options.portableOnly === true, unpackedZip:options.unpackedZip === true };
   if (dryRun) {
     if (flavor === 'offline') summary.runtimePackage = { dryRun: true, entries: ['RTX40/nvngx_dlssnr.dll', 'RTX50/nvngx_dlssnr.dll'] };
     return summary;
@@ -142,8 +188,9 @@ async function buildManager(options = {}) {
   let build;
   try { ({ build } = require('electron-builder')); }
   catch (error) { fail(`缺少 electron-builder；请先在 desktop 执行 npm install。${error.message}`); }
-  const artifacts = await build({ projectDir: APP_ROOT, config });
+  const artifacts = await build({ projectDir: APP_ROOT, config, ...(options.unpackedZip === true ? { targets:explicitTargets(options) } : {}) });
   summary.artifacts = artifacts;
+  if (options.unpackedZip === true) summary.unpackedBundle = await createUnpackedZip(outputRoot, flavor);
   fs.writeFileSync(path.join(outputRoot, 'packaging-report.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
   return summary;
 }
@@ -153,4 +200,4 @@ if (require.main === module) {
     .catch(error => { console.error(JSON.stringify({ ok: false, error: error.message, details: error.details }, null, 2)); process.exitCode = 1; });
 }
 
-module.exports = { buildManager, buildConfig, parseArgs, staticResources, STATIC_RESOURCE_FILES, LEGACY_FG_RESOURCE_FILES, ALL_STATIC_RESOURCE_FILES, runSharedContractBuild };
+module.exports = { buildManager, buildConfig, parseArgs, resolveBuildRoots, createUnpackedZip, explicitTargets, staticResources, STATIC_RESOURCE_FILES, LEGACY_FG_RESOURCE_FILES, ALL_STATIC_RESOURCE_FILES, runSharedContractBuild };

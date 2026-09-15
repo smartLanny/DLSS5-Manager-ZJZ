@@ -16,10 +16,9 @@ function installMock(features, options = {}) {
     layout: { mode: 'local', loadingBackend: 'local', loadingMode: 'proxy', activeConfigPath: options.paths.ini, runtimeDir: options.paths.gameDir + '\\bin' },
     deployment: { mode: 'local', loadingMode: 'proxy', version: '0.4.7beta', verified: true, needsRecovery: false },
     enhancements: { hardware, featureStates: clone(features.on40), requests: {}, applied: {}, pending: [],
-      fgComponents: { backend: 'mfgunlock', installed: false, defaultProvider: 'mfgunlock-0.7-zh-CN', installedProvider: null,
-        catalog: [{ id: 'mfgunlock-0.7-zh-CN', label: 'MFG Unlock 0.7 · 中文面板', ready: true },
-          { id: 'mfgunlock-0.7', label: 'MFG Unlock 0.7 · 原版', ready: true },
-          { id: 'mfgunlock-0.6.1', label: 'MFG Unlock 0.6.1 · 回退', ready: true }] } },
+      fgComponents: { backend: 'mfgunlock', installed: false, defaultProvider: 'mfgunlock-0.9-zh-CN', installedProvider: null,
+        catalog: [{ id: 'mfgunlock-0.9-zh-CN', label: 'MFG Unlock 0.9 · 中文面板（推荐）', ready: true },
+          { id: 'mfgunlock-0.9', label: 'MFG Unlock 0.9 · 官方原版', ready: true }] } },
     nr: { Enabled: 1, Intensity: 1, LocalToneStrength: 1, LocalStructureStrength: 1, WorkMode: 0, CustomWorkScale: 1, Style: 0, AutoMask: 0, ColorStrength: .75, SkinStructureStrength: -1, TransferStrength: 1, PostTransferStrength: 1,
       capabilities: { Intensity: true, LocalToneStrength: true, LocalStructureStrength: true, AutoMask: true, WorkMode: true, Style: true, CustomWorkScale: true, ColorStrength: true, SkinStructureStrength: true, TransferStrength: true, PostTransferStrength: true } },
     hotkeys: { nr: { label: 'F6 开关' }, reshade: { key: 36, ctrl: false, shift: false, alt: false } },
@@ -77,7 +76,7 @@ function installMock(features, options = {}) {
   const games = () => Object.values(mock.assessments).filter(row => !mock.removed.has(row.gameId)).map(row => row.game);
   const componentCatalog = [
     ['mfg', '0.9'], ['bridge', '1.4.13-pre7'], ['bridge', '1.4.13-pre8'], ['bridge', '1.4.13-pre6'],
-    ['feeder', '1.16.0-beta.1'], ['feeder', '0.15.1'], ['feeder', '0.15.0'], ['mfg', '0.8'], ['mfg', '0.7']
+    ['feeder', '1.16.0-beta.1'], ['feeder', '0.15.1'], ['feeder', '0.15.0']
   ].map(([kind, version], index) => ({ id: `fixture-component-${index}`, kind, version, variant: index % 2 ? 'x64' : '', downloadUrl: `https://github.com/fixture/component-${index}` }));
   const empty = async () => ok(null);
   const forbidden = name => async (...args) => { mock.calls.push([name, ...args]); throw Error('unexpected direct mutation: ' + name); };
@@ -101,7 +100,7 @@ function installMock(features, options = {}) {
     checkComponentUpdates: async () => ok([]), downloadComponent: async () => ok({ changedGames: false }),
     inspectComponentProviders: async () => ok({ packages: [], selectedId: null, selectedByRoute: {}, reason: '尚未导入输入桥配套。' }),
     componentChoices: async () => ok({ bridges: [] }), pickComponent: empty,
-    activateComponentRuntime: empty, activateComponentCore: empty, selectComponentProvider: empty, applyBridgeComponent: empty,
+    activateComponentRuntime: empty, activateComponentCore: empty, moveComponentLibrary: empty, selectComponentProvider: empty, applyBridgeComponent: empty,
     startupReady() {}, startupFailed: message => { mock.calls.push(['startup-failed', message]); },
     minimize() { if (options.demo) ipcRenderer.send('game-page-fixture-window', 'minimize'); },
     maximize() { if (options.demo) ipcRenderer.send('game-page-fixture-window', 'maximize'); },
@@ -169,7 +168,9 @@ function installMock(features, options = {}) {
     removeGame: async id => { mock.calls.push(['remove-game', id]); mock.removed.add(id); return ok({ removed: true }); },
     writeGameHotkey: forbidden('direct-hotkey-write'), uninstall: forbidden('direct-uninstall'), updateLaunchSettings: forbidden('direct-launch-settings-write'),
     saveParameters: forbidden('direct-parameter-write'), writeConfig: forbidden('direct-config-write'),
-    exportFeedback: async () => ok('fixture.txt'), openFolder: empty, openExternal: async key => { mock.calls.push(['external', key]); return ok(true); },
+    exportFeedback: async id => { mock.calls.push(['feedback', id]); return ok('fixture.txt'); },
+    openFolder: async id => { mock.calls.push(['open-folder', id]); return ok(null); },
+    openExternal: async key => { mock.calls.push(['external', key]); return ok(true); },
     launch: async id => { mock.calls.push(['launch', id]); return ok({ launched: { gameId: id, status: 'waiting-enhancement' } }); }, cancelLaunch: async id => { mock.calls.push(['cancel-launch', id]); return ok({ cancelled: true }); }
   };
 }
@@ -530,12 +531,12 @@ async function smoke() {
   click('modal-cancel'); discard();
 
   await scenario('MFG 面板读回与独立版本 · UI fixture', value => {
-    value.enhancements.fgComponents.installed = true; value.enhancements.fgComponents.installedProvider = 'mfgunlock-0.6.1';
+    value.enhancements.fgComponents.installed = true; value.enhancements.fgComponents.installedProvider = 'mfgunlock-0.9';
     value.enhancements.requests.fg = { request: { backend: 'mfgunlock', mode: 'fixed', multiplier: 3 } };
     value.enhancements.applied.fg = { request: { backend: 'mfgunlock', mode: 'fixed', multiplier: 3 }, readbackVerified: true };
     value.enhancements.current = { fg: { source: 'active-ini', valid: true, differsFromLastApplied: true, request: { backend: 'mfgunlock', mode: 'fixed', multiplier: 4 } } };
   }); await tab('enhance');
-  assert(field('fg', 'multiplier').value === '4' && field('component', 'mfgUnlock').value === 'mfgunlock-0.6.1', 'actual game-panel INI takes priority over old multiplier while installed provider remains selected');
+  assert(field('fg', 'multiplier').value === '4' && field('component', 'mfgUnlock').value === 'mfgunlock-0.9', 'actual game-panel INI takes priority over old multiplier while installed provider remains selected');
   assert(host().textContent.includes('与上次管理器请求不同'), 'external game-panel change is visible');
   set('fg', 'multiplier', '2');
   mock.assessment.enhancements.current.fg.request.multiplier = 3; click('discard');
@@ -545,11 +546,11 @@ async function smoke() {
   await preview(); assert(mock.plan.request.fg.multiplier === 2 && !mock.plan.request.components && mock.plan.request.version === undefined, 'FG setting change preserves the installed MFG plugin version');
   click('modal-cancel'); discard();
   assert(field('fg', 'multiplier').value === '3', 'discard returns to the newest actual INI value');
-  set('component', 'mfgUnlock', 'mfgunlock-0.7-zh-CN'); await tab('maintenance'); set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview');
+  set('component', 'mfgUnlock', 'mfgunlock-0.9-zh-CN'); await tab('maintenance'); set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview');
   assert(field('route', 'version').value === '0.4.7beta', 'independent MFG and bridge selections keep the Core visible');
-  await preview(); assert(JSON.stringify(mock.plan.request) === JSON.stringify({ components: { mfgUnlock: 'mfgunlock-0.7-zh-CN', bridge: 'nigos-1.4.11-nr' } }), 'component choices combine without synthesizing a Core, NR or FG request');
+  await preview(); assert(JSON.stringify(mock.plan.request) === JSON.stringify({ components: { mfgUnlock: 'mfgunlock-0.9-zh-CN', bridge: 'nigos-1.4.11-nr' } }), 'component choices combine without synthesizing a Core, NR or FG request');
   click('modal-apply'); await settled(); await tab('enhance'); await until(() => state().loaded.includes('enhancements'), 'provider refresh');
-  assert(field('component', 'mfgUnlock').value === 'mfgunlock-0.7-zh-CN' && field('fg', 'multiplier').value === '3', 'provider update reads back independently from the actual multiplier');
+  assert(field('component', 'mfgUnlock').value === 'mfgunlock-0.9-zh-CN' && field('fg', 'multiplier').value === '3', 'provider update reads back independently from the actual multiplier');
 
   await scenario('DX12 入口独立选择 · UI fixture', value => {
     value.game.chosen.apiResolution.api = value.api.effectiveApi = 'dx12'; value.api.capabilities = ['dx12'];
