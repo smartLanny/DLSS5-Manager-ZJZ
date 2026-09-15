@@ -56,7 +56,8 @@ async function smokeHoYo(options = {}) {
   document.querySelector('[data-view="hoyo"]').click(); await until(() => button('bind'), 'discovery and binding');
   assert(document.getElementById('pageTitle').textContent === '米哈游游戏' && primary().length === 1 && button('bind').disabled, 'separate view exposes only the unresolved binding step');
   assert(host().querySelector('.game-list .game-card.expanded .game-card-head .game-meta') && host().querySelector('.game-detail.gp-inline .gp-apply-bar') && !host().querySelector('.hoyo-workspace,.hoyo-clients,.hoyo-settings-modal'), 'HoYo reuses the library card and inline operation layout without a second master-detail UI');
-  assert(getComputedStyle(document.querySelector('.nav-icon-hoyo')).getPropertyValue('--nav-icon').includes('hoyo-crown.svg'), 'the independent navigation uses the crown and star line icon');
+  const navigationIcon = getComputedStyle(document.querySelector('.nav-icon-hoyo'));
+  assert(navigationIcon.getPropertyValue('--nav-icon').includes('phosphor/crown-simple.svg') && navigationIcon.maskImage.includes('phosphor/crown-simple-fill.svg'), 'HoYo navigation retains a crown identity and uses the new active fill icon');
   set('launcherId', 'launcher-two'); set('channel', 'global'); click('bind'); await until(() => field('api'), 'API confirmation');
   assert(mock.calls.find(row => row[0] === 'bind')[2].launcherId === 'launcher-two' && mock.flow.binding.launcher.kind === 'starward', 'the exact chosen launcher remains bound');
   assert(button('bind').disabled, 'ambiguous API is not silently defaulted'); set('api', 'dx11'); click('bind'); await until(() => button('preview-install'), 'install step');

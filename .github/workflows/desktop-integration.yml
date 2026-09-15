@@ -21,20 +21,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  source-snapshot:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - run: git archive --format=zip --output=review-source.zip HEAD
-      - uses: actions/upload-artifact@v4
-        with:
-          name: reviewed-source-${{ github.sha }}
-          path: review-source.zip
-          retention-days: 3
-          if-no-files-found: error
   desktop:
     runs-on: windows-latest
     timeout-minutes: 25
@@ -73,6 +59,18 @@ jobs:
         run: npm --prefix desktop run build:external
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Packaged startup and isolation proof
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/validation | Out-Null
+          $name = (Get-Content package.json -Raw | ConvertFrom-Json).build.productName
+          $exe = (Resolve-Path "dist-external/win-unpacked/$name.exe").Path
+          node scripts/startup-runtime-smoke.js --executable "$exe" --logs build/validation/startup --output build/validation/startup.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/startup-uninstrumented-smoke.js --executable "$exe" --isolation-proof build/validation/startup.json --logs build/validation/uninstrumented --output build/validation/uninstrumented.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Stage validation notes and checksums
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         shell: pwsh
@@ -97,3 +95,11 @@ jobs:
             desktop/dist-external/BUILD.txt
           if-no-files-found: error
           retention-days: 14
+      - name: Preserve diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manager-validation-reports-${{ github.sha }}
+          path: desktop/build/validation/
+          if-no-files-found: ignore
+          retention-days: 7
