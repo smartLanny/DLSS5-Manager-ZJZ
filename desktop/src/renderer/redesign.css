@@ -83,14 +83,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .nav-icon-repair { --nav-icon: url('icons/phosphor/wrench.svg'); --nav-icon-fill: url('icons/phosphor/wrench-fill.svg'); }
 .nav-icon-addons { --nav-icon: url('icons/phosphor/cube.svg'); --nav-icon-fill: url('icons/phosphor/cube-fill.svg'); }
 .nav-icon-settings { --nav-icon: url('icons/phosphor/sliders-horizontal.svg'); --nav-icon-fill: url('icons/phosphor/sliders-horizontal-fill.svg'); }
-.app-shell { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
+.app-shell { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .sidebar {
   position: relative;
   z-index: 5;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 36px 20px 24px;
   background: var(--side);
   border-right: 0;
 }
+/* Keep every navigation and community action reachable at the minimum window height. */
+.sidebar > * { flex-shrink: 0; }
 .brand { gap: 14px; min-height: 62px; padding: 0 20px 38px; }
 .brand-mark {
   width: 48px;
@@ -240,7 +245,8 @@ main { background: var(--bg); }
 .search .ui-icon { width: 22px; height: 22px; color: #4e555f; }
 .search input { height: 56px; color: #20242a; font-size: 16px; }
 .search input::placeholder { color: #969ca5; }
-select, .gp-field select, .gp-field > input, .gp-field textarea, .cx-note {
+select, .gp-field select, .gp-field > input, .gp-field textarea, .cx-note,
+.game-picker-form input, .modal-input-line input {
   min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -743,4 +749,14 @@ html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/* Fixed operation previews belong to the window, not the animated/scrolled card.
+   Disable ancestor animations while a dialog is present, including reduced motion. */
+.view.active:has(.gp-modal),
+.game-card.expanded .game-detail:has(.gp-modal),
+[role="tabpanel"]:has(.gp-modal),
+details[open] > :not(summary):has(.gp-modal) {
+  animation: none;
+  transform: none;
 }

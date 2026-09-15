@@ -1,10 +1,16 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const { preferredBundleDefault } = require('../src/product/core-menu');
 
 function prepareCoreCatalog(input) {
   if (!input || input.version !== 4 || !input.versions || Array.isArray(input.versions)) throw new Error('需要已校验的 v4 成品目录。');
   const bundle = structuredClone(input);
+  const preferred = preferredBundleDefault(bundle);
+  const oldDefault = bundle.versions[bundle.defaultVersion];
+  const retainedDefault = oldDefault?.supportsPresent === true && oldDefault.coreUpdateOnly !== true &&
+    oldDefault.comparisonOnly !== true && Array.isArray(oldDefault.inputInterfaces) &&
+    oldDefault.inputInterfaces.includes('NGX-D3D12-Feature1') ? bundle.defaultVersion : null;
   const hotfixes = Object.keys(bundle.versions).filter(id => /^0\.4\.6-hotfix\.\d+$/.test(id))
     .sort((left, right) => Number(left.split('.').at(-1)) - Number(right.split('.').at(-1)));
   const latestHotfix = hotfixes.at(-1);
@@ -44,6 +50,8 @@ function prepareCoreCatalog(input) {
       }
     }
   }
+  if (preferred) bundle.defaultVersion = preferred;
+  else if (retainedDefault && Object.hasOwn(bundle.versions, retainedDefault)) bundle.defaultVersion = retainedDefault;
   if (!Object.hasOwn(bundle.versions, bundle.defaultVersion)) throw new Error('核心目录没有可用的默认版本。');
   return { bundle, removed };
 }

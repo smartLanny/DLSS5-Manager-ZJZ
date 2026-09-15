@@ -19,21 +19,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  source-snapshot:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Archive reviewed public source
-        run: git archive --format=zip --output=review-source.zip HEAD
-      - uses: actions/upload-artifact@v4
-        with:
-          name: reviewed-source-${{ github.sha }}
-          path: review-source.zip
-          retention-days: 3
-          if-no-files-found: error
   desktop:
     runs-on: windows-latest
     timeout-minutes: 25
@@ -53,9 +38,11 @@ jobs:
       - run: npm run check
       - run: npm --prefix desktop run verify:vendor
       - run: npm --prefix desktop run test:ui-contract
+      - name: Prepare pinned public ReShade test dependency
+        run: python desktop/scripts/prepare-ui-test-reshade.py
       - name: Settings and upgrade preservation
         working-directory: desktop
-        run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js
+        run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js test/core-menu.test.js test/game-assessment.test.js test/package-release-policy.test.js
       - name: Unified game page
         run: npm --prefix desktop run test:game-page
       - name: HoYoShade workflow
@@ -64,19 +51,14 @@ jobs:
           GAME_UI_HOYO: '1'
       - name: Integration regressions
         working-directory: desktop
-        shell: pwsh
-        run: |
-          if (Test-Path test/ui-upgrade-integration.electron.cjs) {
-            & .\node_modules\.bin\electron.cmd test/ui-upgrade-integration.electron.cjs
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
+        run: npx --no-install electron test/ui-upgrade-integration.electron.cjs
       - name: Build external-component application
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: npm --prefix desktop run build:external
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - name: Preserve test application
-        if: success()
+        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: actions/upload-artifact@v4
         with:
           name: manager-ui-validation-${{ github.sha }}
