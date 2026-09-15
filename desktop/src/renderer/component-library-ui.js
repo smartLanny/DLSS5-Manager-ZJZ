@@ -15,11 +15,15 @@
     }
     if (data.warnings?.length) message.textContent = data.warnings.join('；');
     const host = $('componentLibraryRows'); host.replaceChildren();
-    for (const item of data.packages.filter(row => !row.internal)) {
-      const row = document.createElement('div'); row.className = 'control-row';
-      const text = document.createElement('span');
-      text.textContent = `${kindLabel(item.kind)} · ${item.version} · ${item.variant || ''}${item.requiresAdapter ? '（上游原包已缓存，需导入匹配的输入适配包）' : item.validation === 'blocked' ? '（暂不可应用）' : item.validation === 'candidate' ? '（待验证候选）' : ''}`;
-      row.append(text);
+    const visiblePackages = data.packages.filter(row => !row.internal);
+    for (const item of visiblePackages) {
+      const row = document.createElement('div'); row.className = 'component-package-row';
+      const copy = document.createElement('div'); copy.className = 'component-package-copy';
+      const title = document.createElement('strong'); title.textContent = kindLabel(item.kind);
+      const meta = document.createElement('span'); meta.textContent = [item.version, item.variant].filter(Boolean).join(' · ');
+      const note = document.createElement('small');
+      note.textContent = item.requiresAdapter ? '上游原包已缓存，还需匹配的输入适配包' : item.validation === 'blocked' ? '暂不可应用' : item.validation === 'candidate' ? '待验证候选' : '已校验并缓存';
+      copy.append(title, meta, note); row.append(copy);
       if (item.kind === 'nr-runtime') {
         const button = document.createElement('button'); button.className = 'button'; button.textContent = '用于后续安装'; button.disabled = item.validation === 'blocked';
         button.onclick = () => perform(async () => { sourceChanged(unwrap(await window.manager.activateComponentRuntime(item.id))); return '运行库来源已更新。请在游戏卡片中应用；现有游戏未修改。'; }); row.append(button);
@@ -28,14 +32,23 @@
         const button = document.createElement('button'); button.className = 'button'; button.textContent = '作为安装候选'; button.disabled = item.validation === 'blocked';
         button.onclick = () => perform(async () => { sourceChanged(unwrap(await window.manager.activateComponentCore(item.id))); return 'Core 候选已加入安装来源，现有游戏未修改。'; }); row.append(button);
       }
+      if (!row.querySelector('button')) { const badge = document.createElement('span'); badge.className = 'badge good'; badge.textContent = '已缓存'; row.append(badge); }
       host.append(row);
     }
-    if (!data.packages.length) { const p = document.createElement('p'); p.textContent = '尚未导入运行库。请选择与你的显卡对应的运行包或已识别 DLL。'; host.append(p); }
+    if (!visiblePackages.length) { const empty = document.createElement('div'); empty.className = 'component-empty'; empty.innerHTML = '<strong>还没有导入可用组件</strong><span>可从上方导入已下载的组件，或打开下方在线仓库。</span>'; host.append(empty); }
     const downloads = $('componentUpdateRows'); downloads.replaceChildren();
-    for (const item of data.catalog.packages.filter(p => p.downloadUrl && !data.packages.some(row => row.id === p.id))) {
-      const button = document.createElement('button'); button.className = 'button'; button.textContent = `下载 ${kindLabel(item.kind)} ${item.version} 到缓存`;
+    const downloadable = data.catalog.packages.filter(p => p.downloadUrl && !data.packages.some(row => row.id === p.id));
+    $('componentDownloadCount').textContent = downloadable.length ? `${downloadable.length} 个可用` : '已是最新';
+    for (const item of downloadable) {
+      const button = document.createElement('button'); button.className = 'button component-download-card';
+      const copy = document.createElement('span'); copy.className = 'component-download-copy';
+      const title = document.createElement('strong'); title.textContent = kindLabel(item.kind);
+      const meta = document.createElement('small'); meta.textContent = [item.version, item.variant].filter(Boolean).join(' · ');
+      const action = document.createElement('span'); action.className = 'component-download-action'; action.textContent = '下载到缓存';
+      copy.append(title, meta); button.append(copy, action);
       button.onclick = () => perform(async () => { unwrap(await window.manager.downloadComponent(item.id)); return '组件已下载并校验，未修改游戏。'; }); downloads.append(button);
     }
+    if (!downloadable.length) { const empty = document.createElement('p'); empty.className = 'component-download-empty'; empty.textContent = '当前没有需要下载的新组件。'; downloads.append(empty); }
     const selectedGame = $('componentGameSelect').value;
     const games = unwrap(await window.manager.listGames()); $('componentGameSelect').replaceChildren();
     for (const game of games.filter(g => (g.operationApi?.effectiveApi || g.chosen?.apiResolution?.api) === 'dx11')) {

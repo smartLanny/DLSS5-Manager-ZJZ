@@ -67,19 +67,37 @@ test('malformed JSON and invalid UTF-8 preserve exact original bytes before defa
 
 test('bad v1 fields are isolated without discarding valid API, manual EXE, source or extension data', async t => {
   const f = fixture(t), exe = path.join(f.root, 'Game.exe');
-  const input = { version: 1, scanDrives: 'true', scanFolders: 'old wrong type', manualGames: [f.root, 12, f.root + '\0bad'],
+  const input = { version: 1, animationsEnabled: 'false', theme: 'midnight', scanDrives: 'true', scanFolders: 'old wrong type', manualGames: [f.root, 12, f.root + '\0bad'],
     manualExecutables: [{ root: f.root, file: exe }, { root: [], file: 7 }],
     gameOverrides: { [f.root]: { api: 'vulkan', apiExecutable: exe } }, excludedGames: 'wrong',
     payloadSourcePath: f.root, payloadSourceIdentity: 'b'.repeat(64), addonVersion: '0.4.2', recoveryExtension: { keep: ['sr', 'fg'] } };
   fs.writeFileSync(f.file, JSON.stringify(input)); const bytes = fs.readFileSync(f.file);
   const read = f.store.read(), status = f.store.readRecoveryStatus();
   assert.equal(status.reason, 'fields-normalized'); assert.ok(status.changedFields.includes('scanFolders')); assert.ok(status.changedFields.includes('manualGames'));
+  assert.equal(read.animationsEnabled, true); assert.ok(status.changedFields.includes('animationsEnabled'));
+  assert.equal(read.theme, 'system'); assert.ok(status.changedFields.includes('theme'));
   assert.equal(read.scanDrives, false); assert.deepEqual(read.scanFolders, []); assert.deepEqual(read.manualGames, [f.root]);
   assert.equal(read.gameOverrides[f.root.toLowerCase()].api, 'vulkan'); assert.equal(read.gameOverrides[f.root.toLowerCase()].apiExecutable, exe);
   assert.equal(read.payloadSourcePath, f.root); assert.equal(read.payloadSourceIdentity, 'b'.repeat(64)); assert.equal(read.addonVersion, '0.4.2');
   assert.deepEqual(read.manualExecutables, [{ root: f.root, file: exe }]); assert.deepEqual(read.recoveryExtension, input.recoveryExtension);
   assert.deepEqual(fs.readFileSync(f.file), bytes); assert.deepEqual(fs.readFileSync(status.backupFile), bytes);
   await f.store.write({ scanDrives: true }); assert.deepEqual(createStore(f.file).read().recoveryExtension, input.recoveryExtension);
+});
+
+test('animation preference defaults on and persists an explicit off value', async t => {
+  const f = fixture(t);
+  assert.equal(f.store.read().animationsEnabled, true);
+  const saved = await f.store.write({ animationsEnabled: false });
+  assert.equal(saved.animationsEnabled, false);
+  assert.equal(createStore(f.file).read().animationsEnabled, false);
+});
+
+test('theme preference defaults to system and persists a supported override', async t => {
+  const f = fixture(t);
+  assert.equal(f.store.read().theme, 'system');
+  const saved = await f.store.write({ theme: 'dark' });
+  assert.equal(saved.theme, 'dark');
+  assert.equal(createStore(f.file).read().theme, 'dark');
 });
 
 test('unsupported versions and root shapes remain read-only and are never stamped as v1', async t => {

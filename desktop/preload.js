@@ -126,5 +126,6 @@ contextBridge.exposeInMainWorld('manager', Object.freeze({
   openFolder: id => invoke('open-folder', id),
   copyText: text => invoke('copy-text', text),
   minimize: () => ipcRenderer.send('window-minimize'),
+  maximize: () => ipcRenderer.send('window-maximize'),
   close: () => ipcRenderer.send('window-close')
 }));

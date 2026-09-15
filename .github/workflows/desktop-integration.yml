@@ -1,0 +1,100 @@
+name: Desktop integration
+
+on:
+  push:
+    branches: [codex/pr5-safe-integration-20260915]
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'scripts/build-desktop-contract.mjs'
+      - 'src/**'
+      - '.github/workflows/desktop-integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - run: npm ci
+      - run: npm --prefix desktop ci
+      - run: npm run check
+      - run: npm --prefix desktop run verify:vendor
+      - run: npm --prefix desktop run test:ui-contract
+      - name: Prepare pinned public ReShade test dependency
+        run: python desktop/scripts/prepare-ui-test-reshade.py
+      - name: Settings and upgrade preservation
+        working-directory: desktop
+        run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js test/core-menu.test.js test/game-assessment.test.js test/package-release-policy.test.js test/packaged-validation-environment.test.js
+      - name: Unified game page
+        run: npm --prefix desktop run test:game-page
+      - name: HoYoShade workflow
+        run: npm --prefix desktop run test:game-page
+        env:
+          GAME_UI_HOYO: '1'
+      - name: Integration regressions
+        working-directory: desktop
+        run: npx --no-install electron test/ui-upgrade-integration.electron.cjs
+      - name: Build external-component application
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: npm --prefix desktop run build:external
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Packaged startup or explicit hosted-environment limitation
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        working-directory: desktop
+        run: node scripts/validate-packaged-startup.cjs
+      - name: Stage validation notes and checksums
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        shell: pwsh
+        run: |
+          Copy-Item docs/PR5-TESTING.md desktop/dist-external/TESTING.md
+          Copy-Item desktop/build/validation/packaged-startup-status.json desktop/dist-external/STARTUP-STATUS.json
+          $lines = Get-ChildItem desktop/dist-external/*.exe | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          }
+          if (-not $lines) { throw 'No built executables' }
+          $lines | Set-Content desktop/dist-external/SHA256SUMS.txt -Encoding utf8
+          $startup = (Get-Content desktop/dist-external/STARTUP-STATUS.json -Raw | ConvertFrom-Json).status
+          "Source commit: $env:GITHUB_SHA`nCore/NR runtime bundled: no`nPackaged ordinary-token startup: $startup (see STARTUP-STATUS.json)`nReal-game validation: pending`nCandidate only; not a stable release" | Set-Content desktop/dist-external/BUILD.txt -Encoding utf8
+      - name: Preserve test application
+        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/upload-artifact@v4
+        with:
+          name: manager-ui-validation-${{ github.sha }}
+          path: |
+            desktop/dist-external/*.exe
+            desktop/dist-external/TESTING.md
+            desktop/dist-external/SHA256SUMS.txt
+            desktop/dist-external/BUILD.txt
+            desktop/dist-external/STARTUP-STATUS.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manager-validation-reports-${{ github.sha }}
+          path: desktop/build/validation/
+          if-no-files-found: ignore
+          retention-days: 7

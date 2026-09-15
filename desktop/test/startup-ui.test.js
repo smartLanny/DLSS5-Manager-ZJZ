@@ -48,4 +48,6 @@ test('settings include one independent startup panel and script without changing
   assert.equal((html.match(/id="startupSettings"/g) || []).length, 1);
   assert.ok(html.indexOf('id="view-settings"') < html.indexOf('id="startupSettings"'));
   assert.match(html, /<script src="startup-ui\.js"><\/script>/); assert.match(html, /id="scanDrivesToggle"/);
+  assert.equal((html.match(/id="animationsToggle"/g) || []).length, 1);
+  assert.equal((html.match(/id="themeSelect"/g) || []).length, 1);
 });

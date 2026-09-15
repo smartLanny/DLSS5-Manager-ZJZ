@@ -47,7 +47,9 @@ test('installation uses the cached seed and metadata catalog without reading dia
     assert.equal(f.calls.includes(method), false, method);
   assert.equal(result.defaults.version, '0.4.7beta'); assert.equal(result.defaults.deployment, 'external'); assert.equal(result.defaults.loadingMode, 'proxy');
   assert.equal(result.deployment.inspection, 'summary'); assert.equal(result.deployment.verified, false); assert.equal(result.deployment.filesVerified, false);
-  assert.equal(result.coreVersions[1].comparisonOnly, true); assert.deepEqual(result.coreVersions[1].compatibilityEvidence, f.catalog[1].compatibilityEvidence);
+  const comparison = result.coreVersions.find(row => row.id === f.catalog[1].id);
+  assert.equal(comparison.comparisonOnly, true); assert.deepEqual(comparison.compatibilityEvidence, f.catalog[1].compatibilityEvidence);
+  assert.equal(result.coreVersions.find(row => row.id === f.catalog[0].id).verification, 'metadata-only');
 });
 
 test('installation exposes lightweight launch readiness without requiring the full enhancement inspection', async () => {
@@ -184,5 +186,6 @@ test('failure to resolve an installation default never silently picks the first 
   const result = await f.assessment.assess('game', { sections: ['installation'] });
   assert.equal(result.defaults.version, null);
   assert.ok(result.failures.some(row => row.section === 'defaults' && row.code === 'ERR_ADDON_NOT_FOUND'));
-  assert.equal(result.coreVersions.length, 2);
+  assert.deepEqual(result.coreVersions.filter(row => row.source !== 'menu-placeholder').map(row => row.id), f.catalog.map(row => row.id));
+  assert.ok(result.coreVersions.filter(row => row.source === 'menu-placeholder').every(row => row.ready === false));
 });

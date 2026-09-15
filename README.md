@@ -1,77 +1,58 @@
-# DLSS5 Manager ZJZ
+# DLSS 5 AI 超分管理器 · 装机宅版
 
-这是装机宅 DLSS5 Manager 的公开集成仓库：根目录保留 MIT CLI / 配方壳，`desktop/` 承载迁入的 Electron Manager 源码。两者共用 pin、组件边界和拆包策略，源码树不提交 NVIDIA runtime、Addon 成品或签名材料。
+**帮你给游戏安装、切换和管理画面增强组件，出现问题时有记录可查、有备份可恢复。**
 
-当前桌面开发版本为 **0.5.0-beta.1**。本仓作为 Manager 的协作开发入口，包含桌面界面、主进程、安装与恢复、组件库、米哈游流程、反馈及测试；Core 算法和 GPU 后端继续在各自的组件仓库维护。
+不用自己猜 DLL 放在哪，也不用每换一个版本就重新整理游戏目录。管理器会帮你查找游戏、检查所需组件和文件冲突，再让你确认要做的改动。
 
-## 从源码开始改 UI
+它是安装和管理工具，不是渲染插件本身。能否启用画面增强、帧率和画质如何，仍取决于显卡、游戏、所选组件和兼容情况。
 
-Windows 10/11、Node.js 22 或更新版本。在仓库根目录执行：
+[下载与更新](https://github.com/smartLanny/DLSS5-Manager-ZJZ/releases) · [使用指南](docs/USER-GUIDE.md) · [问题反馈](https://github.com/smartLanny/DLSS5-Manager-ZJZ/issues) · [B 站官方主页](https://space.bilibili.com/941799)
 
-```powershell
-npm ci
-npm --prefix desktop ci
-npm run start:desktop
-```
+## 能做什么？
 
-UI 源码位于 `desktop/src/renderer/`。启动桌面界面不需要先编译 Core 或准备 NVIDIA DLL；安装和实际游戏联调才需要经校验的外部组件。仓库已包含固定版本的上游源码，无需访问私有 lab 或另行初始化 submodule。
+- **找到你的游戏**：扫描 Steam 等游戏库，也可以手动选择游戏文件夹或实际运行程序。
+- **安装和切换组件**：管理 Core（画面增强核心）、Bridge / Feeder（兼容桥接组件），并在满足条件时调整超分和补帧设置。
+- **保留已有配置**：每个游戏分别记录版本、安装方式和设置。升级管理器，不等于给所有游戏更换插件。
+- **检查与恢复**：修改前查看预览，遇到冲突先提示；安装、卸载和中断操作通过记录与备份恢复，不盲删其他模组。
 
-修改后运行 `npm run check` 和 `npm --prefix desktop run test:ui-contract`。游戏卡片、米哈游和反馈有使用模拟数据的 Electron 测试与截图入口，详见 [UI 开发指南](docs/UI-DEVELOPMENT.md)。多人协作流程和分层约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+米哈游游戏保留专门的 **HoYoShade 启动方式**。已绑定的启动器、渠道和外置配置不会因为换界面而被改成直接启动游戏 EXE。
 
-## 发行边界
+## 下载哪个？
 
-- **基础 Manager 包**：Electron UI、默认 Core、ReShade、`nrchain_nvngx.dll` 等小型配套、MFG Unlock 0.9 登记与安装资源。
-- **RTX20–40 / RTX50 运行库包**：只在本地离线整合包中分别放一份 `nvngx_dlssnr.dll`；基础包不嵌入大型 NVIDIA DLL，用户也可以从完整外部组件目录导入。
-- **小组件 staging**：Bridge、Feeder、host、Vulkan 只有在外部 staging 清单逐文件提供 bytes/SHA-256 后才会进入 `resources/components/`；大 NR runtime 永远沿用独立运行库包。
-- **Vulkan layer**：基础包保留原 `resources/vulkan-reshade/` 的四文件 ReShade layer，供动态 Vulkan provider 和 Bridge 复用 HKCU 激活；旧 Vulkan Core/chain/NR 运行池不随包恢复。
-- **DX11 Bridge**：当前 staging 已携带 `1.4.13-pre7` 的 manager-core-compat 候选包及 importer manifest；包内记录为 `candidate-staged`，独立游戏兼容验证完成前不会把它宣称为已兼容。
-- **旧 Manager 源码**：迁移快照已冻结；这不冻结仍在活跃 Core 任务中的组件产物。原始迁移清单保持不变，增量记录见 [docs/MANAGER-MIGRATION-INCREMENTAL.md](docs/MANAGER-MIGRATION-INCREMENTAL.md)。
+前往上方“下载与更新”，选择带有应用附件的发行版。**GitHub 自动提供的 `Source code` 是源码，不是安装包；只有源码、没有应用附件的标签也不是可直接使用的软件。**
 
-二进制输入通过外部 staging 清单提供，构建只复制清单白名单。交付目录位于本仓根目录的 `deliveries/`，由 Git 忽略；构建不会把交付物加入源码提交。
+| 文件标记 | 适合谁 | 注意事项 |
+| --- | --- | --- |
+| `Setup` | 希望安装到电脑并创建快捷方式 | 测试版先不要覆盖唯一的旧版程序和组件目录 |
+| `portable` | 想先在独立文件夹试用 | 免安装不等于设置完全隔离；测试前保留原配置 |
+| `external` | 已有完整组件目录，或参与新 UI 测试 | 不含 Core 和大型 NR 运行库；启动后需要选择已有完整组件来源 |
 
-## CLI 壳
+**新 UI 验证包与稳定发行版分开。** 使用维护者提供的验证包时，先阅读包内说明或[新 UI 测试指南](docs/PR5-TESTING.md)。没有完整组件时可以检查界面和游戏识别，但不能完成新游戏的画面增强安装。
 
-根目录是 Node 22 + TypeScript CLI，负责游戏发现、配方 dry-run、DLC pin 和更新元数据检查：
+## 第一次使用
 
-```sh
-npm install
-npm run check
-node dist/src/index.js pins
-node dist/src/index.js check
-```
+**1. 打开管理器，找到游戏。** 在“游戏库”点击“扫描本机”；没找到就用“添加游戏”或“选择 EXE”。要选择真正运行游戏的程序，而不只是桌面启动器。
 
-默认 `check` 只输出 FetchPlan；只有显式 `--live` 才访问 Releases 元数据。CLI 不加载 Core/Feeder/NVIDIA DLL，也不执行 GPU 或游戏安装。
+**2. 确认组件已准备好。** 到“组件管理”查看“安装组件来源”。使用 external 版时，选择已有的完整组件目录；单个 addon 更新文件不能代替完整安装组件。
 
-## Electron Manager 打包
+**3. 查看预览，再应用。** 展开游戏卡片，确认图形接口和版本。遇到不确定或缺组件的提示，先解决提示再安装。应用后启动游戏，确认效果；异常时到“检查与修复”处理或恢复。
 
-先准备仓库外 staging 清单，格式见 [docs/MANAGER-DISTRIBUTION-STAGING.example.json](docs/MANAGER-DISTRIBUTION-STAGING.example.json)。清单必须指定活动 Core 版本、授权的 RTX40/RTX50 runtime 文件和已批准的 MFG 0.9 SHA-256；D13/D14 Core 会被入口拒绝。
+不是每款游戏都支持所有选项。不要为了让按钮亮起来随意改接口，也不要把不同版本的桥接器和核心文件混在一起。
 
-```powershell
-# 先在仓库根目录准备共享 CLI/Desktop contract 生成所需依赖
-npm ci
-cd desktop
-npm install
-$env:DLSS5_MANAGER_STAGING = 'C:\path\manager-distribution-staging.json'
-npm run verify:staging
-npm run build:base
-npm run build:offline
-```
+## Core 版本怎么选？
 
-`build:base` 的 stage 只含小组件，`build:offline` 才复制 RTX40 与 RTX50 两个大型 runtime。两种构建都不复制 Feeder/Vulkan/legacy 中的重复 runtime；可选路线缺少资源时由 Manager 显示未准备状态。实际构建使用动态 Electron Builder 配置，避免把历史 `extraResources` 全量列表重新带入包。
+基础菜单整理为 **0.2 初版、0.3.3.4 稳定版、0.4.2、0.4.7、0.5D21 多层叠加版**。D21 是完整配套准备后的新安装默认目标，不表示任意 D21 文件都能用于全部游戏。
 
-根目录检查：
+已有游戏先保留正在使用的版本，包括 D12；需要换版时再按游戏预览和应用。缺失版本会显示“组件未准备”，不能安装。旧游戏正在用的其他版本、手动导入的组件也可能继续显示，方便维护和回退。
 
-```powershell
-npm run check
-node scripts/assert-no-payloads.mjs
-```
+## 使用前请知道
 
-检查会正确处理 Windows 路径，跳过 `node_modules`、release、deliveries 和合法的 ignored stage；源码和已跟踪文件仍禁止 DLL、Addon、NVIDIA runtime 与私钥材料。
+**在线游戏和反作弊游戏存在加载失败、封号等风险。** 警告不代表绕过检测，也不代表确认后就安全；请先了解游戏规则，优先在允许使用模组的离线场景测试。
 
-运行库包、手动导入和 VC++ 修复说明见 [docs/RUNTIME-PACKS.md](docs/RUNTIME-PACKS.md)。
+请保留备份和恢复记录。遇到启动异常、画面无变化或文件冲突，先停止重复安装，不要直接删除 `dxgi.dll`、`d3d12.dll` 或其他未知文件。管理器中“文件已安装”也不等于“游戏里已经成功运行”。
 
-## 组件 pin
+反馈时说明游戏名称、显卡、管理器和 Core 版本、所选接口，以及出错步骤。日志先在管理器中预览并脱敏，必要时附同场景对比和 F8 运行记录。
 
-权威 pin 见 [config/pins.json](config/pins.json) 和 [docs/DLC-PIN.md](docs/DLC-PIN.md)。MFG 默认 0.9、0.7 仅回滚；BG3 Bridge 继续固定 1.4.11，禁止把 latest 或 1.4.13-pre 当作兼容结论。Bridge/Feeder/Core 的真实接口与游戏验收仍由相应组件任务负责。
+---
 
-架构和仓库边界见 [ARCHITECTURE.md](ARCHITECTURE.md)，打包拆分与验收细节见 [docs/MANAGER-PACKAGING.md](docs/MANAGER-PACKAGING.md)。
+想参与开发？请看[开发指南](docs/DEVELOPMENT.md)、[UI 开发文档](docs/UI-DEVELOPMENT.md)和[协作约定](CONTRIBUTING.md)。构建、组件清单和仓库边界放在技术文档中，不需要普通用户先学会编译。

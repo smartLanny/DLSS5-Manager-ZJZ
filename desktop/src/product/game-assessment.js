@@ -3,6 +3,7 @@
 const { inspectNativeEnhancementCapabilities } = require('./game-enhancement-capabilities');
 const { emptyVerification } = require('./runtime-verification');
 const { resolveOperationApi } = require('./operation-api');
+const { coreMenu } = require('./core-menu');
 
 const SECTIONS = Object.freeze(['installation', 'enhancements', 'diagnostics']);
 function assessmentSections(options) {
@@ -67,7 +68,9 @@ function createGameAssessment({ service, coordinator, environment, operations, l
         inspection: 'summary', layoutVerified: currentLayout?.verified === true,
         verified: false, filesVerified: false, runtimeVerified: false };
       Object.assign(value, { game: publicGame, api, hardware: hardware(), nativeIntegration, layout: currentLayout,
-        deployment, defaults: resolvedDefaults, coreVersions, componentChoices, nr, hotkeys, operation, launch: { ...launch, session: currentSession, readiness: launchReadiness },
+        deployment, defaults: resolvedDefaults,
+        coreVersions: coreMenu(coreVersions, { installedVersion: publicGame.addonVersion, defaultVersion: resolvedDefaults.version }),
+        componentChoices, nr, hotkeys, operation, launch: { ...launch, session: currentSession, readiness: launchReadiness },
         antiCheat: { detected: antiCheat,
           message: '反作弊或游戏保护可能阻止加载，当前路线也可能暂时无法启用；使用模组有账号处罚风险，请自行决定。',
           officialUrl: 'https://help.steampowered.com/zh-cn/faqs/view/571A-97DA-70E9-FF74',

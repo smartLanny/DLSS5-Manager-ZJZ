@@ -36,6 +36,73 @@ const state = {
 };
 const inlineGameDetails = new Map();
 let repairController = null, repairControllerId = null, hoyoController = null;
+let motionSaveGeneration = 0, themeSaveGeneration = 0;
+const overlayTimers = new WeakMap();
+const systemTheme = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+function applyThemePreference(preference = 'system') {
+  if (typeof document === 'undefined') return;
+  const selected = ['system', 'light', 'dark'].includes(preference) ? preference : 'system';
+  const resolved = selected === 'system' ? (systemTheme?.matches ? 'dark' : 'light') : selected;
+  document.documentElement.dataset.themePreference = selected;
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.style.colorScheme = resolved;
+  const select = $('themeSelect');
+  if (select) select.value = selected;
+}
+
+if (systemTheme) {
+  const syncSystemTheme = () => {
+    if ((state.settings?.theme || document.documentElement.dataset.themePreference) === 'system') applyThemePreference('system');
+  };
+  if (typeof systemTheme.addEventListener === 'function') systemTheme.addEventListener('change', syncSystemTheme);
+  else if (typeof systemTheme.addListener === 'function') systemTheme.addListener(syncSystemTheme);
+}
+if (typeof document !== 'undefined') applyThemePreference('system');
+
+function motionAllowed() {
+  const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return document.documentElement.dataset.motion !== 'off' && !reduced;
+}
+
+function applyMotionPreference(enabled) {
+  const active = enabled !== false;
+  document.documentElement.dataset.motion = active ? 'on' : 'off';
+  const toggle = $('animationsToggle');
+  if (toggle) toggle.checked = active;
+}
+
+function replayMotion(element, className) {
+  if (!element || !motionAllowed()) return;
+  element.classList.remove(className);
+  void element.offsetWidth;
+  element.classList.add(className);
+  clearTimeout(element.motionReplayTimer);
+  element.motionReplayTimer = setTimeout(() => element.classList.remove(className), 260);
+}
+
+function showOverlay(element) {
+  if (!element) return;
+  clearTimeout(overlayTimers.get(element));
+  element.classList.remove('is-closing', 'hidden');
+}
+
+function hideOverlay(element) {
+  if (!element) return;
+  clearTimeout(overlayTimers.get(element));
+  if (!motionAllowed()) {
+    element.classList.remove('is-closing');
+    element.classList.add('hidden');
+    return;
+  }
+  element.classList.add('is-closing');
+  overlayTimers.set(element, setTimeout(() => {
+    element.classList.add('hidden');
+    element.classList.remove('is-closing');
+    overlayTimers.delete(element);
+  }, 150));
+}
+
 function mountRepairActions(game) {
   const host = $('repairMaintenance');
   if (!host || !window.GamePageUi || !window.manager.assessGame) return;
@@ -770,7 +837,7 @@ function renderGames(options = {}) {
     <div class="game-card-head">
       ${poster(game)}
       <div class="game-meta"><div class="game-title"><h3>${escapeHtml(game.name)}</h3>${supportBadge(game)}</div><p>${escapeHtml(game.launcher)} · ${escapeHtml(game.chosen ? `${gameApiLabel(game.chosen)} / ${game.chosen.bitness} 位` : game.supportText)}</p>${game.chosen?.path ? `<p class="game-exe-path" title="${escapeHtml(game.chosen.path)}">${escapeHtml(game.chosen.path)}</p>` : ''}</div>
-      <div class="card-action">${cardAction(game)}<button class="expand-arrow" type="button" aria-label="展开或收起游戏详情" aria-expanded="${state.expanded === game.id}">⌄</button></div>
+      <div class="card-action">${cardAction(game)}<button class="expand-arrow" type="button" aria-label="展开或收起游戏详情" aria-expanded="${state.expanded === game.id}"></button></div>
     </div>
     ${state.expanded === game.id ? gameDetail(game) : ''}
   </article>`).join('');
@@ -1296,7 +1363,7 @@ function confirmRemoveAddon(id) {
   $('modalTitle').textContent = '删除导入的 Addon';
   $('modalBody').textContent = `将从管理器版本库移除“${coreVersionLabel(id, item)}”。不会删除已经安装到游戏目录的文件。`;
   $('removeSettingsLine').classList.add('hidden');
-  $('modal').classList.remove('hidden');
+  showOverlay($('modal'));
 }
 
 function diagnosticRows(rows) {
@@ -1356,12 +1423,12 @@ function confirmUninstall(id) {
   $('modalBody').textContent = feeder ? `将移除本次 Feeder，并把参数配置归档到安装备份。${game.feeder.retainedFiles?.length ? `安装前已有的 ${game.feeder.retainedFiles.join('、')} 会保留；反作弊仍可能拒绝原有 ReShade。` : '恢复的是安装前状态，不会清除其他模组。'}` : '将恢复管理器安装前的文件。默认保留你的 nr_before_sr.ini 参数设置。';
   $('removeSettingsLine').classList.toggle('hidden', feeder);
   $('removeSettingsCheck').checked = false;
-  $('modal').classList.remove('hidden');
+  showOverlay($('modal'));
 }
 
 function openMaintenance(id) {
   if (state.busy) return;
-  if (state.activeView === 'repair') { mountRepairActions(state.games.find(row => row.id === id)); $('repairMaintenance')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); return; }
+  if (state.activeView === 'repair') { mountRepairActions(state.games.find(row => row.id === id)); $('repairMaintenance')?.scrollIntoView({ block: 'start', behavior: motionAllowed() ? 'smooth' : 'auto' }); return; }
   if (typeof window.manager.assessGame === 'function') { openGamePage(id, 'maintenance'); return; }
   const game = state.games.find(row => row.id === id);
   if (!game || !window.gameMaintenanceUi) return;
@@ -1377,7 +1444,7 @@ function confirmDismissGame(id) {
   $('modalTitle').textContent = '卸载组件并移除游戏';
   $('modalBody').textContent = `将先卸载本工具为“${game ? game.name : id}”部署的组件，撤销超分补帧覆盖并恢复安装前备份，然后移出列表。保留游戏本体和个人配置；恢复失败时保留条目，方便继续处理。之后可重新添加。`;
   $('removeSettingsLine').classList.add('hidden');
-  $('modal').classList.remove('hidden');
+  showOverlay($('modal'));
 }
 
 function confirmRenameGame(id) {
@@ -1391,7 +1458,7 @@ function confirmRenameGame(id) {
   $('renameGameLine').classList.remove('hidden');
   $('removeSettingsLine').classList.add('hidden');
   $('modalConfirm').textContent = '保存名称';
-  $('modal').classList.remove('hidden');
+  showOverlay($('modal'));
   const focus = () => { input.focus(); input.select(); };
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(focus); else focus();
 }
@@ -1421,7 +1488,7 @@ function confirmD3D12(id) {
     ? '请先完全退出游戏。此操作会切换加载入口并保留原始文件，可用于异环等部分 DX12 网游的加载报错。只适用于 DX12；修复无效时可撤销。'
     : '请先完全退出游戏。会撤销本次兼容修复，恢复原来的加载入口。';
   $('removeSettingsLine').classList.add('hidden');
-  $('modal').classList.remove('hidden');
+  showOverlay($('modal'));
 }
 
 function confirmAntiCheat(id = null) {
@@ -1432,7 +1499,7 @@ function confirmAntiCheat(id = null) {
     $('modalBody').textContent = `检测到“${game ? game.name : '该游戏'}”目录中存在可能的反作弊组件。继续安装可能导致游戏无法启动、触发安全策略或封禁风险。管理器不会修改、删除或绕过反作弊文件；只有你确认后才会继续写入插件文件。`;
     $('removeSettingsLine').classList.add('hidden');
     $('modalConfirm').textContent = '确认继续安装';
-    $('modal').classList.remove('hidden');
+    showOverlay($('modal'));
   });
 }
 
@@ -1443,13 +1510,13 @@ function confirmHotkey(id, target, current) {
   $('removeSettingsLine').classList.add('hidden');
   $('modalConfirm').textContent = '保存快捷键';
   $('modalConfirm').disabled = true;
-  $('modal').classList.remove('hidden');
+  showOverlay($('modal'));
 }
 
 function closeModal(result = false) {
   const pending = state.pendingModal;
   state.pendingModal = null;
-  $('modal').classList.add('hidden');
+  hideOverlay($('modal'));
   $('renameGameLine').classList.add('hidden');
   $('renameGameInput').value = '';
   $('removeSettingsLine').classList.add('hidden');
@@ -1472,6 +1539,7 @@ function switchView(view) {
   };
   $('pageTitle').textContent = titles[view][0];
   $('pageSubtitle').textContent = titles[view][1];
+  replayMotion(document.querySelector('.page-title'), 'motion-reenter');
   $('addGameBtn').classList.toggle('hidden', view !== 'games');
   $('addExeBtn').classList.toggle('hidden', view !== 'games');
   $('refreshBtn').classList.toggle('hidden', view !== 'games');
@@ -1495,8 +1563,10 @@ async function boot() {
     state.payload = data.payload;
     state.addons = data.addons || [];
     state.games = data.games;
+    applyThemePreference(state.settings.theme);
+    applyMotionPreference(state.settings.animationsEnabled);
     document.title = state.product.name;
-    $('brandName').textContent = state.product.name.replace(/管理器$/, '').trim();
+    $('brandName').textContent = state.product.name.replace(/\s*(?:AI\s*)?超分管理器$/, '').trim();
     $('brandEdition').textContent = state.product.edition;
     $('authorText').textContent = state.product.author ? `by ${state.product.author}` : '';
     $('settingsAuthor').textContent = state.product.author;
@@ -1616,7 +1686,7 @@ function renderGameSelection() {
   $('gameNameInput').value = selection.name || (candidate && candidate.name ? candidate.name.replace(/\.exe$/i, '') : '');
   renderGameIconPreview();
   $('confirmGameBtn').disabled = !candidate;
-  $('gamePickerModal').classList.remove('hidden');
+  showOverlay($('gamePickerModal'));
   if (candidate) {
     const index = candidates.findIndex(row => row.path === candidate.path);
     if (index >= 0) selectGameCandidate(index);
@@ -1637,7 +1707,7 @@ async function openGameSelection(picker) {
 
 function closeGameSelection() {
   state.gameSelection = null;
-  $('gamePickerModal').classList.add('hidden');
+  hideOverlay($('gamePickerModal'));
 }
 
 async function confirmGameSelection() {
@@ -1725,6 +1795,38 @@ $('addonDropZone').ondrop = async event => {
   } catch (error) { toast(error.message, true); }
 };
 $('addFolderBtn').onclick = () => pickAndRefresh(window.manager.pickScanFolder, '游戏库已添加');
+$('themeSelect').onchange = async event => {
+  const token = ++themeSaveGeneration;
+  const requested = event.target.value;
+  applyThemePreference(requested);
+  try {
+    const saved = unwrap(await window.manager.updateSettings({ theme: requested }));
+    if (token !== themeSaveGeneration) return;
+    state.settings = saved;
+    applyThemePreference(saved.theme);
+    toast(saved.theme === 'system' ? '外观已改为跟随系统' : saved.theme === 'dark' ? '已切换到深色外观' : '已切换到浅色外观');
+  } catch (error) {
+    if (token !== themeSaveGeneration) return;
+    applyThemePreference(state.settings?.theme);
+    toast(error.message, true);
+  }
+};
+$('animationsToggle').onchange = async event => {
+  const token = ++motionSaveGeneration;
+  const requested = event.target.checked;
+  applyMotionPreference(requested);
+  try {
+    const saved = unwrap(await window.manager.updateSettings({ animationsEnabled: requested }));
+    if (token !== motionSaveGeneration) return;
+    state.settings = saved;
+    applyMotionPreference(saved.animationsEnabled);
+    toast(saved.animationsEnabled === false ? '界面动画已关闭' : '界面动画已开启');
+  } catch (error) {
+    if (token !== motionSaveGeneration) return;
+    applyMotionPreference(state.settings?.animationsEnabled);
+    toast(error.message, true);
+  }
+};
 $('scanDrivesToggle').onchange = event => runAction(async () => {
   state.settings = unwrap(await window.manager.updateSettings({ scanDrives: event.target.checked }));
   state.games = unwrap(await window.manager.refresh());
@@ -1828,6 +1930,7 @@ $('modalConfirm').onclick = async () => {
   }
 };
 $('minBtn').onclick = () => window.manager.minimize();
+$('maxBtn').onclick = () => window.manager.maximize();
 $('closeBtn').onclick = () => window.manager.close();
 window.manager.onAddonImported(async () => {
   try {
