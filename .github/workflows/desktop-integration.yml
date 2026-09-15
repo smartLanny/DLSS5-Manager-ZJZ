@@ -1,0 +1,85 @@
+name: Desktop integration
+
+on:
+  push:
+    branches: [codex/pr5-safe-integration-20260915]
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'scripts/build-desktop-contract.mjs'
+      - 'src/**'
+      - '.github/workflows/desktop-integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive reviewed public source
+        run: git archive --format=zip --output=review-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-source-${{ github.sha }}
+          path: review-source.zip
+          retention-days: 3
+          if-no-files-found: error
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - run: npm ci
+      - run: npm --prefix desktop ci
+      - run: npm run check
+      - run: npm --prefix desktop run verify:vendor
+      - run: npm --prefix desktop run test:ui-contract
+      - name: Settings and upgrade preservation
+        working-directory: desktop
+        run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js
+      - name: Unified game page
+        run: npm --prefix desktop run test:game-page
+      - name: HoYoShade workflow
+        run: npm --prefix desktop run test:game-page
+        env:
+          GAME_UI_HOYO: '1'
+      - name: Integration regressions
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          if (Test-Path test/ui-upgrade-integration.electron.cjs) {
+            & .\node_modules\.bin\electron.cmd test/ui-upgrade-integration.electron.cjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Build external-component application
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: npm --prefix desktop run build:external
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Preserve test application
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manager-ui-validation-${{ github.sha }}
+          path: desktop/dist-external/*.exe
+          if-no-files-found: error
+          retention-days: 7
