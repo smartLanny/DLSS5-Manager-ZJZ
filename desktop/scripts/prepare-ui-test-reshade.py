@@ -20,7 +20,12 @@ def main():
         if TARGET.is_symlink() or hashlib.sha256(TARGET.read_bytes()).hexdigest() != DLL_SHA:
             raise RuntimeError('Refusing to overwrite an unrelated fixture')
         return
-    with urllib.request.urlopen(URL, timeout=45) as response:
+    request = urllib.request.Request(URL, headers={
+        'User-Agent': 'DLSS5-Manager-CI/1.0 (+https://github.com/smartLanny/DLSS5-Manager-ZJZ)',
+        'Referer': 'https://reshade.me/',
+        'Accept': 'application/octet-stream,*/*;q=0.8',
+    })
+    with urllib.request.urlopen(request, timeout=45) as response:
         data = response.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES or hashlib.sha256(data).hexdigest() != ARCHIVE_SHA:
         raise RuntimeError('Pinned public ReShade archive digest mismatch')
