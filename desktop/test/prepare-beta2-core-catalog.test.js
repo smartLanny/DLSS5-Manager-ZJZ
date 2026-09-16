@@ -8,10 +8,15 @@ const path = require('node:path');
 
 const catalog = require('../scripts/prepare-beta2-core-catalog');
 
-test('D21 is a visible explicit test update but never a comparison-only or default Core', () => {
-  assert.equal(catalog.D21_POLICY.coreUpdateOnly, true);
+test('D21 is a complete explicit test choice but never a comparison-only or default Core', () => {
+  assert.equal(catalog.D21_POLICY.coreUpdateOnly, false);
   assert.equal(catalog.D21_POLICY.comparisonOnly, false);
   assert.equal(catalog.D21_POLICY.stableRelease, false);
+});
+
+test('0.4.7 catalog keeps its exact automatic DX11 Bridge 1.4.12 companion', () => {
+  assert.equal(catalog.FILES047['dlss5-native-carrier-045-dx11-compat.addon64'],
+    '4656d9aac382a6f9b5c8488669aa5365283f03b5b94b2267f1c7f9b53927dc86');
 });
 
 test('beta2 catalog accepts explicitly supplied external NR runtimes when the thin base omits them', t => {

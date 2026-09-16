@@ -351,6 +351,28 @@ test('external-only manager starts without bundled payload and can prepare insta
   assert.equal(fs.readFileSync(path.join(path.dirname(f.exe), PAYLOAD_FILES.addon), 'utf8'), 'external:stable:addon');
 });
 
+test('slim bundled manager treats a missing GPU runtime as DLC setup and activates the matching import', async t => {
+  const f = makeService(t), runtime = path.join(f.payloadDir, 'fixed', 'RTX40', 'nvngx_dlssnr.dll');
+  fs.unlinkSync(runtime);
+  const initial = await f.service.boot();
+  assert.equal(initial.payload.ready, false);
+  assert.equal(initial.payload.source.runtimeDlcRequired, true);
+  assert.equal(initial.payload.source.requiredHardwareFamily, 'RTX40');
+  assert.equal(initial.payload.source.error, null);
+
+  const dlc = path.join(f.root, 'runtime-dlc'); fs.mkdirSync(dlc);
+  const bytes = Buffer.alloc(128); bytes.write('MZ'); bytes.writeUInt32LE(64, 60); bytes.writeUInt32LE(0x4550, 64); bytes.writeUInt16LE(2, 84); bytes.writeUInt16LE(0x20b, 88);
+  const file = path.join(dlc, 'nvngx_dlssnr.dll'); fs.writeFileSync(file, bytes);
+  fs.writeFileSync(path.join(dlc, 'component-manifest.json'), JSON.stringify({ schema:'dlss5-component-v1', id:'runtime-test-rtx40', kind:'nr-runtime',
+    version:'test', variant:'RTX40', architecture:'x64', interface:'NGX-Feature18', hardwareFamilies:['RTX40'],
+    files:[{ path:'nvngx_dlssnr.dll', sha256:sha256(file), bytes:bytes.length }] }));
+  const result = await f.service.importRuntimeDlc(dlc);
+  assert.equal(result.activated, true);
+  assert.equal(result.hardwareFamily, 'RTX40');
+  assert.equal(result.state.payload.ready, true);
+  assert.equal(result.state.payload.source.runtimeDlcRequired, false);
+});
+
 test('API override routes one game through DX12 then unified DX11 and persists', async t => {
   const f = makeService(t);
   await f.service.addManualGame(f.gameDir, { name: 'Fixture' });
@@ -652,6 +674,22 @@ test('automatic input selection requires executable integration evidence rather 
   assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', route: 'feeder' }), 'feeder');
 });
 
+test('component choices explain the same API and input route used by installation', async t => {
+  let supported = false;
+  const f = makeService(t, { getFeatureEvidence: async () => ({ support: { status: supported ? 'supported' : 'unknown' } }) });
+  await f.service.addManualGame(f.gameDir); const id = (await f.service.boot()).games[0].id;
+  await f.service.setGameApi(id, 'dx12');
+  let choices = await f.service.componentChoices(id);
+  assert.equal(choices.stack.api, 'dx12'); assert.equal(choices.stack.route, 'feeder');
+  assert.match(choices.stack.title, /DLSS5 Feeder/);
+  supported = true; choices = await f.service.componentChoices(id);
+  assert.equal(choices.stack.route, 'native'); assert.match(choices.stack.title, /原生 DLSS/);
+  assert.match(choices.stack.reason, /不需要 DLSS5 Bridge/);
+  await f.service.setGameApi(id, 'dx11'); choices = await f.service.componentChoices(id);
+  assert.equal(choices.stack.api, 'dx11'); assert.match(choices.stack.title, /DLSS5 Bridge/);
+  assert.equal(choices.stack.manualBridge, true);
+});
+
 test('HoYo native operation binds the launcher digest, then installs directly into the dedicated profile without a game proxy', async t => {
   const f = makeService(t, { assertGameClosed: async () => {},
     externalDeploymentOptions: { guards: { assertGameClosed: async () => {}, antiCheatPresent: () => false }, pe: { getImports: () => [] } } });
@@ -661,7 +699,9 @@ test('HoYo native operation binds the launcher digest, then installs directly in
   for (const row of [f.scan.chosen, ...f.scan.exeCandidates]) { row.path = exe; row.name = 'YuanShen.exe'; row.rel = path.relative(f.gameDir, exe); }
   const launcher = path.join(f.root, 'HYP.exe'); fs.writeFileSync(launcher, pe('launcher'));
   fs.cpSync(path.resolve(__dirname, '../resources/hoyoshade'), path.join(f.root, 'resources/hoyoshade'), { recursive: true });
-  for (const family of ['RTX40', 'RTX50']) fs.copyFileSync(path.resolve(__dirname, '../payload/nr-before-sr/fixed/RTX50/ReShade64.dll'), path.join(f.payloadDir, 'fixed', family, 'ReShade64.dll'));
+  const productionLoader = path.resolve(__dirname, '../payload/nr-before-sr/fixed/RTX50/ReShade64.dll');
+  if (fs.existsSync(productionLoader)) for (const family of ['RTX40', 'RTX50'])
+    fs.copyFileSync(productionLoader, path.join(f.payloadDir, 'fixed', family, 'ReShade64.dll'));
   fs.writeFileSync(path.join(f.payloadDir, 'bundle.json'), JSON.stringify(createCompactBundle(f.payloadDir,
     [{ id: '0.3.3.5', label: 'stable' }, { id: DX11_COMPAT_VERSION, label: 'DX11 fixture', compatibility: 'dx11' }], '0.3.3.5')));
   await f.service.addManualGame(f.gameDir); const id = (await f.service.boot()).games[0].id;

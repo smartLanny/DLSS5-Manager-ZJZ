@@ -22,6 +22,16 @@ test('known runtime import verifies PE/hash and deduplicates without changing ga
   fs.appendFileSync(f.dll, 'changed'); await assert.rejects(f.lib.importComponent(f.dll), /尚未识别/);
   assert.equal((await f.lib.inventory()).packages.length, 1);
 });
+test('an unknown x64 addon64 is cached as a user Add-on instead of masquerading as a Core', async t => {
+  const f = setup(t), addon = path.join(f.root, 'renodx-dlss-26091112-zh.addon64');
+  const bytes = Buffer.from(f.bytes); bytes[110] = 7; fs.writeFileSync(addon, bytes);
+  const result = await f.lib.importComponent(addon), item = result.packages[0];
+  assert.equal(item.kind, 'user-addon');
+  assert.equal(item.architecture, 'x64');
+  assert.equal(item.files[0].name, path.basename(addon));
+  assert.match(item.id, /^user-addon-[a-f0-9]{24}$/);
+  assert.equal((await f.lib.inventory()).packages[0].kind, 'user-addon');
+});
 test('a selected component-library root keeps large objects out of userData', async t => {
   const userData = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-small-state-'));
   const dataRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-large-data-'));

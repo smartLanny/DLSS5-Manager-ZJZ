@@ -142,6 +142,7 @@ function mountInlineDetail(card, game) {
   }
   const controller = window.GamePageUi.mount(placeholder, window.manager, {
     onBack: () => { state.expanded = null; renderGames(); },
+    onRename: gameId => confirmRenameGame(gameId),
     onChanged: async () => {
       state.games = mergeGameVisuals(state.games, unwrap(await window.manager.listGames()));
       renderGames({ preserveExpanded: true });
@@ -268,9 +269,10 @@ function routeSupported(game) { return isVulkanRoute(game) ? game?.vulkan?.avail
 
 function supportBadge(game) {
   if (game.feeder?.needsRecovery === true) return '<span class="badge bad">Feeder 需恢复</span>';
-  if (isFeederRoute(game) && !game.installed && routeSupported(game)) return '<span class="badge">可准备 Feeder</span>';
   if (isVulkanRoute(game) && game.vulkan?.needsRecovery === true) return '<span class="badge bad">Vulkan 需恢复</span>';
   if (routeInstalled(game)) return '<span class="badge good">已安装</span>';
+  if (game.existingInstallation?.detected === true) return '<span class="badge">已有插件待确认</span>';
+  if (isFeederRoute(game) && !game.installed && routeSupported(game)) return '<span class="badge">可准备 Feeder</span>';
   if (routeSupported(game)) return '<span class="badge good">支持安装</span>';
   if (isVulkanRoute(game)) return '<span class="badge bad">Vulkan 暂不可用</span>';
   if (game.supportCode === 'ERR_API_SELECTION_REQUIRED') return '<span class="badge">API 待确认</span>';
@@ -319,18 +321,64 @@ function renderPayloadNotice(removedSelection = false) {
   const notice = $('payloadNotice');
   if (!notice) return;
   const payload = state.payload;
-  let message = '';
+  const family = state.hardware?.family;
+  const familyLabel = family === 'RTX50' ? 'RTX 50 系' : family === 'RTX40' ? 'RTX 40 系（兼容 RTX 20/30）' : '对应显卡系列';
+  const packName = family === 'RTX50' ? 'NR-Runtime-RTX50.zip' : family === 'RTX40' ? 'NR-Runtime-RTX40.zip' : 'NR-Runtime-RTX40+RTX50.zip';
+  let markup = '';
   if (!state.hardware || !['RTX40', 'RTX50'].includes(state.hardware.family)) {
-    message = '未能确认可自动匹配的显卡，请在“设置”中检查显卡识别结果。';
+    markup = `<div class="payload-guidance-icon" aria-hidden="true">GPU</div><div class="payload-guidance-copy"><strong>先确认显卡系列</strong><span>管理器暂时无法自动匹配运行库。请检查显卡识别结果，或到组件管理导入合并 DLC。</span></div><div class="payload-guidance-actions"><button class="button primary" id="payloadOpenComponentsBtn">打开组件管理</button><button class="button" id="payloadOpenSettingsBtn">检查显卡</button></div>`;
   } else if (!payloadReadyForHardware()) {
     const problems = [...((payload && payload.missing) || []), ...((payload && payload.invalid) || [])];
-    message = payload?.source?.error?.message || `安装组件缺失或校验未通过${problems.length ? `：${problems.slice(0, 3).join('、')}` : ''}。请到“插件版本”检查组件来源，或选择完整组件目录；仍失败时在“修复”页保存反馈。`;
+    if (payload?.source?.runtimeDlcRequired === true || problems.length > 0 && problems.every(file => String(file).split(/[\\/]/).pop().toLowerCase() === 'nvngx_dlssnr.dll')) {
+      markup = `<div class="payload-guidance-icon" aria-hidden="true">DLC</div><div class="payload-guidance-copy"><strong>还差一份 ${escapeHtml(familyLabel)}运行库</strong><span>管理器与 Core 已就绪。导入 <b>${escapeHtml(packName)}</b> 后即可安装，不会自动改动已有游戏。</span></div><div class="payload-guidance-actions"><button class="button primary" id="payloadImportRuntimeBtn">立即导入运行库 DLC</button><button class="button" id="payloadOpenComponentsBtn">打开组件管理</button></div>`;
+    } else {
+      const labels = problems.slice(0, 3).map(file => {
+        const name = String(file).split(/[\\/]/).pop();
+        if (/nrchain_nvngx\.dll/i.test(name)) return 'Core 配套连接组件';
+        if (/\.addon64$/i.test(name)) return '增强 Core';
+        if (/bundle\.json/i.test(name)) return '组件清单';
+        return name || '安装组件';
+      });
+      const issue = labels.length ? `需要处理：${labels.join('、')}。` : '安装来源需要重新检查。';
+      markup = `<div class="payload-guidance-icon warn" aria-hidden="true">!</div><div class="payload-guidance-copy"><strong>安装组件需要处理</strong><span>${escapeHtml(issue)}请到组件管理重新导入，或改用完整组件目录。</span></div><div class="payload-guidance-actions"><button class="button primary" id="payloadOpenComponentsBtn">打开组件管理</button></div>`;
+    }
   } else if (removedSelection) {
     const item = payload.versions[payload.selectedVersion];
-    message = `上次选择的版本已退出常规分发，本安装包提供 ${coreVersionLabel(payload.selectedVersion, item)}。已安装核心不会因此自动更换；可在游戏设置中选择并应用新版本。`;
+    markup = `<div class="payload-guidance-icon neutral" aria-hidden="true">i</div><div class="payload-guidance-copy"><strong>默认 Core 已更新</strong><span>上次选择的版本已退出常规分发，当前提供 ${escapeHtml(coreVersionLabel(payload.selectedVersion, item))}。已安装核心不会自动更换。</span></div>`;
   }
-  notice.textContent = message;
-  notice.classList.toggle('hidden', !message);
+  notice.innerHTML = markup;
+  notice.classList.toggle('hidden', !markup);
+  const importButton = $('payloadImportRuntimeBtn');
+  if (importButton) importButton.onclick = () => importRequiredRuntimeDlc(importButton);
+  const componentsButton = $('payloadOpenComponentsBtn');
+  if (componentsButton) componentsButton.onclick = () => openComponentManager();
+  const settingsButton = $('payloadOpenSettingsBtn');
+  if (settingsButton) settingsButton.onclick = () => switchView('settings');
+}
+
+function openComponentManager() {
+  switchView('addons');
+  const button = $('importRuntimeDlcBtn');
+  button?.focus();
+  replayMotion($('componentRuntimeGuide') || button, 'motion-reenter');
+}
+
+async function importRequiredRuntimeDlc(button) {
+  if (state.busy) return;
+  setBusy(true);
+  if (button) button.disabled = true;
+  try {
+    const result = unwrap(await window.manager.pickRuntimeDlc());
+    if (!result) return;
+    if (result.state) window.dispatchEvent(new CustomEvent('manager-components-changed', { detail: result.state }));
+    toast(result.message || '运行库 DLC 已导入。');
+    if (!result.activated) openComponentManager();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    setBusy(false);
+    if (button) button.disabled = false;
+  }
 }
 
 function renderVersionSelector() {
@@ -452,9 +500,9 @@ function visibleGames() {
 }
 
 function cardAction(game) {
-  if (typeof window === 'object' && typeof window.manager?.assessGame === 'function') return `${game.installed ? '<button class="button primary unified-launch-btn" type="button">启动游戏</button>' : ''}<button class="button open-game-page-btn" type="button">${game.installed ? '设置' : '安装与设置'}</button><button class="button subtle rename-game-btn" type="button" title="修改游戏名称">改名</button>`;
+  if (typeof window === 'object' && typeof window.manager?.assessGame === 'function') return `<button class="button primary unified-launch-btn" type="button">启动游戏</button><button class="button open-game-page-btn" type="button">${game.installed ? '设置' : game.existingInstallation?.detected === true ? '检查已有安装' : '安装与设置'}</button>`;
   const installBusy = Boolean(state.installing && state.installing.has(game.id));
-  const installButton = `<button class="button primary install-btn${installBusy ? ' is-busy' : ''}" aria-live="polite" aria-busy="${installBusy}"${installBusy ? ' disabled' : ''}>${installBusy ? '<span class="button-spinner" aria-hidden="true"></span><span>正在安装…</span>' : '一键安装'}</button>`;
+  const installButton = `<button class="button primary install-btn${installBusy ? ' is-busy' : ''}" aria-live="polite" aria-busy="${installBusy}"${installBusy ? ' disabled' : ''}>${installBusy ? '<span class="button-spinner" aria-hidden="true"></span><span>正在安装…</span>' : game.existingInstallation?.detected === true ? '预览已有安装' : '一键安装'}</button>`;
   const rename = '<button class="button subtle rename-game-btn" type="button" title="修改游戏名称">改名</button>';
   const dismiss = '<button class="icon-button dismiss-game-btn" title="移除这个游戏" aria-label="移除这个游戏">×</button>';
   if (game.feeder?.needsRecovery === true)
@@ -935,13 +983,11 @@ function bindGameCards() {
     if (typeof window.manager.assessGame === 'function') {
       mountInlineDetail(card, game);
       card.querySelector('.game-card-head').onclick = event => {
-        if (event.target.closest('.rename-game-btn,.unified-launch-btn')) return;
+        if (event.target.closest('.unified-launch-btn')) return;
         if (state.expanded === id) { state.expanded = null; renderGames(); } else openGamePage(id);
       };
       const launch = card.querySelector('.unified-launch-btn');
       if (launch) launch.onclick = event => { event.stopPropagation(); void openGamePage(id)?.launchGame(); };
-      const rename = card.querySelector('.rename-game-btn');
-      if (rename) rename.onclick = event => { event.stopPropagation(); confirmRenameGame(id); };
       return;
     }
     const detail = card.querySelector('.game-detail');
@@ -1317,14 +1363,17 @@ function renderPayloadSource() {
   const source = state.payload?.source;
   const status = $('payloadSourceStatus');
   if (!status) return;
+  const runtimeDlcRequired = source?.runtimeDlcRequired === true;
   const ready = source ? source.ready && !source.error : Boolean(state.payload?.ready);
-  status.textContent = ready ? '组件检查通过' : '需要处理';
+  const family = source?.requiredHardwareFamily === 'RTX50' ? 'RTX 50 系' : source?.requiredHardwareFamily === 'RTX40' ? 'RTX 40 系' : '对应显卡';
+  status.textContent = ready ? '组件检查通过' : runtimeDlcRequired ? `待导入 ${family}运行库` : '需要处理';
   status.className = `badge ${ready ? 'good' : 'warn'}`;
-  $('payloadSourceLabel').textContent = source?.mode === 'external' ? '外部组件目录' : source?.mode === 'unconfigured' ? '尚未选择组件' : '随程序提供';
-  $('payloadSourcePath').textContent = source?.mode === 'unconfigured' ? '选择完整组件目录后会记住位置。' : source?.path || state.payload?.dir || '未提供完整组件目录';
-  $('payloadSourceDetail').textContent = source?.mode === 'unconfigured' ? '本程序未附带完整 NR 组件；选择已有的完整组件目录即可继续。'
+  $('payloadSourceLabel').textContent = runtimeDlcRequired ? '精简管理器本体' : source?.mode === 'external' ? '外部组件目录' : source?.mode === 'unconfigured' ? '尚未选择组件' : '随程序提供';
+  $('payloadSourcePath').textContent = runtimeDlcRequired ? 'Core 已包含；大型运行库按显卡系列单独导入。' : source?.mode === 'unconfigured' ? '选择完整组件目录后会记住位置。' : source?.path || state.payload?.dir || '未提供完整组件目录';
+  $('payloadSourceDetail').textContent = runtimeDlcRequired ? `请点击上方“导入运行库 DLC”，选择 ${source?.requiredHardwareFamily === 'RTX50' ? 'NR-Runtime-RTX50.zip' : 'NR-Runtime-RTX40.zip'}。导入后会自动匹配并用于后续安装。`
+    : source?.mode === 'unconfigured' ? '本程序未附带完整 NR 组件；选择已有的完整组件目录即可继续。'
     : source?.error?.message || (ready ? '已核对清单和文件；安装或修复前还会再次校验。' : '请确认完整组件、文件校验和显卡匹配。');
-  $('payloadSourceDetail').classList.toggle('error', Boolean(source?.error) && source?.mode !== 'unconfigured');
+  $('payloadSourceDetail').classList.toggle('error', !runtimeDlcRequired && Boolean(source?.error) && source?.mode !== 'unconfigured');
   $('resetPayloadSourceBtn').classList.toggle('hidden', source?.mode !== 'external' || source?.bundledAvailable === false);
 }
 
@@ -1771,7 +1820,8 @@ $('importAddonBtn').onclick = async () => {
       state.addons = addons;
       renderAddonVersions();
       if (state.activeView === 'games') renderGames();
-      toast('Addon / 标准 OTA 已导入');
+      window.dispatchEvent(new CustomEvent('manager-components-changed'));
+      toast('文件已导入；普通 Add-on 可在游戏的“高级与维护”中加载');
     }
   } catch (error) { toast(error.message, true); }
   finally { setBusy(false); }
@@ -1791,7 +1841,8 @@ $('addonDropZone').ondrop = async event => {
     state.addons = unwrap(await window.manager.importAddon(filePath));
     renderAddonVersions();
     if (state.activeView === 'games') renderGames();
-    toast(/\.zip$/i.test(filePath) ? '标准 OTA 已导入' : 'Addon 已导入');
+    window.dispatchEvent(new CustomEvent('manager-components-changed'));
+    toast(/\.zip$/i.test(filePath) ? '标准 OTA 已导入' : '文件已导入；普通 Add-on 可在游戏的“高级与维护”中加载');
   } catch (error) { toast(error.message, true); }
 };
 $('addFolderBtn').onclick = () => pickAndRefresh(window.manager.pickScanFolder, '游戏库已添加');

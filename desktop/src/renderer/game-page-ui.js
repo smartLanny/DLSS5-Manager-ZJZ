@@ -130,6 +130,7 @@
       if (special) return specialInfo(special).packageId || '';
       if (Object.hasOwn(draft, 'version')) return draft.version || '';
       if (data.game.installed) return data.deployment?.version || data.game.addonVersion || data.defaults?.version || '';
+      if (data.game.existingInstallation?.detected === true) return '';
       return data.defaults?.version || (data.coreVersions || []).find(row => row.ready !== false)?.id || '';
     }
     function deploymentMode() { return selected('deployment', data.game.installed ? data.layout?.mode || 'local' : data.defaults?.deployment || 'local'); }
@@ -248,14 +249,25 @@
         <div class="gp-controls">${controls}</div>${!sr && f.backend === 'mfgunlock' ? `<p class="gp-caption">游戏内菜单：ReShade → Add-ons → MFG Unlock。来源：mavismmg/MFGAdaUnlock-RenoDx 0.9；设置读回不等于生成帧已验证。</p><div class="gp-small-actions">${act('mfg-source', '查看开源项目', busy, 'subtle')}</div>` : ''}${unavailableOptions.length ? `<details class="gp-capability-details"><summary>未开放档位说明</summary>${unavailableOptions.map(row => `<p class="gp-caption"><strong>${esc(row.label)}</strong> · ${esc(row.message)}</p>`).join('')}</details>` : ''}<p class="gp-caption">${owned ? owned.readbackVerified ? '已应用，重启游戏后生效。' : '设置已变化，请重新预览。' : '尚未应用覆盖设置。'}</p>
         <div class="gp-small-actions">${sr ? act('recommend-sr', '恢复推荐', busy || !active || !scope.launchSettingsUi.recommendedPreset(currentHardware()), 'subtle') + act('preview-sr', '预览当前超分设置', busy || data.operation?.pending || !apiReady() || !loaded.has('enhancements') || (!feature('sr').eligible && !(fields.sr.quality === 'game' && data.enhancements?.applied?.sr)), 'subtle') : ''}${allowRestore ? act(`restore-${domain}`, '恢复原设置', busy, 'subtle') : ''}${owned?.requiresReapply ? act('reapply', '重新预览', busy) : ''}</div></section>`;
     }
+    function componentStackOverview() {
+      const saved = data.componentChoices?.stack;
+      if (!saved) return '';
+      const changed = Boolean(draft.api || draft.version || draft.route || draft.components?.bridge);
+      if (!changed) return `<div class="gp-component-stack ${saved.status === 'ready' ? 'is-ready' : 'needs-attention'}"><div><small>自动组件搭配</small><strong>${esc(saved.title)}</strong><span>${esc(saved.summary)}</span></div><div class="gp-component-stack-items">${(saved.items || []).filter(row => row.key !== 'api').map(row => `<span class="is-${esc(row.status || 'pending')}"><b>${esc(row.label)}</b>${esc(row.value)}</span>`).join('')}</div><p>${esc(saved.reason || '')}</p></div>`;
+      const api = effectiveApi(), route = selected('route', saved.route || 'auto'), version = currentVersion();
+      const input = route === 'feeder' || ['dx9','dx10'].includes(api) ? 'DLSS5 Feeder' : api === 'dx11' ? 'DLSS5 Bridge' : api === 'vulkan' ? 'Vulkan 专用配套' : '游戏原生 DLSS 输入';
+      const combination = input === 'DLSS5 Feeder' ? `${input} + 专用 Core / 运行库` : input === 'Vulkan 专用配套' ? input : `${coreLabel(version || '待选 Core')} + ${input} + 显卡运行库`;
+      return `<div class="gp-component-stack needs-attention"><div><small>修改后的预期搭配</small><strong>${esc(apiLabel(api))} · ${esc(input)}</strong><span>${esc(combination)}</span></div><p>预览时会重新校验 Core、接口与组件摘要；不匹配时不会写入游戏。</p></div>`;
+    }
     function installation() {
       const game = data.game, api = selected('api', game.apiOverride || data.defaults?.api || 'auto'), effective = effectiveApi(), special = specialRoute();
+      const existing = !game.installed && game.existingInstallation?.detected === true ? game.existingInstallation : null;
       const version = currentVersion(), visibleVersion = version === COMPARISON_VERSION ? '0.4.7beta' : version;
       const versions = versionRows().filter(row => !isComparison(row));
       const pending = data.operation?.pending || data.deployment?.needsRecovery;
       if (options.hoyoSettingsOnly) {
         const current = data.deployment?.version || game.addonVersion || game.feeder?.coreVersion || '待确认';
-        const picker = special ? '' : `<section class="gp-section"><div class="gp-controls">${selectField('route', 'version', '增强版本',
+        const picker = special ? '' : `<section class="gp-section"><div class="gp-controls">${selectField('route', 'version', 'AI 增强组件',
           (versions.some(row => row.id === version) ? '' : option(version, `${coreLabel(version)} · 来源待检查`, version, true)) +
           versions.map(row => option(row.id, coreLabel(row.label || row.id), version, row.ready === false)).join(''), busy || pending,
           versions.find(row => row.id === version)?.notes || '切换前会预览本次文件变更；保留此客户端的绑定和个人配置。')}</div></section>`;
@@ -267,14 +279,20 @@
       let status = !loaded.has('installation') ? '正在检查安装条件…' : pending ? '有未完成操作，请先恢复。' : attention ? readinessMessage() : readinessNotice ? '启动时检查设置。' : !apiReady()
         ? unresolved ? '需要手动选择游戏实际使用的 API。' : `${apiLabel(effective)} 当前不支持安装。`
         : data.layout?.needsInputPreparation ? '加载配置已准备，请预览修复以补齐输入配套。' : game.installed ? data.deployment?.verified === false && data.deployment?.inspection !== 'summary' ? '安装需要检查，可预览修复。' : '已安装，可以调整画面或启动游戏。'
+        : existing ? '检测到已有插件，但没有本管理器的安装回执；请选择替换目标并预览处理。'
         : '基础条件已确认，安装前将预览本次变更。';
       if (data.antiCheat?.detected && !pending && !readinessNotice && apiReady()) status = '检测到游戏保护，安装前需确认兼容提示。';
-      if (loaded.has('installation') && !pending && !readinessNotice && apiReady() && !version) status = '配套版本尚未确定，请选择可用 Core。';
+      if (loaded.has('installation') && !pending && !readinessNotice && apiReady() && !version) status = existing
+        ? '已有安装的版本无法可靠确认；请选择目标 Core，然后预览备份与替换。'
+        : '配套版本尚未确定，请选择可用 Core。';
+      const existingNames = existing?.files?.map(row => row.name).slice(0, 6) || [];
       return `<section class="gp-section gp-install-section"><div class="gp-controls">
         ${selectField('route', 'api', '游戏 API', option('auto', automaticLabel, api) + ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].map(key => option(key, API[key] || key.toUpperCase(), api)).join(''), busy)}
-        ${selectField('route', 'version', 'Core 配套', (!visibleVersion ? option('', '请选择 Core 配套', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy || Boolean(special))}</div>
+        ${selectField('route', 'version', 'AI 增强组件', (!visibleVersion ? option('', '请选择 AI 增强组件', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy || Boolean(special))}</div>
+        ${componentStackOverview()}
         <div class="gp-compatibility ${pending || readinessNotice || !apiReady() ? 'needs-attention' : ''}" role="status"><strong>兼容性</strong><span>${esc(status)}</span>${pending ? act('recover-operation', '恢复操作', busy, 'subtle') : attention && readinessActionName() !== 'resolve-readiness' ? act(readinessActionName(), readinessActionLabel(), busy, 'subtle') : ''}</div>
-        ${hasVersionUpdate() ? `<p class="gp-caption">当前已安装 ${esc(data.deployment?.version || game.addonVersion)}；应用后才会更新所选配套。</p>` : !game.installed && !special ? `<p class="gp-caption">默认使用游戏目录；安装预览会核对真实 DLSS 集成，无原生输入时匹配 Feeder。</p>` : ''}</section>${hoyoControls()}${nrFields()}`;
+        ${existing ? `<div class="gp-message"><strong>检测到已有未受管安装</strong><p>${esc(existingNames.join('、') || '已有插件文件')}。管理器没有对应回执，因此不会把它冒充成“已安装”，也不会依据旧日志猜测版本。</p><p>选择目标 Core 后只会先打开逐文件预览；确认应用时，旧文件会备份到 _DLSS5_Backup 下再替换，取消预览不会改动游戏。</p></div>` : ''}
+        ${hasVersionUpdate() ? `<p class="gp-caption">当前已安装 ${esc(data.deployment?.version || game.addonVersion)}；应用后才会更新所选配套。</p>` : existing ? '<p class="gp-caption">不会自动沿用全局“新安装默认 Core”；请明确选择要替换成的版本。</p>' : !game.installed && !special ? `<p class="gp-caption">默认使用游戏目录；安装预览会核对真实 DLSS 集成，无原生输入时匹配 Feeder。</p>` : ''}</section>${hoyoControls()}${nrFields()}`;
     }
     function enhancements() {
       const facts = scope.launchSettingsUi.hardwareFacts(currentHardware());
@@ -297,13 +315,16 @@
       if (options.hoyoSettingsOnly) return hotkeySection() + (options.maintenanceContent?.() || '');
       const layout = data.layout || {}, special = specialRoute(), mode = deploymentMode(), hoyo = selected('loadingBackend', layout.loadingBackend || 'local') === 'hoyoshade';
       const bridges = data.componentChoices?.bridges || [], bridge = draft.components?.bridge || data.componentChoices?.selected?.bridge;
+      const userAddons = data.componentChoices?.addons || [];
       return `<section class="gp-section"><h3>加载与启动</h3><div class="gp-controls">
         ${selectField('route', 'deployment', '组件目录', hoyo ? option('external', 'HoYoShade 外置目录', 'external') : special ? option(mode, `${special === 'vulkan' ? 'Vulkan 外置' : 'Feeder 专用'}目录`, mode) : option('external', '每游戏外置目录', mode) + option('local', '游戏目录', mode), busy || Boolean(special) || hoyo)}
-        ${selectField('route', 'loadingMode', '加载方式', option('proxy', '代理加载', hoyo ? 'helper' : selected('loadingMode', layout.loadingMode || 'proxy')) + option('helper', '外置加载助手', hoyo ? 'helper' : selected('loadingMode', layout.loadingMode || 'proxy'), !hoyo && !data.game.installed), busy || Boolean(special) || mode !== 'external' || hoyo, !hoyo && !data.game.installed && !special ? '首次安装使用代理；安装后可切换助手。' : '')}
+        ${selectField('route', 'loadingMode', '加载方式', option('proxy', '代理加载', hoyo ? 'helper' : selected('loadingMode', layout.loadingMode || 'proxy')) + option('helper', '外置加载助手', hoyo ? 'helper' : selected('loadingMode', layout.loadingMode || 'proxy'), !hoyo && !data.game.installed), busy || Boolean(special) || mode !== 'external' || hoyo, !hoyo && !data.game.installed && !special ? data.game.existingInstallation?.detected === true ? '已有安装完成受管备份与替换后，才可切换助手。' : '首次安装使用代理；安装后可切换助手。' : '')}
         ${selectField('input-route', 'route', 'NR 输入方式', option('auto', '自动核对并匹配配套', draft.route || 'auto') + option('native', '原生 DLSS 输入', draft.route || 'auto', ['dx9', 'dx10'].includes(effectiveApi())) + option('feeder', 'Feeder · 无原生 DLSS', draft.route || 'auto', effectiveApi() === 'vulkan'), busy, '检测依据绑定所选游戏程序；仅有 DLSS DLL 不代表原生集成。')}
         ${hoyo ? `<p class="gp-caption">启动方式由已绑定的 ${esc(data.launch?.effective === 'starward' ? 'Starward' : 'HoYoPlay')} 决定。</p>` : selectField('route', 'launchMode', '启动方式', option('auto', '自动 · Steam 优先', selected('launchMode', data.launch?.selected || 'auto')) + option('steam', '通过 Steam', selected('launchMode', data.launch?.selected || 'auto'), !data.launch?.steamAvailable) + option('exe', '直接启动 EXE', selected('launchMode', data.launch?.selected || 'auto')), busy)}
         ${!hoyo && effectiveApi() !== 'vulkan' ? selectField('route', 'proxyEntry', '加载入口', option('auto', '自动 · 保留现有入口', selected('proxyEntry', data.defaults?.proxyEntry || 'auto')) + option('dxgi', 'dxgi.dll', selected('proxyEntry', data.defaults?.proxyEntry || 'auto')) + option('d3d12', 'd3d12.dll · DX12 兼容', selected('proxyEntry', data.defaults?.proxyEntry || 'auto'), effectiveApi() !== 'dx12'), busy, '入口文件名独立于图形 API，预览会检查目标占用。') : ''}
         ${effectiveApi() === 'dx11' && !special && bridges.length ? selectField('component', 'bridge', 'DX11 桥接器', bridges.map(row => option(row.id, row.label, bridge, !row.ready || !row.compatible)).join(''), busy, '独立选择适配桥接器，保持 Core 版本。') : '<p class="gp-caption">当前路线无需可单独选择的 DX11 桥接器。</p>'}</div></section>
+        <section class="gp-section"><h3>用户 Add-on</h3><p class="gp-caption">从组件管理导入任意 64 位 .addon64 后，可在这里按游戏加载。管理器只删除自己部署且摘要未变化的文件。</p><div class="gp-module-list">${userAddons.length ? userAddons.map(row => `<div><strong>${esc(row.label)}</strong><small>${esc(row.name)}${row.classification && row.classification !== 'unknown' ? ` · ${esc(row.classification)}` : ''}</small><small>${row.installed ? '已由管理器加载' : row.present ? '游戏中已有同名文件' : '尚未加载'}</small><button type="button" class="button ${row.installed ? 'subtle' : ''}" data-gp-action="user-addon" data-gp-component="${esc(row.id)}" data-gp-enable="${row.installed ? 'false' : 'true'}"${busy || !row.canApply || row.present && !row.installed ? ' disabled' : ''}>${row.installed ? '移除' : row.present ? '已存在' : '加载到游戏'}</button></div>`).join('') : '<p class="gp-caption">尚未导入用户 Add-on。可到“组件管理”导入 .addon64；导入不会立即修改游戏。</p>'}</div></section>
+        <section class="gp-section"><h3>游戏条目</h3><p class="gp-caption">这里只修改管理器中的显示名称，不会改动游戏文件。</p><div class="gp-actions">${act('rename-game', '修改游戏名称', busy)}</div></section>
         ${hotkeySection()}
         ${loaded.has('diagnostics') && loaded.has('enhancements') ? `<details class="gp-section gp-maintenance-details"><summary>卸载、恢复与环境清理</summary>${maintenance()}</details><details class="gp-section gp-diagnostics-details"><summary>运行验收与详细检测</summary>${diagnosticsContent()}</details>` : '<p class="gp-caption" role="status">正在读取恢复记录与详细检测…</p>'}`;
     }
@@ -331,13 +352,13 @@
       if (dirty()) primary = act('preview', '预览并应用', busy || invalid || pending || apiBlocked(), 'primary');
       else if (readinessBlocked) primary = act(readinessActionName(), readinessActionLabel(), busy || (readinessActionName() === 'resolve-readiness' && !loaded.has('installation')), 'primary');
       else if (pending) primary = act(data.enhancements?.pending?.length ? 'recover-settings' : 'recover-operation', '恢复未完成操作', busy, 'primary');
-      else if (tab === 'overview' && (!data.game.installed || hasVersionUpdate() || data.layout?.needsInputPreparation || data.deployment?.verified === false && data.deployment?.inspection !== 'summary')) primary = act(data.game.installed && !hasVersionUpdate() ? 'repair-install' : 'prepare', !data.game.installed ? '安装并启用' : hasVersionUpdate() ? '预览更新配套' : '预览修复安装', busy || pending || !loaded.has('installation') || !apiReady() || !currentVersion() || versionRows().find(row => row.id === currentVersion())?.ready === false, 'primary');
+      else if (tab === 'overview' && (!data.game.installed || hasVersionUpdate() || data.layout?.needsInputPreparation || data.deployment?.verified === false && data.deployment?.inspection !== 'summary')) primary = act(data.game.installed && !hasVersionUpdate() ? 'repair-install' : 'prepare', !data.game.installed ? data.game.existingInstallation?.detected === true ? '预览已有安装处理' : '安装并启用' : hasVersionUpdate() ? '预览更新配套' : '预览修复安装', busy || pending || !loaded.has('installation') || !apiReady() || !currentVersion() || versionRows().find(row => row.id === currentVersion())?.ready === false, 'primary');
       else primary = '';
       const launchState = session || data.launch?.session, launch = launchState?.historical ? null : launchState;
       if (options.hoyoSettingsOnly && !dirty()) primary = '';
       const hasHeaderLaunch = options.hoyoSettingsOnly || Boolean(host.closest('.game-card')?.querySelector('.unified-launch-btn'));
       const readinessNotice = readinessNeedsNotice();
-      const status = invalid ? '请先修正输入' : !apiReady() && apiBlocked() ? '请先在“安装与画面”确认 API' : dirty() ? `${draftCount()} 组修改待应用` : readinessBlocked ? '启动前需要处理' : readinessNotice ? '启动时检查设置' : LAUNCH[launch?.status] || (data.game.installed ? '设置已就绪' : '确认 API 后安装');
+      const status = invalid ? '请先修正输入' : !apiReady() && apiBlocked() ? '请先在“安装与画面”确认 API' : dirty() ? `${draftCount()} 组修改待应用` : readinessBlocked ? '启动前需要处理' : readinessNotice ? '启动时检查设置' : LAUNCH[launch?.status] || (data.game.installed ? '设置已就绪' : data.game.existingInstallation?.detected === true ? '已有安装待确认' : '确认 API 后安装');
       const detail = dirty() ? '<small>先预览本次修改，再确认应用。</small>' : readinessNotice ? `<small>${esc(readinessMessage())}</small>` : launch?.status === 'waiting-launcher' && launch.launchInstruction ? `<small>${esc(launch.launchInstruction)}</small>` : '';
       return `<div class="gp-apply-bar${dirty() ? ' is-dirty' : readinessNotice ? ' needs-attention' : ''}" aria-label="当前游戏操作"><div role="status"><strong>${status}</strong>${detail}</div><div>${dirty() ? act('discard', '放弃修改', busy, 'subtle') : act('refresh', '重新检查', busy, 'subtle')}${primary}${!hasHeaderLaunch && !dirty() ? act('launch', launching ? '等待游戏…' : data.game.installed ? '启动游戏' : '原样启动', busy || launching || pending || readinessBlocked, primary ? 'subtle' : 'primary') : ''}${launching ? act('cancel-launch', '取消等待') : ''}${act('back', '收起', busy, 'subtle')}</div></div>`;
     }
@@ -634,6 +655,8 @@
         else if (action === 'restore-environment') await work(() => manager.restoreEnvironment(id), '已恢复隔离前环境。', true);
         else if (action === 'clean-environment') { modal = { kind: 'cleanup', plan: unwrap(await (manager.previewEnvironmentCleanup || manager.prepareEnvironmentCleanup)(id)) }; renderModal(); }
         else if (action === 'open-folder') unwrap(await manager.openFolder(id));
+        else if (action === 'user-addon') await work(() => manager.setUserAddon(id, button.dataset.gpComponent, button.dataset.gpEnable === 'true'), button.dataset.gpEnable === 'true' ? '用户 Add-on 已加载。' : '用户 Add-on 已移除。', true);
+        else if (action === 'rename-game') options.onRename?.(id);
         else if (action === 'feedback') await manager.exportFeedback(id);
         else if (action === 'anti-cheat') unwrap(await manager.openExternal('antiCheatPolicy'));
         else if (action === 'mfg-source') unwrap(await manager.openExternal('mfgUnlockUrl'));

@@ -52,6 +52,11 @@ test('preparing a validated complete D21 source keeps 0.4.7 as the public new-in
   assert.equal(prepareCoreCatalog(input).bundle.defaultVersion, '0.4.7beta');
   assert.deepEqual(input.versions['0.5-dline21'], complete);
 });
+test('an unmanaged existing Core is never labeled as a new installation', () => {
+  const rows = coreMenu([{ id: '0.4.7beta', ready: true }], { defaultVersion: '0.4.7beta', existingUnmanaged: true });
+  assert.match(rows.find(row => row.id === '0.4.7beta').label, /可选替换目标/);
+  assert.ok(rows.every(row => !String(row.label).includes('新安装推荐')));
+});
 test('D21, D12, D20 and mislabeled files cannot become the public new-install default', () => {
   for (const versions of [{ '0.5-dline21': complete }, { '0.5-dline12': complete }, { '0.5-dline20': { ...complete, label: '0.4.7' } },
     { '0.4.7beta': { coreUpdateOnly: true } }, { '0.4.7beta': {}, '0.4.7': {} }]) assert.equal(preferredBundleDefault({ versions }), null);

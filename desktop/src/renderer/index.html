@@ -50,7 +50,7 @@
       <section class="view active" id="view-games">
         <div class="library-header"><div><h3>游戏库</h3><p class="summary" id="gameSummary"></p></div><div class="library-actions"><button class="button primary" id="addGameBtn"><span class="ui-icon icon-plus" aria-hidden="true"></span>添加游戏</button><button class="button subtle" id="addExeBtn">选择 EXE</button><button class="button subtle" id="refreshBtn"><span class="ui-icon icon-disc" aria-hidden="true"></span>扫描本机</button></div></div>
         <div class="notice hidden" id="hardwareNotice"></div>
-        <div class="notice hidden" id="payloadNotice"></div>
+        <div class="payload-guidance hidden" id="payloadNotice" role="status" aria-live="polite"></div>
         <div class="toolbar-row">
           <div class="search"><span class="ui-icon icon-search" aria-hidden="true"></span><input id="searchInput" placeholder="搜索游戏名称" autocomplete="off"></div>
           <select id="gameFilter" aria-label="筛选游戏"><option value="all">全部游戏</option><option value="installed">已安装</option><option value="supported">可安装</option><option value="unsupported">暂不支持</option></select>
@@ -95,36 +95,48 @@
       <section class="view" id="view-addons">
         <div class="panel" id="componentLibraryPanel">
           <div class="component-library-hero">
-            <div class="component-library-heading"><span class="component-kicker">本地组件仓库</span><h3>运行库与桥接组件</h3><p>统一管理 NR 运行库、图形桥和多帧生成组件。导入只会加入本地仓库，不会立即改动游戏。</p></div>
-            <div class="component-primary-actions"><button class="button primary" id="importComponentBtn">导入组件包</button><button class="button" id="importComponentDirBtn">选择组件目录</button></div>
+            <div class="component-library-heading"><span class="component-kicker">组件管理</span><h3>按游戏 API 自动搭配</h3><p>管理器会在 AI Core、DLSS5 Bridge、DLSS5 Feeder 和显卡运行库之间选择一套不冲突的组合。</p></div>
+            <div class="component-primary-actions"><button class="button primary" id="importRuntimeDlcBtn">导入运行库 DLC</button><button class="button" id="importComponentBtn">导入 Add-on / 组件</button></div>
           </div>
+          <div class="component-runtime-guide hidden" id="componentRuntimeGuide" role="status">
+            <div class="component-runtime-guide-icon" aria-hidden="true">DLC</div>
+            <div class="component-runtime-guide-copy"><strong id="componentRuntimeGuideTitle">还差显卡运行库</strong><span id="componentRuntimeGuideText"></span></div>
+            <span class="badge warn" id="componentRuntimeGuideBadge"></span>
+          </div>
+          <section class="component-route-overview" aria-labelledby="componentRouteTitle">
+            <div class="component-route-head"><div><h4 id="componentRouteTitle">这个游戏会使用哪些组件？</h4><p>选择游戏即可查看自动匹配结果；这里只解释组合，不会修改游戏。</p></div><select id="componentRouteGameSelect" aria-label="查看游戏的组件搭配"></select></div>
+            <div id="componentRouteSummary" class="component-route-summary" role="status" aria-live="polite"><p class="component-route-empty">正在读取游戏与 API…</p></div>
+          </section>
           <div class="component-library-toolbar">
             <p id="componentLibraryMessage" class="config-note component-library-message" role="status"></p>
-            <div class="component-tool-actions"><button class="button subtle" id="moveComponentStorageBtn">移动仓库</button><button class="button subtle" id="refreshComponentsBtn">刷新</button><button class="button subtle" id="checkComponentUpdatesBtn">检查更新</button><button class="button subtle" id="componentRuntimeHelpBtn">下载说明</button></div>
+            <div class="component-tool-actions"><button class="button subtle" id="importComponentDirBtn">选择组件目录</button><button class="button subtle" id="moveComponentStorageBtn">移动仓库</button><button class="button subtle" id="refreshComponentsBtn">刷新</button><button class="button subtle" id="checkComponentUpdatesBtn">检查更新</button><button class="button subtle" id="componentRuntimeHelpBtn">下载说明</button></div>
           </div>
-          <p id="componentStorageLocation" class="config-note" role="status"></p>
           <section class="component-section" aria-labelledby="componentInstalledTitle">
-            <div class="component-section-head"><div><h4 id="componentInstalledTitle">已导入组件</h4><p>可用于后续安装或指定游戏，已安装的游戏保持不变。</p></div></div>
+            <div class="component-section-head"><div><h4 id="componentInstalledTitle">已经准备好的组件</h4><p>这里只表示管理器可以使用；是否装入游戏由上方自动搭配和每个游戏的预览决定。</p></div></div>
             <div id="componentLibraryRows" class="component-package-list"></div>
           </section>
           <details class="component-repository">
-            <summary><span><strong>在线组件仓库</strong><small>下载并校验后保存到本地缓存</small></span><span id="componentDownloadCount" class="component-summary-count">正在检查</span></summary>
+            <summary><span><strong>可选更新</strong><small>下载并校验到组件库，不会自动改动游戏</small></span><span id="componentDownloadCount" class="component-summary-count">正在检查</span></summary>
             <div id="componentUpdateRows" class="component-download-list"></div>
           </details>
           <details class="component-advanced">
-            <summary><span><strong>高级桥接设置</strong><small>仅在自动选择不合适时调整</small></span></summary>
+            <summary><span><strong>高级设置与存储位置</strong><small>自动搭配不合适或需要移动大文件时再打开</small></span></summary>
+            <p id="componentStorageLocation" class="config-note component-storage-location" role="status"></p>
             <div class="component-advanced-grid">
-              <section class="component-setting-card"><h4>默认输入桥配套</h4><p>为后续支持的安装路线选择配套组件。</p><div class="component-setting-controls"><select id="componentProviderSelect" aria-label="输入桥组件包"></select><button class="button" id="selectComponentProviderBtn">保存配套</button></div><p id="componentProviderStatus" class="config-note"></p></section>
-              <section class="component-setting-card"><h4>DX11 游戏桥接</h4><p>为单个游戏切换已导入的桥接版本。</p><div class="component-setting-controls component-setting-controls-wide"><select id="componentGameSelect" aria-label="选择游戏"></select><select id="componentBridgeSelect" aria-label="选择桥接版本"></select><button class="button" id="applyBridgeComponentBtn">应用</button></div><p id="componentBridgeStatus" class="config-note"></p></section>
+              <section class="component-setting-card"><h4>DLSS5 Feeder 默认配套</h4><p>仅用于没有可用原生 DLSS 输入的兼容路线；普通 DX12 游戏不需要调整。</p><div class="component-setting-controls"><select id="componentProviderSelect" aria-label="DLSS5 Feeder 组件包"></select><button class="button" id="selectComponentProviderBtn">保存配套</button></div><p id="componentProviderStatus" class="config-note"></p></section>
+              <section class="component-setting-card"><h4>DLSS5 Bridge 手动覆盖</h4><p>仅用于 DX11 游戏的版本回退；默认由所选 Core 自动匹配。</p><div class="component-setting-controls component-setting-controls-wide"><select id="componentGameSelect" aria-label="选择 DX11 游戏"></select><select id="componentBridgeSelect" aria-label="选择 DLSS5 Bridge 版本"></select><button class="button" id="applyBridgeComponentBtn">应用</button></div><p id="componentBridgeStatus" class="config-note"></p></section>
             </div>
           </details>
         </div>
+        <details class="panel component-expert-panel">
+          <summary><span><strong>Core 版本、完整组件目录与导入记录</strong><small>默认保持收起；只有导入旧包、切换全局 Core 或排查来源时使用</small></span></summary>
+          <div class="component-expert-body">
         <div class="component-sources-layout">
         <div class="panel payload-source-panel">
-          <div class="payload-source-head"><div><h3>安装组件来源</h3><p>选择完整组件目录并记住路径，后续安装和修复使用这里的组件。</p></div><span class="badge" id="payloadSourceStatus">正在检查</span></div>
+          <div class="payload-source-head"><div><h3>安装组件来源</h3><p>精简包可单独导入运行库 DLC，也可改用已有的完整组件目录。</p></div><span class="badge" id="payloadSourceStatus">正在检查</span></div>
           <div class="payload-source-location"><strong id="payloadSourceLabel">随程序提供</strong><span id="payloadSourcePath"></span></div>
           <p class="config-note" id="payloadSourceDetail" role="status"></p>
-          <div class="payload-source-actions"><button class="button primary" id="choosePayloadSourceBtn">选择组件目录</button><button class="button" id="recheckPayloadSourceBtn">重新检查</button><button class="button subtle hidden" id="resetPayloadSourceBtn">使用随程序组件</button></div>
+          <div class="payload-source-actions"><button class="button" id="choosePayloadSourceBtn">使用完整组件目录</button><button class="button" id="recheckPayloadSourceBtn">重新检查</button><button class="button subtle hidden" id="resetPayloadSourceBtn">使用精简包组件</button></div>
           <p class="payload-source-feedback hidden" id="payloadSourceFeedback" role="status" aria-live="polite"></p>
           <details class="payload-source-help"><summary>完整组件与更新包有什么区别？</summary><p>完整组件目录用于首次安装与修复，标准 OTA 或单个 addon 用于更新。这里选择的是安装文件来源；安装后的插件仍由游戏内 ReShade 加载。切换来源不会立即改动游戏，版本更新需按游戏应用并保留恢复记录。</p></details>
         </div>
@@ -155,6 +167,8 @@
             <article class="addon-guide-card featured"><span class="addon-guide-version">Beta0.4</span><h4>NR 可以单独用更低分辨率</h4><p>游戏保留 1440p → 额外缩一份 1080p 给 NR → AI 修改贴回 1440p → 游戏原生 SR → 4K。</p><small>NR 实际处理 1080p，和游戏自己的渲染分辨率解耦。</small><b>核心飞跃：降低 NR 成本，同时保留游戏原生超分。</b></article>
           </div>
           <p class="addon-guide-footer">当前 NR 安装路线要求 64 位及已有普通 DLSS；DX11 需要配套桥接，DX12 直接使用核心。Vulkan、DX9/DX10/OpenGL 等仍需后续兼容实现，界面可选不代表已经支持。</p>
+        </details>
+          </div>
         </details>
       </section>
 

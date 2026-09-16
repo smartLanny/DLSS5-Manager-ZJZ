@@ -94,8 +94,24 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
   }
   async function importPlain(file) {
     const hash = await digest(file), known = availableCatalog().packages.find(p => p.sha256 === hash);
-    if (!known) fail('尚未识别这个单文件组件，请先检查更新，或导入带 component-manifest.json 的组件包。');
     const stat = await fsp.stat(file);
+    if (!known) {
+      const name = path.basename(file);
+      if (!/\.addon64$/i.test(name) || pe.getBitness(file) !== 64) fail('尚未识别这个单文件组件。用户 Add-on 目前只接受 64 位 .addon64；其他组件请导入带 component-manifest.json 的组件包。');
+      const clues = await require('./component-assessment').inspectComponentClues(file);
+      return {
+        id: `user-addon-${hash.slice(0, 24)}`,
+        kind: 'user-addon',
+        version: name.replace(/\.addon64$/i, ''),
+        variant: clues.label || '用户导入 ReShade Add-on',
+        architecture: 'x64',
+        interface: 'ReShade-Addon-API',
+        classification: clues.classification || 'unknown',
+        validation: 'candidate',
+        files: [{ file: await storeFile(file, hash, name), name, sha256: hash, bytes: stat.size }],
+        source: 'user-imported', importedAt: new Date().toISOString()
+      };
+    }
     if (stat.size !== known.bytes || pe.getBitness(file) !== (known.architecture === 'x86' ? 32 : 64)) fail('组件大小或位数不符。');
     return { ...known, files: [{ file: await storeFile(file, hash, known.filename), name: known.filename, sha256: hash, bytes: stat.size }], source: 'catalog', importedAt: new Date().toISOString() };
   }

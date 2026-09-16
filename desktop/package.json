@@ -50,6 +50,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "build/icon.ico",
       "build/icon.png",
       "src/**/*",
       "vendor/DLSS5-Swapper/LICENSE",

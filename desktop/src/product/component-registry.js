@@ -3,7 +3,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { readBundle, sha256 } = require('./payload');
 const { DX11_COMPAT_CARRIER } = require('./constants');
-const CORE = 'b7bef0c7ad637ef35d2f0d327201636cb80f808a6af62cb6221f980343376dbf';
+// Public beta.2 defaults to the standard 0.4.7 Chinese Core. The fixed
+// 1.4.12 carrier below is automatic only for this exact Core/chain pair;
+// newer candidate Bridges remain explicit opt-in components.
+const CORE = '93011d9283615ea9dc8e92955f5ca6aeff01435925f63e941dc1eea1128a372c';
 const CHAIN = '46041a5ff91ae2fd907e310d132aabc3c4a1ecd48dace511b8672909d5d9c2fb';
 const BRIDGES = Object.freeze([
   Object.freeze({ id: 'nigos-1.4.12-nr', label: 'NIGos Bridge 1.4.12 · NR 适配', upstreamVersion: '1.4.12',

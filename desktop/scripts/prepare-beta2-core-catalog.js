@@ -15,6 +15,7 @@ const HASH = /^[a-f0-9]{64}$/i;
 const FILES047 = Object.freeze({
   'nr-before-sr.zh-CN.addon64': '93011d9283615ea9dc8e92955f5ca6aeff01435925f63e941dc1eea1128a372c',
   'nrchain_nvngx.dll': '46041a5ff91ae2fd907e310d132aabc3c4a1ecd48dace511b8672909d5d9c2fb',
+  'dlss5-native-carrier-045-dx11-compat.addon64': '4656d9aac382a6f9b5c8488669aa5365283f03b5b94b2267f1c7f9b53927dc86',
   'nr_before_sr.ini': '7ed62ef6f3f565a00e9cb6a92195e7c1bfaa3714f6f4fc28dfcbd1644a41ff80'
 });
 const MISSING = Object.freeze({
@@ -27,7 +28,11 @@ const MISSING = Object.freeze({
     sha256: '504bb48b1137b02a9ab126fe10337f0331a93684c413f411f4fea4fa47eb1b8d', peVersion: '0.4.7.13', substitute: false
   }
 });
-const D21_POLICY = Object.freeze({ coreUpdateOnly: true, comparisonOnly: false,
+// The original D21 archive is an update-only OTA. Once it is assembled into
+// the Manager catalog with the verified shared ReShade/runtime/config set it
+// becomes a complete, explicitly selectable candidate. It is still never the
+// default or a stable release.
+const D21_POLICY = Object.freeze({ coreUpdateOnly: false, comparisonOnly: false,
   validation: 'candidate', stableRelease: false });
 
 function fail(message) { throw new Error(message); }
@@ -47,7 +52,7 @@ async function digest(file) {
 }
 function safeName(name) {
   if (path.basename(name) !== name || !['ReShade64.dll', 'nvngx_dlssnr.dll', 'nrchain_nvngx.dll',
-    'nr-before-sr.zh-CN.addon64', 'nr_before_sr.ini'].includes(name)) fail(`不支持的载荷文件：${name}`);
+    'nr-before-sr.zh-CN.addon64', 'dlss5-native-carrier-045-dx11-compat.addon64', 'nr_before_sr.ini'].includes(name)) fail(`不支持的载荷文件：${name}`);
   return name;
 }
 async function copyVerified(source, target, expected) {
@@ -91,10 +96,11 @@ async function copyBase(baseRoot, targetRoot, runtimes) {
   const readme = path.join(baseRoot, 'README.md');
   if (fs.existsSync(readme)) await fsp.copyFile(readme, path.join(targetRoot, 'README.md'), fs.constants.COPYFILE_EXCL);
 }
-async function add047(sourceRoot, targetRoot) {
+async function add047(sourceRoot, targetRoot, bridgeFile) {
   const sources = {
     'nr-before-sr.zh-CN.addon64': path.join(sourceRoot, 'DLSS5-AI渲染超分版-0.4.7beta-@野生的装机宅-Bilibili.addon64'),
     'nrchain_nvngx.dll': path.join(sourceRoot, 'nrchain_nvngx.dll'),
+    'dlss5-native-carrier-045-dx11-compat.addon64': path.resolve(bridgeFile),
     'nr_before_sr.ini': path.join(sourceRoot, 'nr_before_sr.ini')
   };
   for (const [name, source] of Object.entries(sources)) await copyVerified(source, path.join(targetRoot, 'versions', '0.4.7beta', name), FILES047[name]);
@@ -102,7 +108,7 @@ async function add047(sourceRoot, targetRoot) {
   const bundle = readBundle(targetRoot);
   bundle.versions['0.4.7beta'] = {
     label: '0.4.7beta（标准版 · 默认）',
-    notes: '标准 0.4.7 中文 Core；不是 Corefix8。D3D12 默认，带外部 Provider 边界；具体游戏仍需实机验收。',
+    notes: '标准 0.4.7 中文 Core；不是 Corefix8。D3D12 原生路线不使用 Bridge；DX11 自动配套固定适配版 DLSS5 Bridge 1.4.12。具体游戏仍需实机验收。',
     source: 'vulkan-provider-047@4ecc6d02ca6058cb1ebb0faae5aa49b34b0614ad (0.4.7 base 6a0ad7684683993328a7a98a9bea83ac76b01a64)',
     compatibility: null, ota: true, supportsPresent: true, inputInterfaces: ['NGX-D3D12-Feature1'],
     capabilities: ['same-frame-output', 'external-provider-v1'], files: FILES047
@@ -121,7 +127,7 @@ async function addD21(sourceZip, targetRoot) {
   const bundle = readBundle(targetRoot);
   bundle.versions[core.id] = {
     label: '0.5 D21（累计常规版 · 测试）',
-    notes: '仅供已有 D3D12 安装更新/新游戏测试；保留现有配置。新游戏、RTX40 与具体游戏尚待实机验收。',
+    notes: '可由用户为新游戏直接选择的 D3D12 测试 Core；0.4.7 仍为默认。RTX40 与具体游戏尚待实机验收。',
     source: `beta0.5-dline21-223fix2@${ota.manifest.sourceCommit}; archive ${ota.archiveSha256}`,
     compatibility: null, ota: true, ...D21_POLICY,
     supportsPresent: true, inputInterfaces: [...core.inputInterfaces], capabilities: [...core.capabilities],
@@ -139,7 +145,7 @@ async function prepare(options) {
   try {
     await copyBase(path.resolve(options.base), stage, options.runtimes);
     await release042.prepare(path.resolve(options.release042), { root:stage });
-    await add047(path.resolve(options.release047), stage);
+    await add047(path.resolve(options.release047), stage, options.bridge047);
     await addD21(path.resolve(options.d21), stage);
     const bundle = readBundle(stage);
     if (bundle.defaultVersion !== '0.4.7beta' || Object.keys(bundle.versions).sort().join(',') !== ['0.2.0-beta.2','0.4.2','0.4.7beta','0.5-dline21'].sort().join(',')) fail('最终 Core 目录不符合 beta.2 版本矩阵。');
@@ -149,9 +155,9 @@ async function prepare(options) {
 }
 function args(argv) {
   const out = {};
-  for (let i=2;i<argv.length;i+=2) { if (!/^--(?:base|runtime40|runtime50|042|047|d21|output)$/.test(argv[i]) || !argv[i+1]) fail('参数应为 --base/--runtime40/--runtime50/--042/--047/--d21/--output。'); out[argv[i].slice(2)] = argv[i+1]; }
-  if (!out.base || !out['042'] || !out['047'] || !out.d21 || !out.output) fail('缺少 beta.2 Core 目录参数。');
-  return { base:out.base, runtimes:{ RTX40:out.runtime40, RTX50:out.runtime50 }, release042:out['042'], release047:out['047'], d21:out.d21, output:out.output };
+  for (let i=2;i<argv.length;i+=2) { if (!/^--(?:base|runtime40|runtime50|042|047|bridge047|d21|output)$/.test(argv[i]) || !argv[i+1]) fail('参数应为 --base/--runtime40/--runtime50/--042/--047/--bridge047/--d21/--output。'); out[argv[i].slice(2)] = argv[i+1]; }
+  if (!out.base || !out['042'] || !out['047'] || !out.bridge047 || !out.d21 || !out.output) fail('缺少 beta.2 Core 目录参数。');
+  return { base:out.base, runtimes:{ RTX40:out.runtime40, RTX50:out.runtime50 }, release042:out['042'], release047:out['047'], bridge047:out.bridge047, d21:out.d21, output:out.output };
 }
 if (require.main === module) prepare(args(process.argv)).then(result => console.log(JSON.stringify(result, null, 2))).catch(error => { console.error(error.stack || error.message); process.exitCode=1; });
 module.exports = { FILES047, MISSING, D21_POLICY, resolveFixedSource, prepare };

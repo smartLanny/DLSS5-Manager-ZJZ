@@ -134,7 +134,7 @@ test('distribution staging retains every requested Core as an atomic Core plus c
   const versions = {
     '0.2.0-beta.2': { label: '0.2', files: { 'nr-before-sr.zh-CN.addon64': hash(files.initial), 'nr_before_sr.ini': hash(files.ini) } },
     '0.4.7beta': { label: '0.4.7', supportsPresent: true, inputInterfaces: ['NGX-D3D12-Feature1'], files: { 'nr-before-sr.zh-CN.addon64': hash(files.current), 'nr_before_sr.ini': hash(files.ini) } },
-    '0.5-dline21': { label: 'D21', coreUpdateOnly: true, validation: 'candidate', files: { 'nr-before-sr.zh-CN.addon64': hash(files.d21), 'nr_before_sr.ini': hash(files.ini) } }
+    '0.5-dline21': { label: 'D21', coreUpdateOnly: false, validation: 'candidate', supportsPresent: true, inputInterfaces: ['NGX-D3D12-Feature1'], files: { 'nr-before-sr.zh-CN.addon64': hash(files.d21), 'nr_before_sr.ini': hash(files.ini) } }
   };
   for (const [id, entry] of Object.entries(versions)) {
     const dir = path.join(payloadRoot, 'versions', id); fs.mkdirSync(dir, { recursive: true });
@@ -165,7 +165,8 @@ test('distribution staging retains every requested Core as an atomic Core plus c
     assert.equal(staged.versions[id].files['nrchain_nvngx.dll'], hash(files.chain));
     assert.deepEqual(fs.readFileSync(path.join(stageRoot, 'payload/nr-before-sr/versions', id, 'nrchain_nvngx.dll')), files.chain);
   }
-  assert.equal(staged.versions['0.5-dline21'].coreUpdateOnly, true, 'candidate is never promoted to the default contract');
+  assert.equal(staged.versions['0.5-dline21'].coreUpdateOnly, false, 'assembled D21 is a complete user-selected candidate');
+  assert.equal(staged.defaultVersion, '0.4.7beta', 'complete D21 must not replace the public default');
   assert.equal(staged.distribution.coreSource, 'verified-external-staging');
   assert.doesNotMatch(JSON.stringify(staged), /package-release-test-/i, 'public bundle must not disclose a local source path');
 });

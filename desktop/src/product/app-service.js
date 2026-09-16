@@ -61,6 +61,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   const bundledPayloadDir = payloadRoot(fs.existsSync(path.join(resourcesPath || '', 'payload')) ? resourcesPath : appDir);
   const componentLibrary = require('./component-library').createComponentLibrary({ userData,
     root:overrides.componentLibraryRoot || componentStorage.root });
+  const userAddons = require('./user-addon-manager').createUserAddonManager({
+    componentRoot: componentLibrary.root,
+    assertGameClosed: overrides.assertGameClosed || require('../core/install-guards').assertGameClosed
+  });
   let seedPromise;
   const componentSeedErrors = [];
   const managedStorageSources = [componentStorage.legacyRoot,
@@ -278,11 +282,15 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     try {
       assertSourceIdentity();
       const inspected = payloadInspection.inspect(payloadDir, options);
-      const sourceError = !inspected.ready && mode !== 'unconfigured'
+      const runtimeDlcRequired = Boolean(inspected.bundle) && inspected.missing.length > 0 && inspected.invalid.length === 0 &&
+        inspected.missing.every(file => String(file).split(/[\\/]/).pop().toLowerCase() === 'nvngx_dlssnr.dll');
+      const sourceError = !inspected.ready && mode !== 'unconfigured' && !runtimeDlcRequired
         ? normalizeError(appError(inspected.missing.length ? 'ERR_PAYLOAD_MISSING' : 'ERR_PAYLOAD_HASH',
           { path: payloadDir, files: inspected.missing.length ? inspected.missing : inspected.invalid })) : null;
       return { ...inspected, source: { mode, bundledAvailable, path: mode === 'unconfigured' ? '' : payloadDir,
-        ready: Boolean(inspected.bundle && inspected.ready), error: sourceError } };
+        ready: Boolean(inspected.bundle && inspected.ready), runtimeDlcRequired,
+        requiredHardwareFamily: runtimeDlcRequired && ['RTX40','RTX50'].includes(options.hardwareFamily) ? options.hardwareFamily : null,
+        error: sourceError } };
     } catch (error) {
       return { dir: payloadDir, bundle: null, versions: {}, selectedVersion: null, files: [], ready: false,
         missing: [], invalid: [], source: { mode, bundledAvailable, path: mode === 'unconfigured' ? '' : payloadDir, ready: false, error: normalizeError(error) } };
@@ -308,6 +316,30 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         config:config && {role:'core-config',name:'nr_before_sr.ini',file:config.file,sha256:config.sha256,bytes:config.bytes} },
       currentRuntime: runtime && { file:runtime.file, sha256:runtimeHash, bytes:runtime.bytes, family:hardware.family }
     };
+  }
+
+  async function useRuntimeComponent(id) {
+    const activated = await componentLibrary.activateRuntime(id, bundledPayloadDir);
+    await selectPayloadSource(activated.payloadDir);
+    await refreshProviderSources({ selectDefault: true, force: true });
+    return { ...activated, state: payloadState() };
+  }
+
+  async function importRuntimeDlc(selected) {
+    const imported = await componentLibrary.importComponent(selected);
+    const family = deploymentHardware().family;
+    const runtimes = imported.packages.filter(item => item.kind === 'nr-runtime');
+    if (!runtimes.length) throw Object.assign(new Error('这不是 NR 运行库 DLC。请选择名称含 NR-Runtime-RTX40、RTX50 或 RTX40+RTX50 的 ZIP 包。'), { code: 'ERR_RUNTIME_DLC_REQUIRED' });
+    if (!['RTX40','RTX50'].includes(family)) return { ...imported, activated: false, hardwareFamily: family || null,
+      message: '运行库已导入组件仓库；当前显卡系列尚未确认，请在设置中确认显卡后再选择对应运行库。', state: payloadState() };
+    const matches = runtimes.filter(item => Array.isArray(item.hardwareFamilies) && item.hardwareFamilies.includes(family));
+    if (matches.length !== 1) {
+      const current = family === 'RTX50' ? 'RTX 50 系' : 'RTX 40 系及 RTX 20/30 系兼容路线';
+      throw Object.assign(new Error(`这份 DLC 不包含当前需要的 ${current} 运行库。请改选对应版本或 RTX40+RTX50 合并包。`), { code: 'ERR_RUNTIME_DLC_MISMATCH' });
+    }
+    const activated = await useRuntimeComponent(matches[0].id);
+    return { ...imported, ...activated, activated: true, hardwareFamily: family, packageId: matches[0].id,
+      message: `${family === 'RTX50' ? 'RTX 50 系' : 'RTX 40 系'}运行库已导入并用于后续安装。` };
   }
   let registeredProviderContext = null;
   async function refreshProviderSources({ selectDefault = false, force = false } = {}) {
@@ -610,13 +642,38 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     if (externalOwned(game)) return gameLayout(game).moduleManifest?.find(row => row.role === 'carrier')?.sha256 || null;
     return readManifest(game.dir)?.files.find(row => row.kind === 'carrier')?.installedSha256 || null;
   }
-  function componentChoices(id) {
-    const game = findGame(id), bundle = readBundle(payloadDir), version = installationDefaults(id).version;
+  async function componentChoices(id) {
+    const game = findGame(id), bundle = readBundle(payloadDir), defaults = installationDefaults(id), version = defaults.version;
     const core = bundle.versions?.[version], installedHash = installedBridgeHash(game);
     const registry = require('./component-registry');
-    return { bridges: [...registry.bridgeCatalog(payloadDir, { coreHash: core?.files?.['nr-before-sr.zh-CN.addon64'], chainHash: core?.files?.['nrchain_nvngx.dll'], installedHash }),
-      ...registry.importedBridges(componentLibrary.root, { ...core, id: version }, installedHash, registry.bridgeGameId(game))],
-      selected: { bridge: registry.bridgeByHash(installedHash)?.id || registry.bridgeByHash(core?.files?.[INSTALLED_NAMES.carrier])?.id || null },
+    const inventory = await componentLibrary.inventory();
+    const owned = Boolean(readManifest(game.dir) || externalOwned(game) || feederOwned(game) || vulkanOwned(game));
+    const bridges = [...registry.bridgeCatalog(payloadDir, { coreHash: core?.files?.['nr-before-sr.zh-CN.addon64'], chainHash: core?.files?.['nrchain_nvngx.dll'], installedHash }),
+      ...registry.importedBridges(componentLibrary.root, { ...core, id: version }, installedHash, registry.bridgeGameId(game))];
+    const selectedBridgeId = registry.bridgeByHash(installedHash)?.id || registry.bridgeByHash(core?.files?.[INSTALLED_NAMES.carrier])?.id || null;
+    const selectedBridge = bridges.find(row => row.id === selectedBridgeId) || bridges.find(row => row.default && row.ready && row.compatible) ||
+      bridges.find(row => row.ready && row.compatible) || null;
+    const api = require('./operation-api').resolveOperationApi(game, { api: defaults.api });
+    const route = await resolveInputRoute(id, { api: defaults.api });
+    let feed = feeder.summary(game);
+    if (route === 'feeder' && !feed.installed && ['dx9','dx10','dx11','dx12','vulkan'].includes(api.effectiveApi)) {
+      try { feed = feeder.summary(feederRouteSelection(game, api.effectiveApi)); } catch { /* Summary below retains its actionable reason. */ }
+    }
+    const vk = vulkan.summary(game), payload = inspectCurrentPayload({ allowMissingBundle:true, hardwareFamily:hardware.family, version });
+    const runtimeFile = payload.files?.find(row => row.kind === 'runtime');
+    const coreRow = coreVersionCatalog().find(row => row.id === version);
+    const stack = require('./component-stack').resolveComponentStack({ api:api.effectiveApi, apiAutomatic:defaults.api === 'auto', route,
+      core:{ version, label:coreRow?.label || core?.label || version, ready:Boolean(coreRow?.ready !== false && core) },
+      bridge:selectedBridge ? { label:selectedBridge.label, ready:selectedBridge.ready, compatible:selectedBridge.compatible } : null,
+      feeder:{ version:feed.version || feed.packageId || null, coreVersion:feed.coreVersion || null,
+        ready:feed.installed ? feed.ready !== false && !feed.needsRecovery : feed.available === true, reason:feed.reason || feed.selectionReason || null },
+      vulkan:{ label:vk.packageId ? `Vulkan 配套 ${vk.packageId}` : null, coreVersion:vk.coreVersion || null,
+        ready:vk.installed ? vk.ready !== false && !vk.needsRecovery : vk.available === true, reason:vk.reason || null },
+      runtime:{ label:hardware.family ? `${hardware.family === 'RTX50' ? 'RTX 50 系' : 'RTX 20/30/40 系'} NR 运行库` : 'NR 显卡运行库',
+        ready:runtimeFile ? runtimeFile.valid === true : payload.ready === true } });
+    return { bridges,
+      addons: await userAddons.inspect(game, inventory.packages, owned),
+      selected: { bridge: selectedBridgeId }, stack,
       currentCore: version, defaultCore: bundle.defaultVersion };
   }
   function knownComponentCatalog() {
@@ -1734,7 +1791,12 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   return {
     product: { ...PRODUCT, version },
     listComponents: async () => { await storageFinalization; await seedBundledComponents(); await refreshProviderSources({ selectDefault: true });
-      return { ...(await componentLibrary.inventory()), catalog: componentLibrary.catalog(),
+      const inventory = await componentLibrary.inventory();
+      const currentPayload = inspectCurrentPayload({ allowMissingBundle: true, hardwareFamily: hardware.family, version: selectedVersion() });
+      return { ...inventory, catalog: componentLibrary.catalog(),
+        runtimeSetup: { hardwareFamily: hardware.family || null, ready: currentPayload.ready === true,
+          runtimeDlcRequired: currentPayload.source?.runtimeDlcRequired === true,
+          selectedRuntimeId: inventory.selected?.[hardware.family] || null },
         storage:{ root:componentLibrary.root, mode:componentStorage.mode, cDrive:/^c:/i.test(componentLibrary.root) }, warnings:[...componentSeedErrors] }; },
     moveComponentLibrary: async destinationBase => {
       await storageFinalization; await fs.promises.mkdir(componentLibrary.root,{recursive:true});
@@ -1748,15 +1810,20 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return feeder.selectProvider(id, providerContext());
     },
     importComponent: selected => componentLibrary.importComponent(selected),
+    importRuntimeDlc,
     checkComponentUpdates: () => componentLibrary.checkUpdates(),
     downloadComponent: id => componentLibrary.downloadComponent(id),
     applyBridgeComponent: (id, bridge) => { const selected = installationDefaults(id); return applyGameRoute(id, { api: selected.api, version: selected.version, components: { bridge } }); },
-    activateComponentRuntime: async id => {
-      const activated = await componentLibrary.activateRuntime(id, bundledPayloadDir);
-      await selectPayloadSource(activated.payloadDir);
-      await refreshProviderSources({ selectDefault: true, force: true });
-      return { ...activated, state: payloadState() };
+    setUserAddon: async (id, componentId, enabled) => {
+      if (typeof componentId !== 'string' || typeof enabled !== 'boolean') throw appError('ERR_BAD_REQUEST');
+      const game = findGame(id), inventory = await componentLibrary.inventory();
+      if (!(readManifest(game.dir) || externalOwned(game) || feederOwned(game) || vulkanOwned(game)))
+        throw Object.assign(new Error('请先完成该游戏的核心安装，再加载用户 Add-on。'), { code: 'USER_ADDON_BASE_REQUIRED' });
+      const item = inventory.packages.find(row => row.id === componentId);
+      if (!item) throw Object.assign(new Error('组件仓库中没有这个用户 Add-on，请重新导入。'), { code: 'USER_ADDON_MISSING' });
+      return userAddons.setEnabled(game, item, enabled);
     },
+    activateComponentRuntime: useRuntimeComponent,
     activateComponentCore: async id => {
       const activated = await componentLibrary.activateCore(id, bundledPayloadDir);
       await selectPayloadSource(activated.payloadDir);
@@ -1881,8 +1948,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     dismissGame: async (id, options = {}) => {
       const game = findGame(id);
+      const userAddonReceipt = await userAddons.readReceipt(game);
       if (options.libraryOnly === true && (feederOwned(game) || vulkanOwned(game) || externalOwned(game) ||
-          fs.existsSync(path.join(game.dir, EXTERNAL_PENDING)) || readManifest(game.dir)))
+          fs.existsSync(path.join(game.dir, EXTERNAL_PENDING)) || readManifest(game.dir) || userAddonReceipt.items.length))
         throw Object.assign(new Error('请先选择卸载方式并完成恢复，再移出游戏库。'), { code: 'LIBRARY_RESTORE_FIRST' });
       if (options.libraryOnly === true) {
         requireNoFeeder(game); requireKnownVulkanOwnership(game);
@@ -1890,18 +1958,19 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           throw Object.assign(new Error('请先恢复未完成的组件操作，再移出游戏库。'), { code: 'LIBRARY_RESTORE_FIRST' });
       }
       if (options.libraryOnly !== true) {
-      if (feederOwned(game)) await feeder.restore(game);
-      requireNoFeeder(game);
-      requireKnownVulkanOwnership(game);
-      if (vulkanOwned(game)) await vulkan.restore(game);
-      if (hasExternalRecord(game)) await externalDeployment.recover(game);
-      if (externalOwned(game)) await externalDeployment.restore(game, { allowAntiCheat: true });
-      // Removing a library entry also removes this tool's NR deployment. Never
-      // hide the game while an incomplete restore still needs the user's attention.
-      if (readManifest(game.dir)) {
-        const result=await installer.uninstall({gameDir:game.dir,removeSettings:false,scan:game.scan});
-        if (result?.removed !== true) throw appError('ERR_BACKUP_INVALID',{operation:'dismiss-uninstall',removed:false,warnings:result?.warnings||[]});
-      }
+        await userAddons.removeAll(game);
+        if (feederOwned(game)) await feeder.restore(game);
+        requireNoFeeder(game);
+        requireKnownVulkanOwnership(game);
+        if (vulkanOwned(game)) await vulkan.restore(game);
+        if (hasExternalRecord(game)) await externalDeployment.recover(game);
+        if (externalOwned(game)) await externalDeployment.restore(game, { allowAntiCheat: true });
+        // Removing a library entry also removes this tool's NR deployment. Never
+        // hide the game while an incomplete restore still needs the user's attention.
+        if (readManifest(game.dir)) {
+          const result=await installer.uninstall({gameDir:game.dir,removeSettings:false,scan:game.scan});
+          if (result?.removed !== true) throw appError('ERR_BACKUP_INVALID',{operation:'dismiss-uninstall',removed:false,warnings:result?.warnings||[]});
+        }
       }
       const state = store.read();
       const executable = game.scan?.chosen?.path || null;
@@ -2056,6 +2125,11 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         return listAddonVersions();
       }
       if (!/\.addon64$/i.test(file)) throw appError('ERR_ADDON_INVALID');
+      const clues = await require('./component-assessment').inspectComponentClues(file);
+      if (clues.classification !== 'core') {
+        await componentLibrary.importComponent(file);
+        return listAddonVersions();
+      }
       const digest = sha256(file);
       const id = `imported-${digest.slice(0, 12)}`;
       const dir = path.join(addonVersionsDir, id);
@@ -2153,6 +2227,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     uninstall: async (id, request = false) => {
       const game = findGame(id);
       const { mode, removeSettings } = uninstallRequest(request);
+      await userAddons.removeAll(game);
       if (gameLayout(game).loadingBackend === 'hoyoshade' && feederOwned(game)) await feeder.restore(game);
       if (hasExternalRecord(game)) await externalDeployment.recover(game);
       if (externalDeployment.direct?.(game)) return refreshAfterMutation(await externalDeployment.remove(game, mode, { allowAntiCheat: true }));
@@ -2170,6 +2245,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     restoreManagedForCleanup: async id => {
       const game = findGame(id);
+      await userAddons.removeAll(game);
       if (gameLayout(game).loadingBackend === 'hoyoshade' && feederOwned(game)) await feeder.restore(game);
       if (hasExternalRecord(game)) await externalDeployment.recover(game);
       if (externalOwned(game)) await externalDeployment.restore(game, { allowAntiCheat: true });

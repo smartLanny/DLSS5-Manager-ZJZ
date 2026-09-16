@@ -16,6 +16,7 @@ const CORE_FILES = new Set([
   'nr-before-sr.zh-CN.addon64',
   'nrchain_nvngx.dll',
   'nr_before_sr.ini',
+  'dlss5-native-carrier-045-dx11-compat.addon64',
   'dlss5-native-carrier-exp1.addon64'
 ]);
 const REQUIRED_CORE_FILES = ['nr-before-sr.zh-CN.addon64', 'nr_before_sr.ini'];

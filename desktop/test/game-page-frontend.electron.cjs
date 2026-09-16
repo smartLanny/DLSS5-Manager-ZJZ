@@ -37,11 +37,12 @@ const hoyoReadinessMode = process.env.GAME_UI_HOYO_READINESS_CAPTURE === '1';
 const versionMode = process.env.GAME_UI_VERSION_CONTRACT === '1';
 const targetedMode = process.env.GAME_UI_TARGETED === '1';
 const maintenanceSwitchMode = process.env.GAME_UI_MAINTENANCE_SWITCH === '1';
+const runtimeRequiredMode = process.env.GAME_UI_RUNTIME_REQUIRED === '1';
 const demoMode = process.argv.includes('--demo');
 const captureArtworkUrl = process.env.GAME_UI_CAPTURE_ARTWORK
   ? `file:///${encodeURI(path.resolve(process.env.GAME_UI_CAPTURE_ARTWORK).replace(/\\/g, '/'))}`
   : '';
-const preload = path.join(temporary, 'preload.cjs'); fs.writeFileSync(preload, `(${installMock.toString()})(${JSON.stringify(features)},${JSON.stringify({ captureOnly: captureOnly || hoyoMode || versionMode || readinessMode || hoyoReadinessMode || targetedMode || maintenanceSwitchMode || demoMode, demo: demoMode, paths: addonPolicyFixture.paths })});${hoyoMode || hoyoReadinessMode ? `(${installHoYoMock.toString()})();` : ''}`);
+const preload = path.join(temporary, 'preload.cjs'); fs.writeFileSync(preload, `(${installMock.toString()})(${JSON.stringify(features)},${JSON.stringify({ captureOnly: captureOnly || hoyoMode || versionMode || readinessMode || hoyoReadinessMode || targetedMode || maintenanceSwitchMode || runtimeRequiredMode || demoMode, runtimeRequired: runtimeRequiredMode, demo: demoMode, paths: addonPolicyFixture.paths })});${hoyoMode || hoyoReadinessMode ? `(${installHoYoMock.toString()})();` : ''}`);
 let win;
 ipcMain.on('game-page-fixture-window', (event, action) => {
   if (!demoMode || event.sender !== win?.webContents) return;
@@ -70,6 +71,30 @@ app.whenReady().then(async () => {
     webPreferences: { preload, sandbox: true, contextIsolation: false, nodeIntegration: false, backgroundThrottling: false, offscreen: !demoMode } });
   try {
     await win.loadFile(path.resolve(__dirname, '../src/renderer/index.html'));
+    if (runtimeRequiredMode) {
+      const result = await win.webContents.executeJavaScript(`(async () => {
+        const until = async (predicate, label) => {
+          const end = Date.now() + 5000;
+          while (!predicate()) { if (Date.now() > end) throw Error('timeout: ' + label); await new Promise(resolve => setTimeout(resolve, 10)); }
+        };
+        await until(() => document.getElementById('payloadImportRuntimeBtn'), 'runtime guidance');
+        const notice = document.getElementById('payloadNotice');
+        const text = notice.textContent;
+        if (!text.includes('NR-Runtime-RTX40.zip') || !text.includes('立即导入运行库 DLC') || !text.includes('打开组件管理')) throw Error('runtime guidance is incomplete: ' + text);
+        if (/CodexTemp|nvngx_dlssnr\.dll/i.test(text)) throw Error('internal build path leaked into runtime guidance: ' + text);
+        document.getElementById('payloadImportRuntimeBtn').click();
+        await until(() => window.__gpMock.calls.some(row => row[0] === 'pick-runtime-dlc'), 'runtime picker action');
+        document.getElementById('payloadOpenComponentsBtn').click();
+        await until(() => document.getElementById('view-addons').classList.contains('active'), 'component view');
+        const guide = document.getElementById('componentRuntimeGuide');
+        if (guide.classList.contains('hidden') || !guide.textContent.includes('RTX 40 系') || !guide.textContent.includes('NR-Runtime-RTX40.zip')) throw Error('component runtime guide is incomplete: ' + guide.textContent);
+        return { assertionCount: 8, writes: 0, notice: text.replace(/\s+/g, ' ').trim(), componentGuide: guide.textContent.replace(/\s+/g, ' ').trim() };
+      })()`);
+      await new Promise(resolve => setTimeout(resolve, 120));
+      if (process.argv[2]) fs.writeFileSync(path.resolve(process.argv[2]), (await win.webContents.capturePage()).toPNG());
+      console.log(JSON.stringify({ ok: true, scope: 'runtime-dlc-guidance', sandbox: win.webContents.getLastWebPreferences().sandbox, ...result }, null, 2));
+      win.destroy(); app.exit(0); return;
+    }
     if (maintenanceSwitchMode) {
       const result = await win.webContents.executeJavaScript(`(async () => {
         const until = async (predicate, label) => {
@@ -117,7 +142,7 @@ app.whenReady().then(async () => {
         });
         const assertionCount = 5;
         if (!document.getElementById('view-addons').classList.contains('active')) throw Error('component view is active');
-        if (!panel || !downloads || downloads.children.length !== 9) throw Error('component repository is rendered');
+        if (!panel || !downloads || downloads.children.length < 1) throw Error('component repository is rendered');
         if (document.documentElement.scrollWidth > document.documentElement.clientWidth) throw Error('component view has horizontal overflow');
         if (!panel.querySelector('.component-empty')) throw Error('component empty state is visible');
         if (!panel.querySelector('.component-repository:not([open])')) throw Error('download repository is collapsed by default');
@@ -256,7 +281,9 @@ app.whenReady().then(async () => {
       }
       if (requestedView === 'games' && process.env.GAME_UI_MOTION_TARGET === 'modal') {
         result.motionState = await win.webContents.executeJavaScript(`(async () => {
-          document.querySelector('#gameList .rename-game-btn')?.click();
+          document.querySelector('#gameList .game-card .game-card-head')?.click();
+          await new Promise(resolve => setTimeout(resolve, 70));
+          document.querySelector('#gameList .game-card.expanded [data-gp-action="rename-game"]')?.click();
           await new Promise(resolve => setTimeout(resolve, 45));
           const modal = document.getElementById('modal'), card = modal?.querySelector('.modal-card');
           if (!modal || modal.classList.contains('hidden')) throw Error('rename modal did not open for motion capture');

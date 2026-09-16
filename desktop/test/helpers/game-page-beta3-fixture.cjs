@@ -47,7 +47,13 @@ function installMock(features, options = {}) {
   dx9.game.supported = false; dx9.game.installed = false; dx9.game.nativeDlssAvailable = false; dx9.game.nativeFgAvailable = false;
   dx9.game.chosen.apiResolution.api = dx9.api.effectiveApi = 'dx9'; dx9.api.capabilities = ['dx9']; dx9.nr = null;
   dx9.game.feeder = { installed: false, available: true, selections: { dx9: { api: 'dx9', architecture: 'x86', available: true, packageId: 'fixture-dx9-x86-on12', coreVersion: '0.4.7beta' } } };
-  const mock = window.__gpMock = { calls: [], plans: new Map(), assessments: { fixture: assessment, 'fixture-two': second, 'fixture-hoyo': hoyo, 'fixture-dx9': dx9 },
+  const unmanaged = clone(assessment); unmanaged.gameId = unmanaged.game.id = 'fixture-unmanaged'; unmanaged.game.name = '已有 0.5 文件 · 未受管安装测试';
+  unmanaged.game.dir = 'C:\\UI-fixture\\Existing'; unmanaged.game.chosen.path = unmanaged.game.dir + '\\Game.exe'; unmanaged.game.installed = false; unmanaged.game.addonVersion = null;
+  unmanaged.game.existingInstallation = { detected: true, managed: false, version: null, versionStatus: 'unverified', files: [
+    { name: 'nr-before-sr.zh-CN.addon64', kind: 'addon' }, { name: 'nrchain_nvngx.dll', kind: 'bridge' }, { name: 'nr_before_sr.ini', kind: 'config' }
+  ] };
+  unmanaged.deployment = { mode: 'local', version: null, inspection: 'summary', verified: false, needsRecovery: false }; unmanaged.nr = null;
+  const mock = window.__gpMock = { calls: [], plans: new Map(), assessments: { fixture: assessment, 'fixture-two': second, 'fixture-hoyo': hoyo, 'fixture-dx9': dx9, 'fixture-unmanaged': unmanaged },
     baseline: clone(assessment), secondBaseline: clone(second), features, removed: new Set(), delays: options.captureOnly ? {} : { 'fixture:installation': 5000 }, pending: 0,
     failApply: false, listeners: new Set(), mounts: new Map(), plan: null, policyEnabled: false, policyApplied: 0,
     settings: { animationsEnabled: true, theme: process.env.GAME_UI_THEME || 'system', scanDrives: false, addonVersion: null },
@@ -72,7 +78,11 @@ function installMock(features, options = {}) {
       if (originalFactory) { const id = host.dataset.gameDetail; mock.mounts.set(id, (mock.mounts.get(id) || 0) + 1); }
       return controller; };
   } });
-  const payload = { ready: true, selectedVersion: '0.4.7beta', versions: { '0.4.7beta': { label: 'beta0.4.7', variants: { RTX40: { ready: true, files: [] } } } }, source: { mode: 'bundled', path: 'C:\\UI-fixture\\payload', ready: true } };
+  const runtimeRequired = options.runtimeRequired === true;
+  const payload = { ready: !runtimeRequired, selectedVersion: '0.4.7beta', versions: { '0.4.7beta': { label: 'beta0.4.7', variants: { RTX40: {
+    ready: !runtimeRequired, files: [], missing: runtimeRequired ? ['D:\\CodexTemp\\internal-build\\fixed\\RTX40\\nvngx_dlssnr.dll'] : [], invalid: [] } } } },
+    missing: runtimeRequired ? ['D:\\CodexTemp\\internal-build\\fixed\\RTX40\\nvngx_dlssnr.dll'] : [], invalid: [],
+    source: { mode: 'bundled', path: 'D:\\CodexTemp\\internal-build', ready: !runtimeRequired, runtimeDlcRequired: runtimeRequired, requiredHardwareFamily: runtimeRequired ? 'RTX40' : null, error: null } };
   const games = () => Object.values(mock.assessments).filter(row => !mock.removed.has(row.gameId)).map(row => row.game);
   const componentCatalog = [
     ['mfg', '0.9'], ['bridge', '1.4.13-pre7'], ['bridge', '1.4.13-pre8'], ['bridge', '1.4.13-pre6'],
@@ -96,10 +106,26 @@ function installMock(features, options = {}) {
     },
     readPayloadSource: async () => ok({ settings: {}, payload, addons: assessment.coreVersions }), getStartupContext: async () => ok({ mode: 'normal', sandbox: true, privilege: 'standard', operation: {} }),
     getGameIcon: empty, fetchGameArt: empty, listAddons: async () => ok([]), onAddonImported() {}, onSrModelApplied() {}, onLaunchSettingsApplied() {},
-    listComponents: async () => ok({ warnings: ['尚未导入运行库，请选择与显卡对应的组件。'], packages: [], catalog: { checkedAt: new Date().toISOString(), packages: componentCatalog } }),
+    listComponents: async () => ok({ warnings: runtimeRequired ? ['尚未导入运行库，请选择与显卡对应的组件。'] : [], packages: [],
+      runtimeSetup: { hardwareFamily:'RTX40', ready:!runtimeRequired, runtimeDlcRequired:runtimeRequired, selectedRuntimeId:null },
+      storage:{root:'D:\\DLSS5-Components',cDrive:false}, catalog: { checkedAt: new Date().toISOString(), packages: componentCatalog } }),
     checkComponentUpdates: async () => ok([]), downloadComponent: async () => ok({ changedGames: false }),
     inspectComponentProviders: async () => ok({ packages: [], selectedId: null, selectedByRoute: {}, reason: '尚未导入输入桥配套。' }),
-    componentChoices: async () => ok({ bridges: [] }), pickComponent: empty,
+    componentChoices: async id => {
+      const game = games().find(row => row.id === id), api = game?.operationApi?.effectiveApi || game?.chosen?.apiResolution?.api || 'dx12';
+      const dx11 = api === 'dx11';
+      return ok({ bridges: [], stack: { api, apiLabel:dx11 ? 'DirectX 11' : 'DirectX 12', route:'native', status:'ready', missingCount:0,
+        title:dx11 ? 'DirectX 11 · DLSS5 Bridge 路线' : 'DirectX 12 · 原生 DLSS 路线',
+        summary:dx11 ? 'AI Core 与一份接口匹配的 DLSS5 Bridge 搭配，再使用对应显卡运行库。' : '游戏直接向 AI Core 提供 DLSS 输入，只需要 Core、输入链和对应显卡运行库。',
+        reason:dx11 ? 'DX11 需要 Bridge 把输入交给 Core；管理器只启用一个已验证匹配的版本。' : '此路线不需要 DLSS5 Bridge，也不安装 DLSS5 Feeder。',
+        manualBridge:dx11, items:[
+          {key:'api',label:'游戏 API',value:dx11 ? 'DirectX 11' : 'DirectX 12',status:'ready',detail:'由游戏程序识别。'},
+          {key:'core',label:'AI 增强 Core',value:'0.4.7（默认）',status:'ready',detail:'按游戏保存版本。'},
+          {key:'input',label:'输入适配',value:dx11 ? 'DLSS5 Bridge · 1.4.12' : '游戏原生 DLSS 输入',status:'ready',detail:dx11 ? '按 Core 接口自动选择。' : '无需额外 Bridge / Feeder。'},
+          {key:'runtime',label:'显卡运行库',value:'RTX 40 系 NR 运行库',status:'ready',detail:'已校验。'}
+        ] } });
+    }, pickComponent: empty,
+    pickRuntimeDlc: async () => { mock.calls.push(['pick-runtime-dlc']); return ok(null); },
     activateComponentRuntime: empty, activateComponentCore: empty, moveComponentLibrary: empty, selectComponentProvider: empty, applyBridgeComponent: empty,
     startupReady() {}, startupFailed: message => { mock.calls.push(['startup-failed', message]); },
     minimize() { if (options.demo) ipcRenderer.send('game-page-fixture-window', 'minimize'); },
@@ -212,6 +238,14 @@ async function smoke() {
     await maintenance(); click('refresh'); await until(() => state().data.game.name === label && mock.pending === 0, 'fresh scenario ' + label); await settled();
   };
   await until(() => card()?.querySelector('.open-game-page-btn') && card('fixture-two'), 'library cards');
+  assert(card('fixture-unmanaged').textContent.includes('已有插件待确认') && card('fixture-unmanaged').textContent.includes('检查已有安装'), 'unmanaged Core is disclosed on the collapsed card');
+  await open('fixture-unmanaged'); await until(() => state().loaded.includes('installation'), 'unmanaged installation assessment');
+  assert(field('route', 'version').value === '', 'unmanaged Core does not inherit the new-install default');
+  assert(host().textContent.includes('检测到已有未受管安装') && host().textContent.includes('不会把它冒充成“已安装”'), 'existing files and ownership boundary are explained');
+  assert(button('prepare')?.disabled && button('prepare')?.textContent.includes('预览已有安装处理'), 'preview waits for an explicit replacement target');
+  set('route', 'version', '0.4.7beta'); await preview();
+  assert(mock.plan.request.version === '0.4.7beta', 'explicit replacement target reaches the operation preview');
+  click('modal-cancel'); discard(); click('back');
   await open('fixture-dx9'); await until(() => state().loaded.includes('installation'), 'DX9 Feeder assessment');
   assert(state().data.game.supported === false && state().data.game.chosen.bitness === 32 && field('route', 'version').value === 'fixture-dx9-x86-on12', 'old unsupported marker does not suppress an available DX9 x86 Feeder package');
   await preview('prepare');

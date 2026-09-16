@@ -14,7 +14,7 @@ function choiceFor(id) {
   return CORE_CHOICES.find(choice => choice.ids.includes(id)) || null;
 }
 
-function coreMenu(rows, { installedVersion = null, defaultVersion = null } = {}) {
+function coreMenu(rows, { installedVersion = null, defaultVersion = null, existingUnmanaged = false } = {}) {
   const inventory = Array.isArray(rows) ? rows : [];
   const keep = new Set([installedVersion, defaultVersion].filter(Boolean));
   const selected = new Set(), result = [];
@@ -25,7 +25,7 @@ function coreMenu(rows, { installedVersion = null, defaultVersion = null } = {})
       (matches.length === 1 ? matches[0] : null);
     if (item) {
       const suffix = choice.key === '047' && !installedVersion && item.id === defaultVersion
-        ? '（新安装推荐）' : choice.key === 'd21' ? '（测试）' : '';
+        ? existingUnmanaged ? '（可选替换目标）' : '（新安装推荐）' : choice.key === 'd21' ? '（测试）' : '';
       result.push({ ...item, label: `${choice.label}${suffix}` });
       selected.add(item.id);
     } else {

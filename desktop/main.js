@@ -215,7 +215,9 @@ function createWindow() {
     minHeight: Math.min(620, height),
     center: true,
     backgroundColor: '#fbfbfa',
-    icon: path.join(__dirname, 'build', 'icon.png'),
+    // Windows uses the exact same multi-size ICO for the window and the
+    // packaged executable, so Explorer and the taskbar cannot diverge.
+    icon: path.join(__dirname, 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     frame: false,
     autoHideMenuBar: true,
     show: false,
@@ -255,7 +257,7 @@ function registerIpc() {
     return service.withError(() => launchCoordinator.serialize(() => operationElevation.recover()));
   });
   const loggedGameActions = new Set([
-    'game-install', 'game-repair', 'game-upgrade-addon', 'game-uninstall', 'game-api-set', 'game-route-apply',
+    'game-install', 'game-repair', 'game-upgrade-addon', 'game-uninstall', 'game-api-set', 'game-route-apply', 'game-user-addon-set',
     'game-toggle-d3d12', 'game-launch', 'game-diagnose', 'game-rename', 'game-hotkeys-read',
     'game-hotkey-write', 'nr-read', 'nr-write', 'nr-default', 'nr-recommended',
     'sr-model-read', 'sr-model-write', 'feedback-export', 'launch-settings-inspect',
@@ -268,15 +270,15 @@ function registerIpc() {
   ]);
   const guardedActions = new Set(['game-install', 'game-repair', 'game-upgrade-addon', 'game-toggle-d3d12',
     'game-api-set', 'game-route-apply', 'nr-write', 'nr-default', 'nr-recommended', 'game-hotkey-write', 'game-reframework-prepare', 'game-reframework-restore',
-    'game-feeder-install', 'game-prepare-all']);
+    'game-feeder-install', 'game-prepare-all', 'game-user-addon-set']);
   const serializedActions = new Set([...guardedActions, 'game-launch', 'game-uninstall', 'game-dismiss', 'game-library-remove',
     'game-confirm', 'game-rename', 'settings-update', 'sr-model-write', 'launch-settings-save', 'launch-settings-preview',
     'launch-settings-apply', 'launch-settings-restore', 'launch-settings-recover', 'fg-components-prepare', 'fg-components-restore',
     'payload-source-pick', 'payload-source-reset', 'payload-source-recheck', 'launch-settings-update', 'launch-settings-reset-all',
     'game-reframework-recover', 'game-feeder-restore', 'game-preparation-recover', 'fg-components-recover',
     'game-environment-prepare-clean', 'game-environment-preview-clean', 'game-environment-apply', 'game-environment-restore',
-    'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm']);
-  for (const name of ['addon-import', 'addon-remove', 'pick-addon', 'pick-scan-folder', 'components-pick', 'components-runtime-activate', 'game-component-apply']) serializedActions.add(name);
+    'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm', 'game-user-addon-set']);
+  for (const name of ['addon-import', 'addon-remove', 'pick-addon', 'pick-scan-folder', 'components-pick', 'components-runtime-pick', 'components-runtime-activate', 'game-component-apply']) serializedActions.add(name);
   guardedActions.add('game-component-apply');
   serializedActions.add('components-download');
   serializedActions.add('components-core-activate');
@@ -469,6 +471,7 @@ function registerIpc() {
   call('components-download', id => service.downloadComponent(id));
   call('game-components', id => service.componentChoices(id));
   call('game-component-apply', (id, bridge) => service.applyBridgeComponent(id, bridge));
+  call('game-user-addon-set', (id, componentId, enabled) => service.setUserAddon(id, componentId, enabled === true));
   call('components-runtime-activate', id => service.activateComponentRuntime(id));
   call('components-core-activate', id => service.activateComponentCore(id));
   call('components-storage-pick', async () => {
@@ -483,6 +486,12 @@ function registerIpc() {
       title: '导入运行库或外部组件', ...(directory ? {} : { filters: [{ name: '组件包与模块', extensions: ['zip','json','dll','addon64','addon32'] }] }) });
     if (result.canceled || !result.filePaths[0]) return null;
     return service.importComponent(result.filePaths[0]);
+  });
+  call('components-runtime-pick', async () => {
+    const result = await dialog.showOpenDialog(win, { properties: ['openFile'], title: '选择 NR 运行库 DLC（RTX40 / RTX50）',
+      filters: [{ name: 'NR 运行库 DLC', extensions: ['zip'] }] });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return service.importRuntimeDlc(result.filePaths[0]);
   });
   call('payload-source-pick', async () => {
     const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: '选择完整组件目录',

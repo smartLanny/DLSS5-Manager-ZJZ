@@ -69,7 +69,8 @@ function createGameAssessment({ service, coordinator, environment, operations, l
         verified: false, filesVerified: false, runtimeVerified: false };
       Object.assign(value, { game: publicGame, api, hardware: hardware(), nativeIntegration, layout: currentLayout,
         deployment, defaults: resolvedDefaults,
-        coreVersions: coreMenu(coreVersions, { installedVersion: publicGame.addonVersion, defaultVersion: resolvedDefaults.version }),
+        coreVersions: coreMenu(coreVersions, { installedVersion: publicGame.addonVersion, defaultVersion: resolvedDefaults.version,
+          existingUnmanaged: !owned && publicGame.existingInstallation?.detected === true }),
         componentChoices, nr, hotkeys, operation, launch: { ...launch, session: currentSession, readiness: launchReadiness },
         antiCheat: { detected: antiCheat,
           message: '反作弊或游戏保护可能阻止加载，当前路线也可能暂时无法启用；使用模组有账号处罚风险，请自行决定。',
