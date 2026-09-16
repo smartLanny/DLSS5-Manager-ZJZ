@@ -93,6 +93,22 @@ function assertOfficialBridges(stageRoot) {
   }
   return result;
 }
+function assertVulkanBridgeDeployment(stageRoot) {
+  const root=path.resolve(stageRoot), catalog=readJson(path.join(root,'resources','components','catalog.json'),'组件目录');
+  const rows=Array.isArray(catalog) ? catalog : catalog.packages;
+  const bridge=Array.isArray(rows) && rows.find(row=>row.kind === 'bridge' && row.gameApis?.includes('vulkan') &&
+    row.capabilities?.includes('vulkan-profile-deployment'));
+  if (!bridge) fail('正式发布必须包含可部署的 Vulkan Bridge Profile；仅有 Bridge .addon64 或 Feeder Profile 不能算完成。');
+  const recipe=readJson(path.join(root,'resources','vulkan-bridge','recipe.json'),'Vulkan Bridge Profile 清单');
+  const roles=new Set(Array.isArray(recipe.files) ? recipe.files.map(row=>row?.role) : []);
+  if (recipe.version !== 1 || recipe.id !== 'vulkan-bridge-profile-v1' || recipe.api !== 'vulkan' ||
+      recipe.loadingBackend !== 'vulkan-profile' || recipe.architecture !== 64 || recipe.bridgeId !== bridge.id ||
+      recipe.inputInterface !== 'NGX-D3D12-Feature1' || recipe.layerRecipe !== 'vulkan-reshade/recipe.json' ||
+      !['bridge','core','core-chain','core-config','nr-runtime'].every(role=>roles.has(role))) {
+    fail('Vulkan Bridge Profile 没有把 Bridge、Core、chain、配置、NR 运行库与 ReShade Vulkan Layer 绑定成完整合同。');
+  }
+  return { id:recipe.id, bridgeId:bridge.id, roles:[...roles].sort() };
+}
 function assertReleaseStage(stageRoot) {
   const root = path.resolve(stageRoot), payloadRoot = path.join(root, 'payload', 'nr-before-sr');
   const core = assertExact033(payloadRoot);
@@ -101,6 +117,7 @@ function assertReleaseStage(stageRoot) {
     if (fs.existsSync(runtime)) fail('公开精简便携包不能内置 RTX40/50 NR DLL。', { runtime });
   }
   const bridges = assertOfficialBridges(root);
+  const vulkanBridge = assertVulkanBridgeDeployment(root);
   const components = readJson(path.join(root, 'resources', 'components', 'catalog.json'), '组件目录');
   const rows = Array.isArray(components) ? components : components.packages;
   if (!Array.isArray(rows) || !rows.some(row => row.kind === 'bridge') || !rows.some(row => row.kind === 'feeder')) {
@@ -112,7 +129,8 @@ function assertReleaseStage(stageRoot) {
       mfg.providers.some(row => /^mfgunlock-0[.]7(?:$|-)/.test(row.id || ''))) {
     fail('MFG 发布矩阵必须是 1.0 默认、0.9 回退，且不得重新提供 0.7。');
   }
-  return { ok: true, core, bridges, routes: ['bridge', 'feeder'], mfg: ['1.0', '0.9'], runtimeSplit: true };
+  return { ok: true, core, bridges, vulkanBridge, routes: ['bridge', 'feeder'], mfg: ['1.0', '0.9'], runtimeSplit: true };
 }
 
-module.exports = { CORE_033, REQUIRED_CORE_IDS, REQUIRED_BRIDGES, validate033Identity, assertExact033, assertOfficialBridges, assertReleaseStage };
+module.exports = { CORE_033, REQUIRED_CORE_IDS, REQUIRED_BRIDGES, validate033Identity, assertExact033, assertOfficialBridges,
+  assertVulkanBridgeDeployment, assertReleaseStage };

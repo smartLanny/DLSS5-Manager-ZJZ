@@ -79,4 +79,4 @@ RTX40 默认测试 MFG 1.0，0.9 仅作明确回退，菜单中不得出现 0.7�
 
 ## 9. 发布结论
 
-只有以下条件同时满足才可发布：自动测试通过；上述维护者实机冒烟通过；精确 `0.3.3.4` 到位；公开审计无问题；最终 Portable.zip 与 `update-manifest.json` SHA-256 已记录。任何一项失败都修复并重跑，不发布半成品。
+只有以下条件同时满足才可发布：自动测试通过；上述维护者实机冒烟通过；精确 `0.3.3.4` 到位；Vulkan Bridge 已具备把 Bridge、Core、chain、配置、NR 运行库和 ReShade Vulkan Layer 绑定在一起的完整 Profile 部署合同；公开审计无问题；最终 Portable.zip 与 `update-manifest.json` SHA-256 已记录。任何一项失败都修复并重跑，不发布半成品。

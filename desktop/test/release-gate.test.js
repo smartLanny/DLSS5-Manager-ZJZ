@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { CORE_033, REQUIRED_CORE_IDS, validate033Identity, assertExact033 } = require('../scripts/release-gate.cjs');
+const { CORE_033, REQUIRED_CORE_IDS, validate033Identity, assertExact033, assertVulkanBridgeDeployment } = require('../scripts/release-gate.cjs');
 
 test('formal release gate accepts only the registered 0.3.3.4 identity', () => {
   const entry = { files: { [CORE_033.file]: CORE_033.sha256 } };
@@ -21,4 +21,15 @@ test('formal release gate blocks an otherwise complete bundle while exact 0.3.3.
   const versions = Object.fromEntries(REQUIRED_CORE_IDS.filter(id => id !== CORE_033.id).map(id => [id, { files: {} }]));
   fs.writeFileSync(path.join(root, 'bundle.json'), JSON.stringify({ version: 4, defaultVersion: '0.4.7beta', versions }));
   assert.throws(() => assertExact033(root), /精确 0\.3\.3\.4/);
+});
+
+test('formal release gate does not confuse a Vulkan-capable addon with a deployable Bridge Profile', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-vulkan-bridge-gate-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'resources', 'components'); fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'catalog.json'), JSON.stringify({ schemaVersion: 1, packages: [{
+    id: 'bridge-1.4.13-pre8-official', kind: 'bridge', gameApis: ['dx11', 'vulkan'],
+    capabilities: ['vulkan-requires-reshade-layer']
+  }] }));
+  assert.throws(() => assertVulkanBridgeDeployment(root), /可部署的 Vulkan Bridge Profile/);
 });
