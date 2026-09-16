@@ -70,11 +70,12 @@ function assessEnhancementState({ domain, request = {}, game = {}, hardware = {}
     add('SETTINGS_MFG_RUNTIME_UNCONFIRMED', capabilities.mfgUnlock?.api && capabilities.mfgUnlock.api !== 'dx12'
       ? '当前 MFG Unlock 配套仅对已确认的 DX12 路线开放。'
       : '尚未确认已有 x64 DLSS-G 310.x 或更新运行库，不能准备 MFG Unlock。');
-  // MFG 0.9 supports absolute fixed requests and a tightly gated Dynamic path.
+  // Current MFG 1.0 and the retained 0.9 fallback share this fixed/Dynamic
+  // contract. Runtime evidence must still identify the actually loaded build.
   // The native integration alone proves neither Dynamic support nor >2x capacity.
   const mfg = capabilities.mfgUnlock || {};
   const versionIs = (value, expected) => typeof value === 'string' && (value === expected || value.startsWith(expected + '.'));
-  const mfgDynamicReady = backend === 'mfgunlock' && mfg.available === true && mfg.api === 'dx12' && mfg.providerVersion === '0.9' &&
+  const mfgDynamicReady = backend === 'mfgunlock' && mfg.available === true && mfg.api === 'dx12' && ['1.0', '0.9'].includes(mfg.providerVersion) &&
     versionIs(mfg.dlssgVersion, '310.9.1') && versionIs(mfg.streamlineVersion, '2.14.1') &&
     mfg.dynamicSupportObserved === true && mfg.dynamicSupported === true && driver.available === true &&
     Number.isInteger(driver.version) && driver.version >= MFG_DYNAMIC_DRIVER;
@@ -113,7 +114,7 @@ function assessEnhancementState({ domain, request = {}, game = {}, hardware = {}
     const dynamicMfg = backend === 'mfgunlock' && request.mode === 'dynamic';
     if (!blockers.some(value => value.code === row?.code || dynamicMfg && value.code === 'SETTINGS_MFG_DYNAMIC_UNCONFIRMED'))
       add(dynamicMfg ? 'SETTINGS_MFG_DYNAMIC_UNCONFIRMED' : row?.code || 'SETTINGS_MODE_UNSUPPORTED', dynamicMfg
-        ? 'Dynamic MFG 仅在已观察到 D3D12、MFG 0.9、DLSS-G 310.9.1、Streamline 2.14.1、驱动 595.41+ 且运行库报告支持时开放。'
+        ? 'Dynamic MFG 仅在已观察到 D3D12、MFG 1.0/0.9、DLSS-G 310.9.1、Streamline 2.14.1、驱动 595.41+ 且运行库报告支持时开放。'
         : row?.message || '当前后端及游戏证据未确认支持此补帧模式。');
   }
   if (domain === 'fg' && request.mode === 'fixed' && !multipliers.includes(request.multiplier)) {

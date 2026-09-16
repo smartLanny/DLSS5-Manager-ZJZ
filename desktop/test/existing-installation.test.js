@@ -20,7 +20,6 @@ test('exact Core footprint is reported separately without guessing a version', (
     assert.equal(inspectExistingInstallation({ executable: exe, managed: true }), null);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
-
 test('ReShade or a config alone is not mistaken for an existing Core installation', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-existing-'));
   try {
@@ -30,4 +29,3 @@ test('ReShade or a config alone is not mistaken for an existing Core installatio
     assert.equal(inspectExistingInstallation({ executable: exe }), null);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
-

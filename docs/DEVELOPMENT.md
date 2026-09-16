@@ -75,7 +75,7 @@ node scripts/build-manager.cjs --flavor offline --unpacked-zip --work-root D:\DL
 
 ## 组件兼容性与回退
 
-权威 pin 在 [config/pins.json](../config/pins.json) 和 [DLC-PIN.md](DLC-PIN.md)。当前新安装只提供 MFG 0.9；0.7/0.6.1 仅用于历史收据恢复，不能作为回退选择。BG3 Bridge 保留 1.4.11，不因上游出现 latest / 预发布就自动替换。
+权威 pin 在 [config/pins.json](../config/pins.json) 和 [DLC-PIN.md](DLC-PIN.md)。当前新安装默认提供 MFG 1.0，0.9 是显式回退；0.7/0.6.1 仅用于历史收据恢复，不能作为回退选择。BG3 Bridge 保留 1.4.11，不因上游出现 latest / 预发布就自动替换。
 
 展示名和菜单项不是成品身份，也不构成兼容性证据。D21 的默认策略需要实际完整包；D12 不得重新标为 D21。已有游戏选择优先于新的全局默认。缺可选桥接配套时只阻止对应操作，保留原游戏与 Core。
 

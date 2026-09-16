@@ -11,7 +11,7 @@ This increment migrates the desktop Manager and adds component management and pa
 - Payload verification reads only the selected deployment inventory, streams file hashes and caches display-only missing-runtime states. Commit-time source, executable, backup and recovery checks remain active. Installation timing is recorded for the owner to measure; no deployment speedup percentage is claimed.
 
 - `desktop/package.json` moves the Electron release identity to `0.5.0-beta.2` and exposes `stage`, `build:base`, `build:offline` and portable variants. The build entry also supports a dedicated non-system-drive work root and a complete unpacked test ZIP.
-- `desktop/scripts/stage-manager-distribution.cjs` consumes an external staging JSON, validates the active Core and MFG 0.9, copies only a small allow-list, and rejects D13/D14 defaults.
+- `desktop/scripts/stage-manager-distribution.cjs` consumes an external staging JSON, validates the active Core plus MFG 1.0/0.9, copies only a small allow-list, and rejects D13/D14 defaults.
 - The same stage entry now accepts an explicit `components` allow-list for small Bridge, Feeder, host, and Vulkan files. It writes a digest catalog under `resources/components/`; `nvngx_dlssnr.dll` remains forbidden there and stays in the RTX-family runtime split.
 - The stage manifest also has a narrow `resources` allow-list for the existing HoYoShade profile, loading helper, REFramework entry files and the four-file Vulkan ReShade layer (`LICENSE.md`, `recipe.json`, `ReShade64.dll`, `ReShade64.json`). It does not restore the historical Feeder/legacy resource pools or the old Vulkan Core/NR runtime pool.
 - `desktop/scripts/build-manager.cjs` supplies dynamic Electron Builder resources and writes artifacts outside the repository.

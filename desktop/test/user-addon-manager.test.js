@@ -37,7 +37,6 @@ test('user Add-on install and removal are receipt-owned and hash checked', async
   const removed = await f.manager.setEnabled(f.game, f.item, false);
   assert.equal(removed.installed, false); assert.equal(fs.existsSync(target), false); assert.equal(f.closed, 2);
 });
-
 test('user Add-on never overwrites or deletes an unmanaged same-name file', async t => {
   const f = fixture(t), target = path.join(f.gameDir, f.name);
   fs.writeFileSync(target, 'someone else');
@@ -56,4 +55,3 @@ test('a forged receipt cannot make bulk removal escape the active Add-on directo
   await assert.rejects(f.manager.removeAll(f.game), { code:'USER_ADDON_CHANGED' });
   assert.deepEqual(fs.readFileSync(outside), f.bytes);
 });
-

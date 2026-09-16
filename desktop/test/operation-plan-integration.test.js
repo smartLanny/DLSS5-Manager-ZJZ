@@ -140,7 +140,7 @@ test('OperationPlan migration preserves the selected MFG provider and current ga
   await f.apply({ api: 'dx12', version: 'fixture-core-1', deployment: 'local' });
   const selection = { backend: 'mfgunlock', mode: 'fixed', multiplier: 3 }, active = { ...selection, multiplier: 4 };
   const provider = providerById('mfgunlock-0.9');
-  assert.equal(provider.sha256, MFG_SHA);
+  assert.notEqual(provider.sha256, MFG_SHA, '0.9 remains a distinct fallback while 1.0 is the new default');
   await f.apply({ fg: selection, components: { mfgUnlock: provider.id } });
   assert.equal(hashFile(path.join(f.exeDir, MFG_ADDON)), provider.sha256);
   const config = f.layout().activeConfigPath;

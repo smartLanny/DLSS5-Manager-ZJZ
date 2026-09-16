@@ -23,6 +23,15 @@ contextBridge.exposeInMainWorld('manager', Object.freeze({
   setUserAddon: (id, componentId, enabled) => invoke('game-user-addon-set', id, componentId, enabled === true),
   checkComponentUpdates: () => invoke('components-updates'),
   downloadComponent: id => invoke('components-download', id),
+  checkManagerUpdate: () => invoke('manager-update-check'),
+  prepareManagerUpdate: manifest => invoke('manager-update-prepare', manifest),
+  cancelManagerUpdate: () => invoke('manager-update-cancel'),
+  applyManagerUpdate: () => invoke('manager-update-apply'),
+  onManagerUpdateProgress: callback => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('manager-update-progress', listener);
+    return () => ipcRenderer.removeListener('manager-update-progress', listener);
+  },
   applyBridgeComponent: (id, bridge) => invoke('game-component-apply', id, bridge),
   refresh: () => invoke('games-refresh'),
   listGames: () => invoke('games-list'),

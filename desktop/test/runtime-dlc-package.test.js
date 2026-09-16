@@ -37,4 +37,3 @@ test('runtime DLC builder emits separately and jointly importable RTX40/RTX50 pa
   const imported = await both.importComponent(report.packages.find(row => row.family === 'RTX40+RTX50').file);
   assert.deepEqual(imported.packages.map(row => row.hardwareFamilies[0]).sort(), ['RTX40', 'RTX50']);
 });
-

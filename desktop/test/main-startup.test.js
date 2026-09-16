@@ -35,7 +35,7 @@ function harness(options = {}) {
     setAppUserModelId() {}
     quit() { this.quitCalls++; }
     exit(code) { this.exitCode = code; }
-    relaunch() { logs.push({ stage: 'relaunch' }); }
+    relaunch(details = {}) { logs.push({ stage: 'relaunch', details }); }
     async getFileIcon() { return { isEmpty: () => true }; }
   }
   const app = new App();
@@ -113,6 +113,12 @@ function harness(options = {}) {
   const customRequire = request => {
     if (request === 'electron') return electron;
     if (request === './src/product/startup-diagnostics') return { ...realDiagnostics, createStartupDiagnostics: () => startup };
+    if (request === './src/product/portable-data') return { configurePortableData: () => null };
+    if (request === './src/product/startup-prerequisite') return { createStartupPrerequisite: () => ({
+      ensureReady: async () => ({ proceed:true, prompted:false, result:{ status:'available' } }) }) };
+    if (request === './src/product/manager-update') return { createManagerUpdate: () => ({ check:async()=>({available:false}),
+      prepare:async()=>({}),cancel:()=>false,launchApply:async()=>({launched:true}) }) };
+    if (request === './src/product/launcher-compatibility') return require('../src/product/launcher-compatibility');
     if (request === './src/product/startup-elevation') return require('../src/product/startup-elevation');
     if (request === './src/product/startup-handoff') return { createStartupHandoff: () => ({
       begin: () => ({ nonce: '22222222-2222-2222-2222-222222222222' }),
@@ -231,10 +237,10 @@ test('default startup retains sandbox protections and does not request a compati
   h.window.emit('closed');
 });
 
-test('GPU and renderer launch failures preserve their cause and offer manual compatibility guidance without software retry', async () => {
+test('GPU and renderer launch failures preserve their cause and offer one detected, non-persistent compatibility retry', async () => {
   for (const type of ['GPU', 'Renderer']) {
     for (const reason of ['launch-failed', 'integrity-failure']) {
-      const h = harness(); await settle();
+      const h = harness({dialogResponse:2}); await settle();
       if (type === 'GPU') h.app.emit('child-process-gone', {}, { type, reason, exitCode: 18 });
       else h.window.webContents.emit('render-process-gone', {}, { reason, exitCode: 18 });
       await settle();
@@ -242,12 +248,27 @@ test('GPU and renderer launch failures preserve their cause and offer manual com
       assert.equal(failure.type, type); assert.equal(failure.reason, reason); assert.equal(failure.exitCode, 18);
       const event = h.logs.find(row => row.stage === (type === 'GPU' ? 'child-process-gone' : 'render-process-gone')).details;
       assert.equal(event.type, type); assert.equal(event.reason, reason); assert.equal(event.exitCode, 18);
-      assert.match(h.dialogs.at(-1).detail, /兼容启动\.cmd/); assert.match(h.dialogs.at(-1).detail, /默认启动保留沙箱/);
+      assert.match(h.dialogs.at(-1).detail, /临时关闭沙箱/); assert.match(h.dialogs.at(-1).detail, /不会保存/);
+      assert.equal(h.dialogs.at(-1).buttons.includes('临时兼容重试'), true);
       assert.equal(h.dialogs.at(-1).buttons.includes('使用软件渲染重启'), false);
       assert.equal(saw(h, 'relaunch'), false); assert.equal(h.process.argv.includes('--no-sandbox'), false);
       h.window.emit('closed');
     }
   }
+});
+
+test('confirmed child-process failure can relaunch exactly once with transient sandbox switches', async () => {
+  const h = harness({dialogResponse:1}); await settle();
+  h.app.emit('child-process-gone', {}, { type:'GPU', reason:'launch-failed', exitCode:18 }); await settle();
+  const relaunch = h.logs.find(row => row.stage === 'relaunch');
+  assert.ok(relaunch);assert.ok(relaunch.details.args.includes('--no-sandbox'));assert.ok(relaunch.details.args.includes('--sandbox-retry-once'));
+  assert.equal(saw(h,'sandbox-retry-once-requested'),true);
+});
+
+test('manual no-sandbox startup is rejected unless it is the one-time detected retry', async () => {
+  const h = harness({argv:['electron',mainFile,'--no-sandbox']}); await settle();
+  assert.equal(h.window,null);assert.equal(h.errors.length,1);assert.match(h.errors[0].detail,/不能直接以无沙箱模式启动/);
+  assert.equal(saw(h,'relaunch'),false);
 });
 
 test('single-instance without acknowledgement explains the hidden-window condition without killing anything', async () => {
@@ -279,8 +300,8 @@ test('a portable launcher environment does not cause a whole-application elevate
   const h=harness({argv:['manager.exe','--as-admin'],env:{PORTABLE_EXECUTABLE_FILE:'C:\portable.exe'}});await settle();
   assert.equal(h.execCalls.length,0);assert.equal(h.app.quitCalls,0);assert.ok(h.window);h.window.emit('closed');
 });
-test('startup context is read-only, identifies compatibility mode and does not trust a packaged admin manifest', async () => {
-  const h = harness({ argv: ['manager.exe', '--no-sandbox'], execResults: [{ error: null, stdout: 'False' }] }); await settle();
+test('startup context is read-only, identifies the authorized one-time compatibility retry and does not trust a packaged admin manifest', async () => {
+  const h = harness({ argv: ['manager.exe', '--no-sandbox', '--sandbox-retry-once'], execResults: [{ error: null, stdout: 'False' }] }); await settle();
   const context = h.handles.get('startup-context');
   const foreign = await context({ sender: {} }); assert.equal(foreign.ok, false); assert.equal(h.execCalls.length, 0);
   const result = await context({ sender: h.window.webContents });

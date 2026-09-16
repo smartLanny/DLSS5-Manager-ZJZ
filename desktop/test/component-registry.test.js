@@ -26,7 +26,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(componentRoot, addonFile), addon);
   fs.writeFileSync(path.join(componentRoot, 'objects', addonSha, 'THIRD_PARTY_NOTICES.md'), notice);
   const candidate = {
-    id: 'bridge-1.4.13-pre7-official', kind: 'bridge', version: '1.4.13-pre7', variant: 'official',
+    id: 'bridge-1.4.13-pre8-official', kind: 'bridge', version: '1.4.13-pre8', variant: 'official',
     architecture: 'x64', interface: 'NGX-D3D12-Feature1', gameApis: ['dx11', 'vulkan'],
     validation: 'candidate', source: 'user-imported', files: [
       { file: addonFile, name: 'dlss5-bridge.addon64', sha256: addonSha, bytes: addon.length },
@@ -98,4 +98,27 @@ test('BG3 rejects an imported candidate whose pin is not the fixed 1.4.11 bridge
   assert.throws(() => registry.selectNativeComponents(f.payloadDir, payload(f.versionInfo), {
     api: 'dx11', bridgeId: f.candidate.id, componentRoot: f.componentRoot, gameId: 'bg3'
   }), { code: 'COMPONENT_BRIDGE_CORE' });
+});
+
+test('a new DX11 install automatically selects the newest exact bundled official Bridge', t => {
+  const f=fixture(t), data=JSON.parse(fs.readFileSync(path.join(f.componentRoot,'inventory.json'),'utf8'));
+  Object.assign(data.packages[0],{source:'bundled',sourceType:'official-release',verifiedSource:true,immutable:true,defaultEligible:true});
+  fs.writeFileSync(path.join(f.componentRoot,'inventory.json'),JSON.stringify(data));
+  const trusted=new Map([[f.candidate.id,{id:f.candidate.id,kind:'bridge',version:f.candidate.version,architecture:'x64',
+    gameApis:['dx11','vulkan'],sourceType:'official-release',immutable:true,sha256:f.addonSha}]]);
+  const result=registry.selectNativeComponents(f.payloadDir,payload(f.versionInfo),{
+    api:'dx11',componentRoot:f.componentRoot,trustedComponents:trusted
+  });
+  assert.equal(result.components.bridge,f.candidate.id);
+  assert.equal(result.carrier.actual,f.addonSha);
+  assert.equal(result.componentMetadata.bridge.verifiedSource,true);
+});
+
+test('imported official Bridge exposes a Vulkan candidate through the same interface contract', t => {
+  const f = fixture(t);
+  const rows = registry.importedBridges(f.componentRoot, f.versionInfo, null, 'manual-component', 'vulkan');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].api, 'vulkan');
+  assert.deepEqual(rows[0].gameApis, ['dx11', 'vulkan']);
+  assert.equal(rows[0].contract.state, 'candidate');
 });

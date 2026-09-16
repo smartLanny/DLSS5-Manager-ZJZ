@@ -279,22 +279,30 @@ async function buildPayload({ stageRoot, manifest, manifestFile, flavor }) {
 
 async function buildMfg({ stageRoot, manifest, manifestFile }) {
   const spec = manifest.mfg;
-  if (!spec) fail('清单缺少 mfg；基础包必须明确 MFG 0.9 来源。');
-  const source = resolveInput(manifestFile, spec.file, 'mfg.file');
-  const checked = await verifyFile(source, { sha256: spec.sha256, bytes: spec.bytes }, 'MFG 0.9 addon');
-  if (checked.bytes !== 601088 || checked.sha256 !== '64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da') {
-    fail('MFG 0.9 必须匹配已批准的 601088 bytes / SHA-256。', checked);
-  }
+  if (!spec || spec.defaultProvider !== 'mfgunlock-1.0' || !Array.isArray(spec.providers) || spec.providers.length !== 2)
+    fail('清单必须包含 MFG 1.0 默认版与 0.9 回退版。');
+  const pins = new Map([
+    ['mfgunlock-1.0', { version:'1.0', bytes:710144, sha256:'f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e' }],
+    ['mfgunlock-0.9', { version:'0.9', bytes:601088, sha256:'64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da' }]
+  ]);
   const sourceResources = path.join(REPO_ROOT, 'resources', 'fg-mfgunlock');
   const targetResources = path.join(stageRoot, 'resources', 'fg-mfgunlock');
   copyTextTree(sourceResources, targetResources);
-  const target = path.join(targetResources, 'versions', '0.9', 'renodx-mfgunlock.addon64');
-  copyFile(source, target);
-  fs.writeFileSync(path.join(targetResources, 'staging-mfg-0.9.json'), `${JSON.stringify({
-    id: 'mfgunlock-0.9', version: '0.9', bytes: checked.bytes, sha256: checked.sha256,
-    source: spec.url || null, status: 'staged-for-manager-catalog'
-  }, null, 2)}\n`, 'utf8');
-  return { file: target, ...checked };
+  const providers = [];
+  for (const provider of spec.providers) {
+    const pin = pins.get(provider.id);
+    if (!pin || provider.version !== pin.version || provider.bytes !== pin.bytes || provider.sha256 !== pin.sha256)
+      fail(`MFG ${provider.id || 'unknown'} 不符合固定发布身份。`, { provider });
+    const source = resolveInput(manifestFile, provider.file, `mfg.providers.${provider.id}.file`);
+    const checked = await verifyFile(source, pin, `MFG ${pin.version} addon`);
+    const target = path.join(targetResources, 'versions', pin.version, 'renodx-mfgunlock.addon64');
+    copyFile(source, target);
+    const record = { id:provider.id, version:pin.version, file:`versions/${pin.version}/renodx-mfgunlock.addon64`, bytes:checked.bytes, sha256:checked.sha256,
+      source:provider.url || null, recommended:provider.id === spec.defaultProvider, status:'staged-for-manager-catalog' };
+    fs.writeFileSync(path.join(targetResources, `staging-mfg-${pin.version}.json`), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+    providers.push(record);
+  }
+  return { defaultProvider:spec.defaultProvider, providers };
 }
 
 async function buildSmallComponents({ stageRoot, manifest, manifestFile, flavor }) {
@@ -364,10 +372,16 @@ async function buildSmallComponents({ stageRoot, manifest, manifestFile, flavor 
       gameApis: Array.isArray(component.gameApis) ? component.gameApis : [],
       hardwareFamilies: Array.isArray(component.hardwareFamilies) ? component.hardwareFamilies : [],
       inputInterfaces: Array.isArray(component.inputInterfaces) ? component.inputInterfaces : [component.interface],
+      compatibleCoreInterfaces: Array.isArray(component.compatibleCoreInterfaces) ? component.compatibleCoreInterfaces : [],
       capabilities: Array.isArray(component.capabilities) ? component.capabilities : [],
       supportsPresent: component.supportsPresent === true,
       validation: component.validation || 'candidate',
       ...(typeof component.defaultEligible === 'boolean' ? { defaultEligible: component.defaultEligible } : {}),
+      ...(component.sourceType === 'official-release' ? { sourceType:'official-release' } : {}),
+      ...(component.immutable === true ? { immutable:true } : {}),
+      ...(typeof component.repository === 'string' ? { repository:component.repository } : {}),
+      ...(typeof component.commit === 'string' ? { commit:component.commit } : {}),
+      ...(typeof component.downloadUrl === 'string' ? { downloadUrl:component.downloadUrl } : {}),
       source: 'external-staging', files
     });
   }
@@ -394,8 +408,20 @@ async function buildBundledResources({ stageRoot, manifest, manifestFile }) {
     }
     const source = resolveInput(manifestFile, row.source, `resources.${targetRelative}.source`);
     const checked = await verifyFile(source, { bytes: row.bytes, sha256: row.sha256 }, `resources/${targetRelative}`);
-    copyFile(source, path.join(targetRoot, ...targetRelative.split('/')));
-    files.push({ path: `resources/${targetRelative}`, bytes: checked.bytes, sha256: checked.sha256 });
+    const target=path.join(targetRoot, ...targetRelative.split('/'));
+    if (targetRelative === 'vulkan-reshade/recipe.json') {
+      const recipe=readJson(source);
+      // The packaged recipe is relocated at runtime by vulkan-service. Never
+      // leak the build machine's original absolute sourceRoot into a release.
+      recipe.sourceRoot='.';
+      fs.mkdirSync(path.dirname(target),{recursive:true});
+      fs.writeFileSync(target,`${JSON.stringify(recipe,null,2)}\n`,{encoding:'utf8',flag:'wx'});
+      const packaged=await verifyFile(target,null,'packaged Vulkan ReShade recipe');
+      files.push({path:`resources/${targetRelative}`,bytes:packaged.bytes,sha256:packaged.sha256,sourceSha256:checked.sha256});
+    } else {
+      copyFile(source,target);
+      files.push({ path: `resources/${targetRelative}`, bytes: checked.bytes, sha256: checked.sha256 });
+    }
   }
   return { count: files.length, files };
 }

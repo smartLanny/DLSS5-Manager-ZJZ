@@ -7,9 +7,9 @@
   const PRESET_PERCENT = { dlaa: 100, quality: 67, balanced: 59, performance: 50, ultraPerformance: 33 };
   const MODES = { restore: '使用原有设置', follow: '跟随游戏倍率', off: '关闭帧生成（驱动）', fixed: '固定倍率', dynamic: '动态目标帧率' };
   const BACKENDS = { native: '原生 DLSS', optiscaler: 'OptiScaler', nvidia: 'NVIDIA 官方 FG', rtx40: '旧版 RTX40 补帧', mfgunlock: 'RTX40 · MFG Unlock' };
-  const SR_MODEL_LABELS = Object.freeze({ K: 'K · 老版兼容', M: 'M · 平衡选择', L: 'L · 4K 优化' });
+  const SR_MODEL_LABELS = Object.freeze({ K: 'K · 老版兼容', M: 'M · 均衡推荐', L: 'L · 画质优化（帧率最低）' });
   const SR_MODEL_DESCRIPTIONS = Object.freeze({ K: '第一代 Transformer，RTX20 / RTX30 本机推荐。',
-    M: 'RTX40 / RTX50 本机推荐，兼顾画质与性能。', L: '主要优化 4K 超级性能档位。' });
+    M: 'RTX40 / RTX50 的均衡推荐，兼顾画质与帧率。', L: '更偏向画质，通常也是三个模型中帧率最低的选择。' });
   const option = (value, label, selected, disabled = false) => `<option value="${esc(value)}"${String(selected) === String(value) ? ' selected' : ''}${disabled ? ' disabled' : ''}>${esc(label)}</option>`;
 
   function unwrap(result) {
@@ -180,7 +180,7 @@
     const automatic = recommended ? option('auto', `自动推荐 · ${recommended}（推荐）`, fields.preset) : '';
     return `<label class="launch-field"><span>画质档位</span><select data-ls-field="quality" aria-label="SR 画质档位">${Object.entries(QUALITY).filter(([key]) => key !== 'game' && key !== 'preserve').map(([key, label]) => option(key, label, fields.quality)).join('')}</select></label>
       <label class="launch-field"><span>输入比例</span><div class="launch-number"><input data-ls-field="renderPercent" type="number" min="33" max="100" step="1" value="${esc(fields.renderPercent)}" aria-label="SR 输入分辨率百分比"><span>%</span></div><small>档位为近似宽高比例；改数值即自定义。</small></label>
-      <label class="launch-field"><span>DLSS SR 模型</span><select data-ls-field="preset" aria-label="DLSS SR 模型">${option('', '使用原有模型', fields.preset)}${automatic}${option('K', '模型 K', fields.preset)}${option('L', '模型 L · 高画质低性能', fields.preset)}${option('M', '模型 M · 推荐（适用 RTX40 / RTX50）', fields.preset)}</select></label>
+      <label class="launch-field"><span>DLSS SR 模型</span><select data-ls-field="preset" aria-label="DLSS SR 模型">${option('', '保持游戏原设置', fields.preset)}${automatic}${option('K', '模型 K · 老版兼容', fields.preset)}${option('L', '模型 L · 画质优化（帧率最低）', fields.preset)}${option('M', '模型 M · 均衡推荐（RTX40 / RTX50）', fields.preset)}</select></label>
       <p class="config-note">用于已有原生 DLSS；不代表游戏当前档位。</p>`;
   }
 
@@ -203,7 +203,7 @@
     </div></details>`;
   }
 
-  function fgFields(fields, hardware, capability = {}) {
+  function fgFields(fields, hardware, capability = {}, components = {}) {
     const facts = hardwareFacts(hardware);
     const available = facts.fgBackend && fields.backend === facts.fgBackend;
     if (!available) return `<p class="launch-unavailable">${fields.backend === 'rtx40' ? '旧补帧设置已保留。请先迁移组件，再重新选择；动态目标不会自动转换。' : facts.series === 'RTX20' || facts.series === 'RTX30' ? 'RTX 20 / 30 尚无已确认的 FG 控制路线。' : !facts.fgBackend ? '未确认单一 RTX 40 / 50 显卡，暂不能设置 FG。' : '已保存后端与当前显卡不符，请先还原本工具设置。'}</p><p class="config-note">仅管理已有 FG；已保存请求和还原入口仍保留。</p>`;
@@ -213,7 +213,7 @@
       ${fields.mode === 'fixed' ? `<label class="launch-field"><span>总帧倍率</span><select data-ls-field="multiplier" aria-label="FG 总帧倍率">${[2, 3, 4, 5, 6].map(value => option(String(value), `${value}× · 1 帧渲染 + ${value - 1} 帧生成${community && value >= 5 ? '（实验）' : ''}`, String(fields.multiplier))).join('')}</select><small>包含渲染帧；实际可用倍率需游戏内确认。</small></label>${community ? `<details class="launch-advanced"><summary>实验倍率说明${Number(fields.multiplier) >= 5 ? ` · 当前 ${esc(fields.multiplier)}×` : ''}</summary><p class="config-note">5/6× 为兼容路线的实验选项；实际支持情况需游戏内验证。</p></details>` : ''}` : ''}
       ${fields.mode === 'dynamic' ? `<label class="launch-field"><span>动态目标</span><div class="launch-number"><input data-ls-field="targetFps" type="number" min="0" max="1000" step="1" value="${esc(fields.targetFps)}" aria-label="FG 动态目标帧率"><span>FPS</span></div><small>0 为自动，范围 1–1000 FPS。</small></label>` : ''}
       ${community && fields.mode !== 'restore' ? mfgAdvancedFields(fields) : ''}
-      <p class="config-note">${fields.mode === 'restore' ? '恢复原有配置，不会关闭 FG。' : !community && fields.mode === 'off' ? '请求驱动关闭 FG；游戏菜单可能不变。' : community ? '请先在游戏内开启 FG。MFG 0.9 固定值是绝对倍率，可以提高或降低游戏请求；完全退出并重启游戏后核对。' : '使用原生 FG，请在游戏中开启。'} 游戏内开关暂无法读取。</p>${community ? '<p class="config-note">游戏内菜单：ReShade → Add-ons → MFG Unlock。来源：mavismmg/MFGAdaUnlock-RenoDx 0.9。设置读回不等于实际生成帧已验证。</p><button class="button subtle" type="button" data-ls-action="mfg-source">查看 MFG Unlock 开源项目</button>' : ''}`;
+      <p class="config-note">${fields.mode === 'restore' ? '恢复原有配置，不会关闭 FG。' : !community && fields.mode === 'off' ? '请求驱动关闭 FG；游戏菜单可能不变。' : community ? '请先在游戏内开启 FG。MFG 固定值是绝对倍率，可以提高或降低游戏请求；完全退出并重启游戏后核对。' : '使用原生 FG，请在游戏中开启。'} 游戏内开关暂无法读取。</p>${community ? `<p class="config-note">游戏内菜单：ReShade → Add-ons → MFG Unlock。当前组件：${esc(components.installedProviderDetails?.version || components.catalog?.find(row => row.id === components.defaultProvider)?.version || '1.0（推荐）')}；来源：mavismmg/MFGAdaUnlock-RenoDx。设置读回不等于实际生成帧已验证。</p><button class="button subtle" type="button" data-ls-action="mfg-source">查看 MFG Unlock 开源项目</button>` : ''}`;
   }
 
   function fgComponentMarkup(data, busy, recoveryBusy = busy, allowPrepare = true) {
@@ -279,7 +279,7 @@
           return `<section class="launch-panel" data-ls-domain="${domain}" aria-label="${domain === 'sr' ? 'SR 超分辨率' : 'FG 帧生成'}"><div class="launch-panel-title"><h4>${domain === 'sr' ? 'SR 超分' : 'FG 帧生成'}</h4><span>${domain === 'sr' ? '画质与模型' : '倍率与目标'}</span></div>
             ${domain === 'fg' ? fgComponentMarkup(data, busy || pending || fgCapabilityMissing, busy) : ''}
             ${domain === 'fg' && fgCapabilityMissing ? '<p class="launch-unavailable">未确认游戏已有 Streamline DLSS 帧生成，暂不写入补帧设置。</p>' : ''}
-            <fieldset${busy || pending || (domain === 'sr' ? capabilityMissing : fgCapabilityMissing) || !available ? ' disabled' : ''}><legend class="sr-only">${domain.toUpperCase()} 设置</legend>${legacyOptiScaler ? '<p class="launch-unavailable">检测到旧 OptiScaler 设置。请先点击总的“恢复默认”，再设置原生 DLSS；恢复记录仍会保留。</p>' : domain === 'sr' ? srFields(fields, data.hardware) : fgFields(fields, data.hardware, data.featureStates?.fg)}
+            <fieldset${busy || pending || (domain === 'sr' ? capabilityMissing : fgCapabilityMissing) || !available ? ' disabled' : ''}><legend class="sr-only">${domain.toUpperCase()} 设置</legend>${legacyOptiScaler ? '<p class="launch-unavailable">检测到旧 OptiScaler 设置。请先点击总的“恢复默认”，再设置原生 DLSS；恢复记录仍会保留。</p>' : domain === 'sr' ? srFields(fields, data.hardware) : fgFields(fields, data.hardware, data.featureStates?.fg, data.fgComponents)}
             ${statusMarkup(domain, data, dirty[domain])}${message ? `<p class="launch-message${message.error ? ' launch-error' : ''}" role="${message.error ? 'alert' : 'status'}">${esc(message.text)}</p>` : ''}
             ${message?.error && dirty[domain] ? '<button class="button subtle" type="button" data-ls-action="auto">重试应用</button>' : ''}</fieldset></section>`;
         }).join('')}</div>`;
@@ -330,7 +330,7 @@
         } else if (action === 'mfg-source') {
           render();
           if (unwrap(await manager.openExternal('mfgUnlockUrl')) !== true) throw new Error('无法打开 MFG Unlock 开源项目。');
-          setMessage('fg', '已打开 MFG Unlock 0.9 开源项目。');
+          setMessage('fg', '已打开 MFG Unlock 开源项目；当前推荐 1.0，0.9 为回退。');
         } else if (action === 'runtime-check') {
           render();
         } else if (action === 'prepare' || action === 'migrate-components') {

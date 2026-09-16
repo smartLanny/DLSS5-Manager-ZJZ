@@ -131,4 +131,3 @@ if (require.main === module) {
 }
 
 module.exports = { parseArgs, componentManifest, createRuntimeDlcPackages };
-

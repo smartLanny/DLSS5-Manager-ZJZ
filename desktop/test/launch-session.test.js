@@ -30,6 +30,14 @@ test('launcher timeout retains selected mode without a direct EXE fallback', asy
   await assert.rejects(f.service.start('game'), { code: 'LAUNCH_TARGET_TIMEOUT' });
   assert.equal(f.calls.length, 1); assert.equal((await f.service.inspect('game')).status, 'failed');
 });
+test('official launcher request waits for the bound real game process', async t => {
+  const f = fixture(t), launcher = path.join(f.dir, 'launcher.exe'); fs.writeFileSync(launcher, 'launcher');
+  f.target.launchMode = 'official';
+  f.target.launchRequest = { exe:launcher, args:['--game=fixture'], cwd:f.dir };
+  const result = await f.service.start('game');
+  assert.equal(f.calls.length, 1); assert.deepEqual(f.calls[0], f.target.launchRequest);
+  assert.equal(result.process.exe, f.exe); assert(f.events.includes('waiting-launcher'));
+});
 test('invalid helper Ready fails before launch and only cleans the owned helper', async t => {
   const stops = [];
   const helper = { prepare: async spec => ({ ...spec, configHash: 'one' }), start: async () => ({ sessionId: 'stale', configHash: 'one' }),

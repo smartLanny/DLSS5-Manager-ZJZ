@@ -336,7 +336,7 @@ test('rename modal saves entered names and cancel leaves the manager untouched',
     modal: { classList: classList() }, modalTitle: { textContent: '' }, modalBody: { textContent: '' },
     renameGameLine: { classList: classList() }, renameGameInput: { value: '', focus() {}, select() {} },
     removeSettingsLine: { classList: classList() }, removeSettingsCheck: { checked: false },
-    modalConfirm: { textContent: '', disabled: false, onclick: null, click() { return this.onclick?.(); } },
+    modalConfirm: { textContent: '', disabled: false, onclick: null, classList: classList(), click() { return this.onclick?.(); } },
     modalCancel: { onclick: null }
   };
   const calls = [], notices = [];

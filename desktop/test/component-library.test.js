@@ -6,6 +6,7 @@ const { createCompactBundle, requirePayload } = require('../src/product/payload'
 const { PAYLOAD_FILES } = require('../src/product/constants');
 const { resolveOperationApi } = require('../src/product/operation-api');
 const { assess } = require('../src/product/game-support');
+const { zip } = require('./helpers/ota-fixture');
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 function setup(t) {
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-components-'));
@@ -19,8 +20,9 @@ test('known runtime import verifies PE/hash and deduplicates without changing ga
   const f = setup(t); const first = await f.lib.importComponent(f.dll); await f.lib.importComponent(f.dll);
   assert.equal(first.changedGames, false); assert.equal((await f.lib.inventory()).packages.length, 1);
   assert.equal((await f.lib.inventory()).packages[0].hardwareFamilies[0], 'RTX40');
-  fs.appendFileSync(f.dll, 'changed'); await assert.rejects(f.lib.importComponent(f.dll), /尚未识别/);
-  assert.equal((await f.lib.inventory()).packages.length, 1);
+  fs.appendFileSync(f.dll, 'changed'); const changed=await f.lib.importComponent(f.dll);
+  assert.equal(changed.packages[0].kind,'custom-candidate');assert.equal(changed.packages[0].validation,'blocked');
+  assert.equal((await f.lib.inventory()).packages.length, 2);
 });
 test('an unknown x64 addon64 is cached as a user Add-on instead of masquerading as a Core', async t => {
   const f = setup(t), addon = path.join(f.root, 'renodx-dlss-26091112-zh.addon64');
@@ -31,6 +33,15 @@ test('an unknown x64 addon64 is cached as a user Add-on instead of masquerading 
   assert.equal(item.files[0].name, path.basename(addon));
   assert.match(item.id, /^user-addon-[a-f0-9]{24}$/);
   assert.equal((await f.lib.inventory()).packages[0].kind, 'user-addon');
+});
+test('unknown DLL and structurally valid ZIP remain visibly blocked custom candidates', async t => {
+  const f=setup(t),unknownDll=path.join(f.root,'nvngx_dlssnr.dll');
+  const bytes=Buffer.from(f.bytes);bytes[111]=9;fs.writeFileSync(unknownDll,bytes);
+  const dll=await f.lib.importComponent(unknownDll);assert.equal(dll.packages[0].kind,'custom-candidate');
+  assert.equal(dll.packages[0].validation,'blocked');assert.match(dll.packages[0].blockers[0],/不会自动用于/);
+  const archive=zip(path.join(f.root,'unknown-full-package.zip'),[{name:'readme.txt',data:'not a component identity'}]);
+  const packed=await f.lib.importComponent(archive);assert.equal(packed.packages[0].kind,'custom-candidate');
+  assert.equal(packed.packages[0].media,'archive');
 });
 test('a selected component-library root keeps large objects out of userData', async t => {
   const userData = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-small-state-'));
@@ -81,6 +92,28 @@ test('component manifests cannot escape the cache or masquerade as tested packag
   fs.writeFileSync(path.join(dir,'component-manifest.json'),JSON.stringify(m));
   await f.lib.importComponent(dir);assert.equal((await f.lib.inventory()).packages[0].validation,'candidate');
   for(const name of ['../x','C:/x','x:stream','NUL.dll','a/../b','a\\b'])assert.throws(()=>relativeName(name));
+});
+test('only an exact packaged catalog identity can promote a bundled component', async t => {
+  const f=setup(t), dir=path.join(f.root,'official-bridge'); fs.mkdirSync(dir);
+  const addon=path.join(dir,'dlss5-bridge.addon64'); fs.writeFileSync(addon,f.bytes);
+  const manifest={schema:'dlss5-component-v1',id:'bridge-test-official',kind:'bridge',version:'1.2.3',variant:'official',architecture:'x64',
+    interface:'NGX-D3D12-Feature1',inputInterfaces:['NGX-D3D12-Feature1'],compatibleCoreInterfaces:['NGX-D3D12-Feature1'],
+    gameApis:['dx11','vulkan'],capabilities:['vulkan-requires-reshade-layer'],files:[{path:'dlss5-bridge.addon64',sha256:hash(f.bytes),bytes:f.bytes.length}]};
+  const manifestFile=path.join(dir,'component-manifest.json'); fs.writeFileSync(manifestFile,JSON.stringify(manifest));
+  const identity={...manifest,validation:'candidate',defaultEligible:true,sourceType:'official-release',immutable:true,
+    repository:'NIGos/dlss5-bridge',downloadUrl:'https://github.com/NIGos/dlss5-bridge/releases/download/v1.2.3/dlss5-bridge.addon64',
+    files:[
+      {path:`components/${manifest.id}/dlss5-bridge.addon64`,sha256:hash(f.bytes),bytes:f.bytes.length},
+      {path:`components/${manifest.id}/component-manifest.json`,sha256:hash(fs.readFileSync(manifestFile)),bytes:fs.statSync(manifestFile).size}
+    ]};
+  await f.lib.importComponent(dir);
+  assert.equal((await f.lib.inventory()).packages[0].verifiedSource,false);
+  await assert.rejects(f.lib.adoptBundledComponent(dir,{...identity,gameApis:['dx11']}),/gameApis/);
+  const adopted=await f.lib.adoptBundledComponent(dir,identity), row=adopted.packages[0];
+  assert.equal(row.source,'bundled'); assert.equal(row.sourceType,'official-release');
+  assert.equal(row.verifiedSource,true); assert.equal(row.immutable,true); assert.equal(row.defaultEligible,true);
+  assert.deepEqual(row.gameApis,['dx11','vulkan']);
+  assert.equal((await f.lib.inventory()).packages.length,1);
 });
 test('one API result handles assessment evidence, manual override and auto reset', () => {
   const game={chosen:{apiAssessment:{effectiveApi:'dx12',source:'imports'}}};

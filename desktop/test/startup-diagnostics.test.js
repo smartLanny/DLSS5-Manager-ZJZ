@@ -10,15 +10,15 @@ const { createStartupDiagnostics, watchWindow, MAX_LOG } = require('../src/produ
 
 function temp(t) { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaofeng-startup-log-')); t.after(() => fs.rmSync(root, { recursive: true, force: true })); return root; }
 
-test('each startup log is at most 64 KiB and retention keeps the latest four sessions', t => {
+test('each startup log is at most 64 KiB and retention keeps the latest ten sessions', t => {
   const root = temp(t); let last;
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 13; i++) {
     last = createStartupDiagnostics({ roots: [root] });
     for (let row = 0; row < 200; row++) last.log('bounded-line', { row, message: 'x'.repeat(2800) });
     const file = path.join(root, `startup-${last.sessionId}.log`); assert.ok(fs.statSync(file).size <= MAX_LOG);
     const stamp = new Date(1000 + i * 2000); fs.utimesSync(file, stamp, stamp);
   }
-  const files = fs.readdirSync(root).filter(name => /^startup-.*\.log$/.test(name)); assert.equal(files.length, 4);
+  const files = fs.readdirSync(root).filter(name => /^startup-.*\.log$/.test(name)); assert.equal(files.length, 10);
   const report = last.report(); assert.ok(Buffer.byteLength(report) <= 128 * 1024); assert.match(report, /精简启动诊断/);
 });
 
@@ -60,7 +60,8 @@ test('watchWindow distinguishes renderer launch failure from a later crash and c
     if (reason === 'clean-exit') { assert.equal(failures.length, 0); continue; }
     assert.equal(failures[0][1].type, 'Renderer'); assert.equal(failures[0][1].reason, reason); assert.equal(failures[0][1].exitCode, 18);
     assert.equal(failures[0][2], reason === 'crashed', 'only ordinary crash retains the software-rendering retry');
-    if (reason !== 'crashed') assert.match(failures[0][1].message, /兼容启动\.cmd/);
+    assert.equal(failures[0][1].sandboxFailure, ['launch-failed','integrity-failure'].includes(reason));
+    if (reason !== 'crashed') assert.match(failures[0][1].message, /一次临时兼容重试/);
   }
 });
 

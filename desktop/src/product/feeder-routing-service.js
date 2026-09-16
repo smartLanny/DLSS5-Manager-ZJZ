@@ -107,6 +107,7 @@ function createFeederRoutingService(options) {
       return { ...state, available: true, packageId: pkg.recipe.id, providerPackageId: pkg.recipe.providerPackageId || null,
         coreVersion: pkg.recipe.coreVersion, api: pkg.recipe.gameApi,
         architecture: pkg.recipe.architecture, loadingBackend: pkg.recipe.loadingBackend, hostRequired: pkg.recipe.hostRequired,
+        packageSha256: pkg.fingerprint,
         generation: pkg.recipe.externalProvider ? 'external-provider-v1' : 'feeder-0151', runtimeVerified: false };
     } catch (error) { return { installed: false, available: false, ready: false, needsRecovery: /OWNER|RECORD|RECEIPT|RECOVERY/.test(error.code || ''),
       reason: error.message, code: error.code, runtimeVerified: false }; }

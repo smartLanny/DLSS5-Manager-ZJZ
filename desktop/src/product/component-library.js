@@ -115,6 +115,16 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
     if (stat.size !== known.bytes || pe.getBitness(file) !== (known.architecture === 'x86' ? 32 : 64)) fail('组件大小或位数不符。');
     return { ...known, files: [{ file: await storeFile(file, hash, known.filename), name: known.filename, sha256: hash, bytes: stat.size }], source: 'catalog', importedAt: new Date().toISOString() };
   }
+  async function importCustomCandidate(file, media) {
+    const hash=await digest(file), stat=await fsp.stat(file), name=path.basename(file);
+    if (media === 'native-module') {
+      const bits=pe.getBitness(file); if (![32,64].includes(bits)) fail('这个 DLL 不是可识别的 Windows 模块。');
+    }
+    return { id:`custom-candidate-${hash.slice(0,24)}`,kind:'custom-candidate',version:name,variant:'自定义候选、尚未验证',
+      architecture:media === 'native-module' ? (pe.getBitness(file) === 64 ? 'x64' : 'x86') : 'unknown',interface:'unknown',
+      validation:'blocked',blockers:['缺少可验证的组件身份、用途和兼容契约；不会自动用于任何游戏。'],media,
+      files:[{file:await storeFile(file,hash,name),name,sha256:hash,bytes:stat.size}],source:'user-imported',importedAt:new Date().toISOString() };
+  }
   async function importDirectory(directory) {
     await noLinks(directory);
     const manifest = path.join(directory, 'component-manifest.json');
@@ -180,14 +190,65 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
       }
       files.push({ file: await storeFile(source, row.sha256, path.basename(name)), name, sha256: row.sha256, bytes: row.bytes });
     }
-    // Declared metadata is retained as an imported candidate, never elevated to a tested catalog entry.
+    // Declared metadata is retained as an imported candidate, never elevated to
+    // a trusted package by the user-facing import path. The separate bundled
+    // adoption path below verifies the complete packaged catalog identity.
     return [{ id: m.id, kind: m.kind, version: m.version, variant: m.variant || 'external', architecture: m.architecture,
       interface: m.interface, gameApis: m.gameApis || [], hardwareFamilies: m.hardwareFamilies || [],
       compatibleCoreInterfaces: m.compatibleCoreInterfaces || [], inputInterfaces: Array.isArray(m.inputInterfaces) ? m.inputInterfaces : [m.interface], supportsPresent: m.supportsPresent === true,
       capabilities: Array.isArray(m.capabilities) ? m.capabilities.filter(value => typeof value === 'string') : [],
-      validation: m.validation === 'blocked' || m.validation?.status === 'blocked' ? 'blocked' : 'candidate', blockers: m.validation?.blockers || [], source: 'user-imported', files,
+      validation: m.validation === 'blocked' || m.validation?.status === 'blocked' ? 'blocked' : 'candidate', blockers: m.validation?.blockers || [],
+      defaultEligible:false, verifiedSource:false, immutable:false, sourceType:'user-imported', source: 'user-imported', files,
       importedAt: new Date().toISOString() }];
   }
+  async function bundledIdentity(directory, identity, rows) {
+    if (!identity || !validId(identity.id) || !Array.isArray(rows) || rows.length !== 1 || rows[0].id !== identity.id ||
+        rows[0].kind !== identity.kind || rows[0].version !== identity.version || rows[0].architecture !== identity.architecture ||
+        rows[0].interface !== identity.interface || !Array.isArray(identity.files) || !identity.files.length || identity.files.length > 128)
+      fail('随包组件身份与导入清单不一致。');
+    const exactArray = (left, right) => JSON.stringify(Array.isArray(left) ? left : []) === JSON.stringify(Array.isArray(right) ? right : []);
+    for (const field of ['gameApis','hardwareFamilies','inputInterfaces','compatibleCoreInterfaces','capabilities'])
+      if (!exactArray(rows[0][field], identity[field])) fail(`随包组件 ${field} 声明不一致。`);
+    const prefix = `components/${identity.id}/`, expected = new Map();
+    for (const item of identity.files) {
+      if (!item || typeof item.path !== 'string' || !item.path.replaceAll('\\','/').startsWith(prefix) ||
+          !HASH.test(item.sha256 || '') || !Number.isSafeInteger(item.bytes) || item.bytes < 0 || item.bytes > MAX_FILE)
+        fail('随包组件文件索引无效。');
+      const name = relativeName(item.path.replaceAll('\\','/').slice(prefix.length));
+      if (expected.has(name.toLowerCase())) fail('随包组件文件索引重复。');
+      expected.set(name.toLowerCase(), { ...item, name });
+      const source = path.join(directory, ...name.split('/'));
+      await noLinks(source); const stat = await fsp.stat(source);
+      if (!stat.isFile() || stat.size !== item.bytes || await digest(source) !== item.sha256) fail('随包组件文件与发布目录不一致。');
+    }
+    if (!expected.has('component-manifest.json')) fail('随包组件缺少受目录保护的组件清单。');
+    for (const item of rows[0].files) {
+      const indexed = expected.get(String(item.name || '').replaceAll('\\','/').toLowerCase());
+      if (!indexed || indexed.sha256 !== item.sha256 || indexed.bytes !== item.bytes) fail('随包组件清单包含目录未登记文件。');
+    }
+    const sourceType = String(identity.sourceType || 'bundled');
+    if (!['bundled','official-release'].includes(sourceType)) fail('随包组件来源类型无效。');
+    if (sourceType === 'official-release' &&
+        (!identity.repository || !String(identity.downloadUrl || '').startsWith(`https://github.com/${identity.repository}/releases/download/`)))
+      fail('官方随包组件缺少不可变下载来源。');
+    return { ...rows[0], gameApis:[...(identity.gameApis || [])], hardwareFamilies:[...(identity.hardwareFamilies || [])],
+      inputInterfaces:[...(identity.inputInterfaces || [])], compatibleCoreInterfaces:[...(identity.compatibleCoreInterfaces || [])],
+      capabilities:[...(identity.capabilities || [])], validation:identity.validation || rows[0].validation,
+      defaultEligible:identity.defaultEligible === true, sourceType, repository:identity.repository || null,
+      downloadUrl:identity.downloadUrl || null, commit:identity.commit || null,
+      source:'bundled', verifiedSource:true, immutable:true, importedAt:new Date().toISOString() };
+  }
+  async function adoptBundledComponent(directory, identity) { return serialize(async () => {
+    if (typeof directory !== 'string' || !path.isAbsolute(directory)) fail('随包组件目录无效。');
+    await noLinks(directory); await fsp.mkdir(root, { recursive:true });
+    const row = await bundledIdentity(directory, identity, await importDirectory(directory));
+    const data = await inventory(), index = data.packages.findIndex(item => item.id === row.id);
+    if (index >= 0 && JSON.stringify(data.packages[index].files) !== JSON.stringify(row.files))
+      fail('同一随包组件 ID 对应不同文件。');
+    if (index < 0) data.packages.push(row); else data.packages[index] = row;
+    await atomicJson(inventoryFile, data);
+    return { packages:[row], changedGames:false };
+  }); }
   async function importComponent(selected) { return serialize(async () => {
     if (typeof selected !== 'string' || !path.isAbsolute(selected)) fail('请选择本机组件文件或目录。');
     await noLinks(selected); await fsp.mkdir(root, { recursive: true });
@@ -200,10 +261,23 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
           if (stat.size !== known.bytes) fail('上游压缩包长度不符。');
           rows = [{ ...known, files:[{file:await storeFile(selected,hash,known.filename),name:known.filename,sha256:hash,bytes:stat.size}],
             source:'catalog',validation:'candidate',requiresAdapter:true,importedAt:new Date().toISOString() }];
-        } else { temp = await fsp.mkdtemp(path.join(root, '.import-')); await unpack(selected, temp); rows = await importDirectory(temp); }
+        } else {
+          temp = await fsp.mkdtemp(path.join(root, '.import-')); await unpack(selected, temp);
+          try { rows = await importDirectory(temp); }
+          catch (error) {
+            if (!/目录中没有已识别组件；自定义组件须提供 component-manifest[.]json/.test(error.message || '')) throw error;
+            rows = [await importCustomCandidate(selected,'archive')];
+          }
+        }
       }
       else if (path.basename(selected) === 'component-manifest.json') rows = await importDirectory(path.dirname(selected));
-      else rows = [await importPlain(selected)];
+      else {
+        try { rows = [await importPlain(selected)]; }
+        catch (error) {
+          if (!/尚未识别这个单文件组件/.test(error.message || '') || !/\.dll$/i.test(selected)) throw error;
+          rows = [await importCustomCandidate(selected,'native-module')];
+        }
+      }
       const data = await inventory();
       for (const row of rows) {
         const existing = data.packages.find(p => p.id === row.id);
@@ -390,7 +464,7 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
       return await importComponent(file);
     } finally { if (inside(root,temp) && path.basename(temp).startsWith('.download-')) await fsp.rm(temp,{recursive:true,force:true}); }
   }
-  return { root, importComponent, importVerifiedCore, activateRuntime, activateCore, registerPayloadContext, inventory, checkUpdates, downloadComponent, catalog: availableCatalog };
+  return { root, importComponent, adoptBundledComponent, importVerifiedCore, activateRuntime, activateCore, registerPayloadContext, inventory, checkUpdates, downloadComponent, catalog: availableCatalog };
 }
 function readCachedComponents(root) {
   const file = path.join(root, 'inventory.json');

@@ -13,7 +13,7 @@ const REQUIRED_RESOURCES = [
   'fg-components/manifest.json', 'fg-components/LICENSE', 'fg-components/MINHOOK-LICENSE.txt',
   'fg-components/UAL-LICENSE', 'fg-components/global.ini'
 ];
-const REQUIRED_ROOT_FILES = ['启动诊断.cmd', 'startup-diagnostics.ps1', '兼容启动.cmd', 'startup-compatible.ps1'];
+const REQUIRED_ROOT_FILES = ['启动诊断.cmd', 'startup-diagnostics.ps1'];
 
 const LEGACY_FG_METADATA_FILES = Object.freeze(['manifest.json', 'LICENSE', 'MINHOOK-LICENSE.txt', 'UAL-LICENSE', 'global.ini']);
 const LEGACY_FG_ROLES = Object.freeze(['core', 'asi', 'overlay', 'ual', 'ualConfig']);

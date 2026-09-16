@@ -8,6 +8,19 @@ const { prepareCoreCatalog } = require('../scripts/prepare-core-catalog');
 const { inspectManifest, buildPayload, prepareStageRoot } = require('../scripts/stage-manager-distribution.cjs');
 const managerBuild = require('../scripts/build-manager.cjs');
 
+test('portable release emits a manager-only immutable update manifest', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'manager-update-manifest-'));
+  t.after(() => fs.rmSync(root, { recursive:true, force:true }));
+  const bundle = { file:path.join(root, 'DLSS5-Manager-0.5.0-beta.2-Portable.zip'), bytes:123456, sha256:'a'.repeat(64) };
+  const result = await managerBuild.createUpdateManifest(root,bundle);
+  assert.equal(result.manifest.schema,'dlss5-manager-update-v1');
+  assert.equal(result.manifest.channel,'preview');
+  assert.match(result.manifest.artifact.url,/releases\/download\/v0[.]5[.]0-beta[.]2\/DLSS5-Manager-0[.]5[.]0-beta[.]2-Portable[.]zip$/);
+  assert.equal(result.manifest.artifact.sha256,'a'.repeat(64));
+  assert.match(result.manifest.notes,/Core.*独立更新/);
+  assert.equal(fs.existsSync(result.file),true);
+});
+
 test('build preparation retains visible update-only candidate labels and the existing default', () => {
   const candidates = {
     '0.5-dline13': { label: '0.5 D13 · 测试', coreUpdateOnly: true, comparisonOnly: false, compatibility: null },
@@ -198,7 +211,12 @@ test('large staging and delivery roots can live on another drive without permitt
   const zipConfig = managerBuild.buildConfig({ stageRoot, flavor:'offline', outputRoot:roots.outputRoot,
     unpackedZip:true, electronDist:'D:/verified-electron-dist' });
   assert.deepEqual(zipConfig.win.target, ['dir']);
-  assert.equal(zipConfig.win.signAndEditExecutable, false);
+  assert.equal(zipConfig.win.signAndEditExecutable, false,
+    '目录式便携包应避开需要 Windows 符号链接权限的跨平台签名工具包');
+  assert.equal(zipConfig.win.icon, 'build/icon.ico');
+  assert.equal(typeof managerBuild.editUnpackedExecutableResources, 'function',
+    '目录打包后必须通过固定版本的 Windows 资源编辑器写入同一套 ICO 与版本信息');
+  assert.ok(zipConfig.extraFiles.some(row => row.to === 'DLSS5-Manager.portable.json'));
   const explicit = managerBuild.explicitTargets({ unpackedZip:true });
   const { Platform, Arch } = require('electron-builder');
   assert.deepEqual(explicit.get(Platform.WINDOWS).get(Arch.x64), ['dir']);

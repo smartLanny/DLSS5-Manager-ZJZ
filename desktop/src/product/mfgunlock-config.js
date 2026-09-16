@@ -1,6 +1,7 @@
 'use strict';
 
-// Public configuration contract of MFGAdaUnlock-RenoDx 0.9.
+// Public configuration contract introduced by MFGAdaUnlock-RenoDx 0.9 and
+// preserved by 1.0 for existing saved configurations.
 // Source tag 0.9, commit 4a7b7bcd5f4e951c0cae9ffa7db7e5bdf5f8d40b.
 // A fixed ForceMultiplier is an absolute override in 0.9. Dynamic MFG is a
 // separate mode and is release-supported only by the exact stack named below.
@@ -72,9 +73,9 @@ function values(text) {
 
 function integer(raw, key, allowed) {
   if (raw[key] === null) return DEFAULTS[key];
-  if (!/^-?\d+$/.test(raw[key])) fail('SETTINGS_MFG_CONFIG_INVALID', `当前 MFG 0.9 配置 ${key} 无效，管理器保留原文件。`);
+  if (!/^-?\d+$/.test(raw[key])) fail('SETTINGS_MFG_CONFIG_INVALID', `当前 MFG Unlock 配置 ${key} 无效，管理器保留原文件。`);
   const value = Number(raw[key]);
-  if (!allowed(value)) fail('SETTINGS_MFG_CONFIG_INVALID', `当前 MFG 0.9 配置 ${key} 超出范围，管理器保留原文件。`);
+  if (!allowed(value)) fail('SETTINGS_MFG_CONFIG_INVALID', `当前 MFG Unlock 配置 ${key} 超出范围，管理器保留原文件。`);
   return value;
 }
 
@@ -125,7 +126,7 @@ function current(text) {
 
 function validateRequest(request) {
   if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).some(key => !REQUEST_KEYS.includes(key)))
-    fail('SETTINGS_INPUT', 'MFG 0.9 设置请求包含未知字段。');
+    fail('SETTINGS_INPUT', 'MFG Unlock 设置请求包含未知字段。');
   if (!['follow', 'fixed', 'dynamic'].includes(request.mode)) fail('SETTINGS_INPUT', '请选择跟随游戏、固定倍率或 Dynamic MFG。');
   if (request.mode === 'fixed') {
     if (!Number.isInteger(request.multiplier) || request.multiplier < 2 || request.multiplier > 6) fail('SETTINGS_INPUT', '固定总倍率须为 2–6。');
@@ -174,7 +175,7 @@ function compile(text, input) {
   for (const [key, value] of changes) content = ini.setIni(content, SECTION, key, String(value));
   content = bom + content.replace(/^\uFEFF/, '');
   const warnings = [
-    'MFG 0.9 的固定值是绝对倍率，可以提高或降低游戏请求；请在游戏内确认实际倍率。',
+    'MFG Unlock 的固定值是绝对倍率，可以提高或降低游戏请求；请在游戏内确认实际倍率。',
     '配置写入和读回不代表运行时已经采用；完全退出并重启游戏后再验证。'
   ];
   if (request.mode === 'dynamic') warnings.push('Dynamic MFG 仅支持 D3D12、DLSS-G 310.9.1、Streamline 2.14.1、驱动 595.41 或更新且运行库报告支持的完整组合。');

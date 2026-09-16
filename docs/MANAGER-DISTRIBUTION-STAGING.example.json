@@ -27,10 +27,25 @@
     }
   },
   "mfg": {
-    "file": "C:/path/to/renodx-mfgunlock-0.9.addon64",
-    "bytes": 601088,
-    "sha256": "64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da",
-    "url": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases"
+    "defaultProvider": "mfgunlock-1.0",
+    "providers": [
+      {
+        "id": "mfgunlock-1.0",
+        "version": "1.0",
+        "file": "C:/path/to/renodx-mfgunlock-1.0.addon64",
+        "bytes": 710144,
+        "sha256": "f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e",
+        "url": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1.0/renodx-mfgunlock.addon64"
+      },
+      {
+        "id": "mfgunlock-0.9",
+        "version": "0.9",
+        "file": "C:/path/to/renodx-mfgunlock-0.9.addon64",
+        "bytes": 601088,
+        "sha256": "64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da",
+        "url": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/0.9/renodx-mfgunlock.addon64"
+      }
+    ]
   },
   "components": [],
   "resources": [],

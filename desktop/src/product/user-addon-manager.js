@@ -141,4 +141,3 @@ function createUserAddonManager({ componentRoot, assertGameClosed, environment =
 }
 
 module.exports = { createUserAddonManager, RECEIPT, packageFile };
-

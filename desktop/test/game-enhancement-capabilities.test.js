@@ -22,7 +22,7 @@ test('known native integration does not grant NVIDIA MFG multipliers or Dynamic'
   assert.equal(result.eligible, false); assert.deepEqual(result.availableMultipliers, [2]);
   assert.equal(result.availableModes.includes('dynamic'), false); assert.equal(result.officialOverrideCertified, false);
 });
-test('MFG 0.9 offers Dynamic only with exact observed runtime support and refuses unverified 5/6x capacity', () => {
+test('MFG 1.0 and the 0.9 fallback offer Dynamic only with exact observed runtime support and refuse unverified 5/6x capacity', () => {
   const value = input({ hardware: { series: ['RTX40'] }, request: { backend: 'mfgunlock', mode: 'dynamic', targetFps: 120 } });
   value.game.support = { status: 'supported', source: 'native-integration', staticOnly: true, evidence: ['native-files'],
     capabilities: { mfgUnlock: { available: true, api: 'dx12', providerVersion: '0.9', multipliers: [2, 3, 4],
@@ -30,6 +30,8 @@ test('MFG 0.9 offers Dynamic only with exact observed runtime support and refuse
   const result = assessEnhancementState(value);
   assert.equal(result.eligible, true); assert.deepEqual(result.availableModes, ['follow', 'fixed', 'dynamic']);
   assert.deepEqual(result.availableMultipliers, [2, 3, 4]);
+  value.game.support.capabilities.mfgUnlock.providerVersion = '1.0';
+  assert.equal(assessEnhancementState(value).eligible, true);
   value.game.support.capabilities.mfgUnlock.streamlineVersion = '2.14.0.0';
   const mismatch = assessEnhancementState(value);
   assert.equal(mismatch.eligible, false); assert.ok(mismatch.blockers.some(row => row.code === 'SETTINGS_MFG_DYNAMIC_UNCONFIRMED'));

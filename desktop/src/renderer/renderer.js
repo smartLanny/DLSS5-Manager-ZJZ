@@ -37,6 +37,7 @@ const state = {
 const inlineGameDetails = new Map();
 let repairController = null, repairControllerId = null, hoyoController = null;
 let motionSaveGeneration = 0, themeSaveGeneration = 0;
+let managerUpdateBusy = false;
 const overlayTimers = new WeakMap();
 const systemTheme = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
@@ -1571,7 +1572,18 @@ function closeModal(result = false) {
   $('removeSettingsLine').classList.add('hidden');
   $('modalConfirm').textContent = '确认';
   $('modalConfirm').disabled = false;
+  $('modalConfirm').classList.remove('primary');
+  $('modalConfirm').classList.add('danger');
   if (pending && pending.type === 'anti-cheat' && typeof pending.resolve === 'function') pending.resolve(result === true);
+}
+
+function setManagerUpdateBusy(value, message = '') {
+  managerUpdateBusy = value === true;
+  const button = $('updateBtn');
+  button.setAttribute('aria-busy', String(managerUpdateBusy));
+  button.innerHTML = managerUpdateBusy
+    ? `<span class="button-spinner" aria-hidden="true"></span><span>${escapeHtml(message || '正在检查…')}</span>`
+    : '检查管理器更新';
 }
 
 function switchView(view) {
@@ -1627,7 +1639,7 @@ async function boot() {
     $('bilibiliBtn').classList.toggle('hidden', !state.product.bilibiliUrl);
     $('qqBtn').textContent = state.product.qqGroup ? `QQ群二群：${state.product.qqGroup}` : '加入交流群';
     $('qqBtn').classList.toggle('hidden', !state.product.qqGroup);
-    $('updateBtn').classList.toggle('hidden', !state.product.releaseUrl);
+    $('updateBtn').classList.toggle('hidden', !state.product.updateManifestUrl && !state.product.releaseUrl);
     const gpu = state.hardware;
     const gpuFacts = window.launchSettingsUi?.hardwareFacts(gpu), recommended = window.launchSettingsUi?.recommendedPreset(gpu);
     $('hardwareNotice').textContent = recommended
@@ -1891,7 +1903,29 @@ $('addonVersionSelect').onchange = event => runAction(async () => {
 }, '新安装默认版本已保存；已安装游戏保持当前版本', false).then(() => renderGames({ preserveExpanded: true }));
 $('bilibiliBtn').onclick = () => window.manager.openExternal('bilibiliUrl');
 $('qqBtn').onclick = async () => { await window.manager.copyText(state.product.qqGroup); toast('群号已复制'); };
-$('updateBtn').onclick = () => window.manager.openExternal('releaseUrl');
+$('updateBtn').onclick = async () => {
+  if (managerUpdateBusy) { await window.manager.cancelManagerUpdate?.(); return; }
+  if (typeof window.manager.checkManagerUpdate !== 'function') { await window.manager.openExternal('releaseUrl'); return; }
+  setManagerUpdateBusy(true, '正在检查…');
+  try {
+    const result = unwrap(await window.manager.checkManagerUpdate());
+    if (!result.available) { toast('当前已是最新版本'); return; }
+    state.pendingModal = { type:'manager-update', manifest:result.manifest, portable:result.portable };
+    $('modalTitle').textContent = `管理器 ${result.manifest.version} 可用`;
+    $('modalBody').textContent = result.portable
+      ? `${result.manifest.notes || '包含稳定性与兼容性更新。'} 下载后会校验 SHA-256，确认完整才重启替换；游戏目录和组件库不会被改动。`
+      : `${result.manifest.notes || '包含稳定性与兼容性更新。'} 当前不是目录式便携版，请前往发布页下载安装。`;
+    $('modalConfirm').textContent = result.portable ? '下载并重启更新' : '打开发布页';
+    $('modalConfirm').classList.remove('danger'); $('modalConfirm').classList.add('primary');
+    showOverlay($('modal'));
+  } catch (error) { toast(error.message,true); }
+  finally { setManagerUpdateBusy(false); }
+};
+window.manager.onManagerUpdateProgress?.(value => {
+  if (!managerUpdateBusy) return;
+  const percent = Number.isFinite(value?.percent) ? ` ${value.percent}%` : '';
+  setManagerUpdateBusy(true, `${value?.message || '正在更新'}${percent}`);
+});
 $('repairGameSelect').onchange = event => { state.repairGame = event.target.value; loadRepairDiagnostic(); };
 $('repairBtn').onclick = () => repairController?.previewRepair();
 $('exportStartupBtn').onclick = async () => {
@@ -1945,6 +1979,17 @@ $('modalConfirm').onclick = async () => {
   if (!pending) return;
   if (pending.type === 'anti-cheat') {
     closeModal(true);
+    return;
+  }
+  if (pending.type === 'manager-update') {
+    closeModal();
+    if (!pending.portable) { await window.manager.openExternal('releaseUrl'); return; }
+    setBusy(true); setManagerUpdateBusy(true,'正在下载…');
+    try {
+      unwrap(await window.manager.prepareManagerUpdate(pending.manifest));
+      setManagerUpdateBusy(true,'正在重启…');
+      unwrap(await window.manager.applyManagerUpdate());
+    } catch(error) { toast(error.message,true); setManagerUpdateBusy(false); setBusy(false); }
     return;
   }
   if (pending.type === 'hotkey') {

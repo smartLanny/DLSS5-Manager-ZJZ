@@ -136,8 +136,8 @@ applyApiDeployment(gameId, {
 
 | 项 | 值 |
 | --- | --- |
-| 启动器 | `E:\Neverness To Everness\NTELauncher.exe`（根层壳）→ `NTELauncher\NTELauncher.exe` |
-| **真实渲染 exe** | `E:\Neverness To Everness\Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe`（254 MB）★ **不是** `NTELauncher\NTEGame.exe`（34.6 MB，那是启动器侧拉起器） |
+| 启动器 | `<异环目录>\NTELauncher.exe`（根层壳）→ `NTELauncher\NTELauncher.exe` |
+| **真实渲染 exe** | `<异环目录>\Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe`（254 MB）★ **不是** `NTELauncher\NTEGame.exe`（34.6 MB，那是启动器侧拉起器） |
 | 目标 API | UE5 默认 DX12，**不需要 argv** |
 | 载体 | **必须 `d3d12.dll`** —— ACE 按注入 dll 文件名检测，`dxgi.dll` 在黑名单内 |
 | carrier 判定依据 | `installer.js:890` 的 `classifyApi(scan.chosen) === 'dx12'` 对异环成立（UE5 DX12），所以这条不阻塞；阻塞在"要不要一起改" |
@@ -185,10 +185,9 @@ applyApiDeployment(gameId, {
 
 | 游戏 | 启动器 | 真实渲染 exe | API 切换 |
 | --- | --- | --- | --- |
-| 绝区零 | `E:\11.kehuduanyouxi\米哈游\launcher.exe` | `...\米哈游\games\ZenlessZoneZero Game\ZenlessZoneZero.exe` | `-force-d3d12` |
-| 鸣潮 | `E:\...\Wuthering Waves\launcher.exe`（真身 `2.6.5.0\launcher_main.exe`） | `...\Wuthering Waves Game\Client\Binaries\Win64\Client-Win64-Shipping.exe` | `-dx12`（⚠ 与 `-dx11` 互斥会 UE Fatal error） |
-| 异环 | `E:\Neverness To Everness\NTELauncher.exe` | `...\Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe` | UE5 默认 DX12（**只需换载体**） |
-| 燕云十六声 | `D:\yysls\Win32\deploy\launcher.exe`（D 盘） | `E:\YY16S\yysls_medium\Engine\Binaries\Win64r\yysls.exe`（E 盘，跨盘） | `--commandline-dx12-control=1`；或 `setting.ini` 的 `DX12=true`；tag：`LocalData\launcher_dx12_control.tag` |
-| 终末地 | `C:\Program Files\GRYPHLINK\Launcher.exe` | `Endfield.exe`（823 KB 瘦引导器） | **无 DX12 档**：Vulkan 优先 / DX11 优先 |
+| 绝区零 | `<HoYoPlay目录>\launcher.exe` | `<游戏目录>\ZenlessZoneZero Game\ZenlessZoneZero.exe` | `-force-d3d12` |
+| 鸣潮 | `<鸣潮目录>\launcher.exe`（真身 `<版本>\launcher_main.exe`） | `<游戏目录>\Client\Binaries\Win64\Client-Win64-Shipping.exe` | `-dx12`（⚠ 与 `-dx11` 互斥会 UE Fatal error） |
+| 异环 | `<异环目录>\NTELauncher.exe` | `<异环目录>\Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe` | UE5 默认 DX12（**只需换载体**） |
+| 燕云十六声 | `<启动器盘>\yysls\Win32\deploy\launcher.exe` | `<游戏盘>\yysls_medium\Engine\Binaries\Win64r\yysls.exe`（可跨盘） | `--commandline-dx12-control=1`；或 `setting.ini` 的 `DX12=true`；tag：`LocalData\launcher_dx12_control.tag` |
+| 终末地 | `<GRYPHLINK目录>\Launcher.exe` | `Endfield.exe`（823 KB 瘦引导器） | **无 DX12 档**：Vulkan 优先 / DX11 优先 |
 | 天涯明月刀 | `QSGameLauncher.exe` | `WuXia_Client_x64.exe` ↔ `XVersion\WuXia_Client_dx12.exe` | **双 exe 切 DX，非参数** |
-

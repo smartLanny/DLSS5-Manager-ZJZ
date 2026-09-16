@@ -78,6 +78,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       .catch(error => { componentSeedErrors.push(`旧组件仓库尚未清理：${error.message}`); return {removedSource:false,error}; })
     : Promise.resolve({removedSource:false});
   const bundledComponentIds = new Set();
+  const bundledComponentIdentities = new Map();
   function seedBundledComponents() {
     if (seedPromise) return seedPromise;
     seedPromise = (async () => {
@@ -88,12 +89,20 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (fs.statSync(file).size > 1024 * 1024) throw new Error('随包组件目录过大。');
       const catalog = JSON.parse(await fs.promises.readFile(file,'utf8'));
       if (catalog.schemaVersion !== 1 || !Array.isArray(catalog.packages) || catalog.packages.length > 128) throw new Error('随包组件目录无效。');
-      const inventory = await componentLibrary.inventory();
       for (const row of catalog.packages) {
         if (!/^[a-z0-9][a-z0-9._+-]{0,127}$/i.test(row.id || '')) throw new Error('随包组件标识无效。');
         bundledComponentIds.add(row.id);
         const dir = path.join(root,row.id);
-        if (!inventory.packages.some(item => item.id === row.id) && fs.existsSync(path.join(dir,'component-manifest.json'))) await componentLibrary.importComponent(dir);
+        // Re-adopt exact bundled identities on every application version. This
+        // safely promotes an older candidate record only after every packaged
+        // file and catalog field has been reverified by the component library.
+        if (fs.existsSync(path.join(dir,'component-manifest.json'))) {
+          await componentLibrary.adoptBundledComponent(dir, row);
+          const module = row.files.find(file => /\.(?:addon64|dll)$/i.test(file.path || '') && !/component-manifest/i.test(file.path || ''));
+          if (module) bundledComponentIdentities.set(row.id, { id:row.id, kind:row.kind, version:row.version,
+            architecture:row.architecture, gameApis:row.gameApis || [], sourceType:row.sourceType,
+            immutable:row.immutable === true, sha256:module.sha256 });
+        }
       }
     })().catch(error => { componentSeedErrors.push(`随包组件导入未完成：${error.message}`); });
     return seedPromise;
@@ -648,12 +657,12 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const registry = require('./component-registry');
     const inventory = await componentLibrary.inventory();
     const owned = Boolean(readManifest(game.dir) || externalOwned(game) || feederOwned(game) || vulkanOwned(game));
+    const api = require('./operation-api').resolveOperationApi(game, { api: defaults.api });
     const bridges = [...registry.bridgeCatalog(payloadDir, { coreHash: core?.files?.['nr-before-sr.zh-CN.addon64'], chainHash: core?.files?.['nrchain_nvngx.dll'], installedHash }),
-      ...registry.importedBridges(componentLibrary.root, { ...core, id: version }, installedHash, registry.bridgeGameId(game))];
-    const selectedBridgeId = registry.bridgeByHash(installedHash)?.id || registry.bridgeByHash(core?.files?.[INSTALLED_NAMES.carrier])?.id || null;
+      ...registry.importedBridges(componentLibrary.root, { ...core, id: version }, installedHash, registry.bridgeGameId(game), api.effectiveApi, bundledComponentIdentities)];
+    const selectedBridgeId = registry.bridgeByHash(installedHash)?.id || bridges.find(row => row.installed)?.id || registry.bridgeByHash(core?.files?.[INSTALLED_NAMES.carrier])?.id || null;
     const selectedBridge = bridges.find(row => row.id === selectedBridgeId) || bridges.find(row => row.default && row.ready && row.compatible) ||
       bridges.find(row => row.ready && row.compatible) || null;
-    const api = require('./operation-api').resolveOperationApi(game, { api: defaults.api });
     const route = await resolveInputRoute(id, { api: defaults.api });
     let feed = feeder.summary(game);
     if (route === 'feeder' && !feed.installed && ['dx9','dx10','dx11','dx12','vulkan'].includes(api.effectiveApi)) {
@@ -662,9 +671,33 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const vk = vulkan.summary(game), payload = inspectCurrentPayload({ allowMissingBundle:true, hardwareFamily:hardware.family, version });
     const runtimeFile = payload.files?.find(row => row.kind === 'runtime');
     const coreRow = coreVersionCatalog().find(row => row.id === version);
-    const stack = require('./component-stack').resolveComponentStack({ api:api.effectiveApi, apiAutomatic:defaults.api === 'auto', route,
+    const stackModule = require('./component-stack');
+    const coreDescriptor = { id:version, kind:'core', version:coreRow?.label || core?.label || version, architecture:'x64',
+      inputInterfaces:core?.inputInterfaces || coreRow?.inputInterfaces || [], ready:Boolean(coreRow?.ready !== false && core),
+      sha256:core?.files?.['nr-before-sr.zh-CN.addon64'], source:coreRow?.source === 'bundled' ? 'bundled' : 'catalog', validation:core?.validation || 'stable' };
+    const componentDescriptors = [coreDescriptor, ...bridges.map(row => ({ id:row.id, kind:'bridge', version:row.version || row.upstreamVersion,
+      architecture:row.architecture, gameApis:row.gameApis || [row.api], compatibleCoreInterfaces:row.compatibleCoreInterfaces || [row.interface],
+      capabilities:row.capabilities || [], defaultEligible:row.defaultEligible === true,
+      sha256:row.sha256, source:row.sourceType || row.source, validation:row.validation || row.channel,
+      verifiedSource:row.verifiedSource === true, immutable:row.immutable === true, ready:row.ready && row.compatible }))];
+    const feederSha = feed.packageSha256 || feed.recipeFingerprint;
+    if (feed.packageId && /^[a-f0-9]{64}$/i.test(feederSha || '')) {
+      const pairedCoreId = `feeder-core:${feed.coreVersion || feed.packageId}`;
+      componentDescriptors.push({ id:pairedCoreId, kind:'core', version:feed.coreVersion || 'Feeder 配套 Core', architecture:'x64',
+        inputInterfaces:['NRExternalProviderV1'], ready:feed.available !== false });
+      componentDescriptors.push({ id:feed.packageId, kind:'feeder', version:feed.version || feed.packageId, architecture:feed.architecture === 32 ? 'x86' : 'mixed',
+        gameApis:[feed.api || api.effectiveApi], compatibleCoreInterfaces:['NRExternalProviderV1'], pairedCoreId, sha256:feederSha,
+        source:'bundled', validation:feed.validation?.status || 'candidate', immutable:true, verifiedSource:true, ready:feed.available !== false });
+    }
+    const resolvedStack = stackModule.resolveStack({ effectiveApi:api.effectiveApi, coreId:version, components:componentDescriptors,
+      installedEvidence:{ route:feed.installed ? 'feeder' : selectedBridgeId ? 'bridge' : route, bridgeId:selectedBridgeId,
+        bridgeSha256:installedHash, feederId:feed.packageId, feederSha256:feederSha } });
+    const displayRoute = resolvedStack.status === 'ready' ? resolvedStack.route : route;
+    const resolvedBridge = resolvedStack.bridge && bridges.find(row => row.id === resolvedStack.bridge.id);
+    const stack = stackModule.resolveComponentStack({ api:api.effectiveApi, apiAutomatic:defaults.api === 'auto', route:displayRoute,
       core:{ version, label:coreRow?.label || core?.label || version, ready:Boolean(coreRow?.ready !== false && core) },
-      bridge:selectedBridge ? { label:selectedBridge.label, ready:selectedBridge.ready, compatible:selectedBridge.compatible } : null,
+      bridge:(resolvedBridge || selectedBridge) ? { label:(resolvedBridge || selectedBridge).label, ready:(resolvedBridge || selectedBridge).ready,
+        compatible:(resolvedBridge || selectedBridge).compatible } : null,
       feeder:{ version:feed.version || feed.packageId || null, coreVersion:feed.coreVersion || null,
         ready:feed.installed ? feed.ready !== false && !feed.needsRecovery : feed.available === true, reason:feed.reason || feed.selectionReason || null },
       vulkan:{ label:vk.packageId ? `Vulkan 配套 ${vk.packageId}` : null, coreVersion:vk.coreVersion || null,
@@ -673,7 +706,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         ready:runtimeFile ? runtimeFile.valid === true : payload.ready === true } });
     return { bridges,
       addons: await userAddons.inspect(game, inventory.packages, owned),
-      selected: { bridge: selectedBridgeId }, stack,
+      selected: { bridge: resolvedStack.bridge?.id || selectedBridgeId }, stack, resolvedStack,
       currentCore: version, defaultCore: bundle.defaultVersion };
   }
   function knownComponentCatalog() {
@@ -717,6 +750,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     result.replacement = choice.replacement;
     return require('./component-registry').selectNativeComponents(payloadDir, result, { api: classifyApi(game.scan?.chosen),
       componentRoot: componentLibrary.root,
+      trustedComponents: bundledComponentIdentities,
       gameId: require('./component-registry').bridgeGameId(game),
       bridgeId: components.bridge || (requestedVersion === '0.4.7beta-bg3-bridge1411' ? 'nigos-1.4.11-nr' : undefined), installedHash: installedBridgeHash(game) });
   }

@@ -5,11 +5,12 @@
   const KIND = Object.freeze({
     'nr-runtime': { label:'NR 显卡运行库', purpose:'按 RTX 系列为 AI Core 提供 NVIDIA NR 运行环境。' },
     core: { label:'AI 增强 Core', purpose:'负责 NR 画面增强；按游戏保存版本，不会被全局选择静默替换。' },
-    bridge: { label:'DLSS5 Bridge', purpose:'仅在需要桥接的 DX11 路线使用，并与 Core 接口配套。' },
+    bridge: { label:'DLSS5 Bridge', purpose:'在需要桥接的 DX11 / Vulkan 路线使用，并与 Core 输入接口配套。' },
     feeder: { label:'DLSS5 Feeder', purpose:'用于没有可用原生 DLSS 输入的游戏，不与 Bridge 同时安装。' },
     mfg: { label:'RTX40 多帧生成', purpose:'独立的补帧组件，不决定 AI Core、DLSS5 Bridge 或 DLSS5 Feeder 路线。' },
     host: { label:'DLSS5 Feeder 运行宿主', purpose:'为需要跨位数兼容的 Feeder 路线提供运行环境。' },
-    'user-addon': { label:'用户 Add-on', purpose:'已导入组件库；只有在指定游戏中启用后才会加载。' }
+    'user-addon': { label:'用户 Add-on', purpose:'已导入组件库；只有在指定游戏中启用后才会加载。' },
+    'custom-candidate': { label:'待确认的自定义文件', purpose:'已安全保存，但缺少身份或兼容契约，不会自动用于游戏。' }
   });
   const kindLabel = kind => KIND[kind]?.label || kind;
   const unwrap = result => { if (result?.ok === false) throw new Error(result.error?.message || '组件操作失败'); return result?.ok === true ? result.value : result; };
@@ -19,7 +20,7 @@
       ['DirectX 12 原生 DLSS', 'AI Core + 显卡运行库', '不需要 DLSS5 Bridge / Feeder'],
       ['DirectX 11', 'AI Core + DLSS5 Bridge + 显卡运行库', 'Bridge 按 Core 接口自动匹配'],
       ['无原生 DLSS / DX9 / DX10', 'DLSS5 Feeder + 专用 Core/运行库', '不会再叠加 DLSS5 Bridge'],
-      ['Vulkan', 'Vulkan 专用配套', '与 DirectX 路线分开管理']
+      ['Vulkan', 'AI Core + DLSS5 Bridge + 显卡运行库', '标记为实验桥接，应用前核对 Core 接口']
     ];
     const grid = add(host, 'div', 'component-route-static');
     for (const [title, value, note] of rows) {
@@ -85,7 +86,7 @@
       const title = document.createElement('strong'); title.textContent = kindLabel(item.kind);
       const meta = document.createElement('span'); meta.textContent = [item.version, item.variant].filter(Boolean).join(' · ');
       const note = document.createElement('small');
-      note.textContent = item.kind === 'user-addon' ? KIND['user-addon'].purpose : item.requiresAdapter
+      note.textContent = item.kind === 'custom-candidate' ? `${KIND['custom-candidate'].purpose} 自定义候选、尚未验证。` : item.kind === 'user-addon' ? KIND['user-addon'].purpose : item.requiresAdapter
         ? '已下载上游原包，但还需要匹配的适配清单，暂不能直接装入游戏。'
         : item.validation === 'blocked' ? '校验未通过，暂不可应用。'
         : `${KIND[item.kind]?.purpose || '已完成本地校验。'}${item.validation === 'candidate' ? ' 应用前会按游戏再次核验。' : ''}`;
@@ -98,7 +99,7 @@
         const button = document.createElement('button'); button.className = 'button'; button.textContent = '作为安装候选'; button.disabled = item.validation === 'blocked';
         button.onclick = () => perform(async () => { sourceChanged(unwrap(await window.manager.activateComponentCore(item.id))); return 'Core 候选已加入安装来源，现有游戏未修改。'; }); row.append(button);
       }
-      if (!row.querySelector('button')) { const badge = document.createElement('span'); badge.className = `badge ${item.validation === 'blocked' ? 'bad' : item.requiresAdapter ? 'warn' : 'good'}`; badge.textContent = item.validation === 'blocked' ? '不可用' : item.requiresAdapter ? '待适配' : item.kind === 'user-addon' ? '已导入' : '已准备'; row.append(badge); }
+      if (!row.querySelector('button')) { const badge = document.createElement('span'); badge.className = `badge ${item.kind === 'custom-candidate' ? 'warn' : item.validation === 'blocked' ? 'bad' : item.requiresAdapter ? 'warn' : 'good'}`; badge.textContent = item.kind === 'custom-candidate' ? '尚未验证' : item.validation === 'blocked' ? '不可用' : item.requiresAdapter ? '待适配' : item.kind === 'user-addon' ? '已导入' : '已准备'; row.append(badge); }
       host.append(row);
     }
     if (!visiblePackages.length) { const empty = document.createElement('div'); empty.className = 'component-empty'; empty.innerHTML = '<strong>还没有导入可用组件</strong><span>可从上方导入已下载的组件，或打开下方在线仓库。</span>'; host.append(empty); }
@@ -123,7 +124,7 @@
     if (!$('componentRouteGameSelect').options.length) { const option = document.createElement('option'); option.textContent = '先在游戏库添加游戏'; option.disabled = true; $('componentRouteGameSelect').append(option); }
     await refreshComponentRoute();
     $('componentGameSelect').replaceChildren();
-    for (const game of games.filter(g => (g.operationApi?.effectiveApi || g.chosen?.apiResolution?.api) === 'dx11')) {
+    for (const game of games.filter(g => ['dx11','vulkan'].includes(g.operationApi?.effectiveApi || g.chosen?.apiResolution?.api))) {
       const option = document.createElement('option'); option.value = game.id; option.textContent = game.name; $('componentGameSelect').append(option);
     }
     if ([...$('componentGameSelect').options].some(o => o.value === selectedGame)) $('componentGameSelect').value = selectedGame;
@@ -158,7 +159,7 @@
     const current = choices.bridges.find(b => b.installed && b.compatible && b.ready) || choices.bridges.find(b => b.compatible && b.ready);
     if (current) select.value = current.id;
     $('applyBridgeComponentBtn').disabled = !current;
-    $('componentBridgeStatus').textContent = '正常情况无需修改。手动切换只作用于所选 DX11 游戏，并按当前 Core 接口校验；同时只启用一份 DLSS5 Bridge。';
+    $('componentBridgeStatus').textContent = '正常情况由管理器自动选择。手动切换只作用于所选 DX11 / Vulkan 游戏，并按当前 Core 输入接口校验；同时只启用一份 DLSS5 Bridge。';
   }
   async function perform(action) {
     const controls = [...document.querySelectorAll('#componentLibraryPanel button')].map(button => ({button, disabled:button.disabled})); controls.forEach(({button}) => button.disabled = true);
@@ -167,7 +168,11 @@
     catch (error) { message.textContent = error.message; }
     finally { controls.forEach(({button,disabled}) => button.disabled = disabled); $('applyBridgeComponentBtn').disabled = !$('componentBridgeSelect').selectedOptions[0] || $('componentBridgeSelect').selectedOptions[0].disabled; }
   }
-  const importSelected = directory => perform(async () => { const value = unwrap(await window.manager.pickComponent(directory)); return value ? '组件已导入组件库并完成校验，未修改游戏。' : '已取消导入。'; });
+  const importSelected = directory => perform(async () => { const value = unwrap(await window.manager.pickComponent(directory));
+    if (!value) return '已取消导入。';
+    return value.packages?.some(row => row.kind === 'custom-candidate')
+      ? '文件已保存为“自定义候选、尚未验证”；缺少用途和兼容契约，不会用于游戏。'
+      : '组件已导入组件库并完成校验，未修改游戏。'; });
   $('importRuntimeDlcBtn').onclick = () => perform(async () => {
     const value = unwrap(await window.manager.pickRuntimeDlc());
     if (!value) return '已取消导入。';

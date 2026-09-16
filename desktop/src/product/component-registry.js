@@ -25,7 +25,7 @@ function bridgeGameId(game) {
   const executable = game?.scan?.chosen?.path || game?.chosen?.path || '';
   return String(game?.steamAppId || game?.appId || '') === '1086940' || /^bg3(?:_dx11)?\.exe$/i.test(path.basename(executable)) ? 'bg3' : 'manual-component';
 }
-function importedBridges(root, core = {}, installedHash, gameId = 'manual-component') {
+function importedBridges(root, core = {}, installedHash, gameId = 'manual-component', api = 'dx11', trustedComponents = null) {
   if (!root) return [];
   const { readCachedComponents, relativeName } = require('./component-library');
   const { planBridgeDlc } = require('./generated/bridge-contract.cjs');
@@ -33,8 +33,12 @@ function importedBridges(root, core = {}, installedHash, gameId = 'manual-compon
     const module = Array.isArray(row.files) && row.files.find(file => /\.addon64$/i.test(file.name));
     if (!module) return null;
     const name = relativeName(module.file), file = path.join(root, name);
+    const expected = trustedComponents instanceof Map ? trustedComponents.get(row.id) : trustedComponents?.[row.id];
+    const official = expected?.kind === 'bridge' && expected.version === row.version && expected.sha256 === module.sha256 &&
+      expected.architecture === row.architecture && expected.sourceType === 'official-release' && expected.immutable === true &&
+      Array.isArray(expected.gameApis) && expected.gameApis.every(value => row.gameApis?.includes(value));
     const notices = row.files.filter(item => /(?:^|\/)(?:license(?:s)?(?:\.[^/]*)?|[^/]*notice[^/]*)$/i.test(item.name)).map(item => item.name);
-    const context = { enabled: true, gameApi: 'dx11', architecture: 'x64', nativeInputs: 'unknown', intent: 'native-bridge', allowPreview: true,
+    const context = { enabled: true, gameApi: api, architecture: 'x64', nativeInputs: 'unknown', intent: 'native-bridge', allowPreview: true,
       core: { buildId: core.id || 'unknown', inputInterfaces: core.inputInterfaces || [], nativeD3D12: true },
       packages: [{ component: 'bridge', version: row.version, variant: row.variant || 'external', sha256: module.sha256,
         gameApis: row.gameApis || ['dx11'], gameArchitectures: [row.architecture], consumerInterface: row.interface,
@@ -42,32 +46,42 @@ function importedBridges(root, core = {}, installedHash, gameId = 'manual-compon
         licenseNoticeFiles: notices.length ? notices : row.source === 'catalog' ? ['THIRD_PARTY_NOTICES.md'] : [] }] };
     const plan = planBridgeDlc({ pins: { bridge: row.version }, gameId }, context);
     return { id: row.id, label: `${row.version} · ${row.variant || 'external'}`, upstreamVersion: row.version,
-      filename: DX11_COMPAT_CARRIER, architecture: row.architecture, api: 'dx11', file, sha256: module.sha256,
+      filename: DX11_COMPAT_CARRIER, architecture: row.architecture, api, gameApis:row.gameApis || [api], version:row.version,
+      compatibleCoreInterfaces:row.compatibleCoreInterfaces?.length ? row.compatibleCoreInterfaces : [row.interface], file, sha256: module.sha256,
       installed: installedHash === module.sha256, ready: fs.existsSync(file), compatible: plan.state === 'candidate' && row.validation !== 'blocked',
-      runtimeVerified: false, source: row.source, channel: 'candidate', contract: plan, interface: row.interface };
+      runtimeVerified: false, source: row.source, sourceType:row.sourceType, validation:row.validation,
+      capabilities:Array.isArray(row.capabilities) ? row.capabilities : [], defaultEligible:row.defaultEligible === true,
+      immutable:row.immutable === true && Boolean(official), verifiedSource:row.verifiedSource === true &&
+        row.source === 'bundled' && row.sourceType === 'official-release' && Boolean(official),
+      channel: row.validation === 'stable' ? 'stable' : 'candidate', contract: plan, interface: row.interface };
   }).filter(Boolean);
 }
 function bridgeByHash(digest) { return BRIDGES.find(row => row.sha256 === digest) || null; }
 function bridgeCatalog(payloadDir, { coreHash = null, chainHash = null, installedHash = null } = {}) {
-  return BRIDGES.map(row => ({ ...row, filename: DX11_COMPAT_CARRIER, architecture: 'x64', api: 'dx11',
+  return BRIDGES.map(row => ({ ...row, filename: DX11_COMPAT_CARRIER, architecture: 'x64', api: 'dx11', gameApis:['dx11'],
+    version:row.upstreamVersion, compatibleCoreInterfaces:['NGX-D3D12-Feature1'], verifiedSource:true, immutable:true, validation:row.channel === 'compatible' ? 'stable' : 'candidate',
     hardwareFamilies: ['RTX40', 'RTX50'], coreSha256: CORE, chainSha256: CHAIN,
     installed: row.sha256 === installedHash,
     compatible: coreHash === CORE && chainHash === CHAIN,
     ready: fs.existsSync(path.join(payloadDir, 'versions', row.sourceVersion, DX11_COMPAT_CARRIER)), runtimeVerified: false }));
 }
-function selectNativeComponents(payloadDir, payload, { api, bridgeId, installedHash, componentRoot, gameId = 'manual-component' } = {}) {
+function selectNativeComponents(payloadDir, payload, { api, bridgeId, installedHash, componentRoot, gameId = 'manual-component', trustedComponents = null } = {}) {
   if (api !== 'dx11') {
     if (bridgeId) fail('COMPONENT_BRIDGE_API', 'NIGos Bridge 仅适用于原生 DX11 路线；加载入口不会改变游戏 API。');
     return { ...payload, components: { bridge: null } };
   }
   const pinned = bridgeByHash(installedHash);
-  const imports = importedBridges(componentRoot, payload.versionInfo, installedHash, gameId);
-  // Imported candidates are opt-in. A new install has no ownership evidence,
-  // so keep the payload's verified companion instead of silently adopting a
-  // candidate that only passed metadata checks. An existing hash may repair
-  // the exact imported component it already owns.
+  const imports = importedBridges(componentRoot, payload.versionInfo, installedHash, gameId, 'dx11', trustedComponents);
+  // Preserve exact installed ownership. For a new DX11 install, choose the
+  // newest bundled official Bridge that the packaged catalog explicitly marks
+  // default-eligible. A user-imported manifest can never grant itself this
+  // privilege, even when its visible version string is newer.
+  const parts = value => String(value).match(/\d+/g)?.map(Number) || [0];
+  const newer = (left, right) => { const a=parts(left.version), b=parts(right.version); for(let i=0;i<Math.max(a.length,b.length);i+=1) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (b[i] || 0) - (a[i] || 0); } return String(right.version).localeCompare(String(left.version)); };
+  const automatic = imports.filter(row => row.defaultEligible && row.verifiedSource && row.immutable && row.compatible && row.ready && row.gameApis.includes('dx11')).sort(newer)[0];
   const imported = bridgeId ? imports.find(row => row.id === bridgeId) :
-    (installedHash ? imports.find(row => row.installed) : null);
+    (installedHash ? imports.find(row => row.installed) : automatic);
   if (imported) {
     if (!imported.compatible || !imported.ready) fail('COMPONENT_BRIDGE_CORE', imported.contract.message);
     const stat = fs.lstatSync(imported.file);

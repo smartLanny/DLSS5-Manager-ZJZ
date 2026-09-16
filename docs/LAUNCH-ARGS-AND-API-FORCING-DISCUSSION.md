@@ -125,7 +125,7 @@ effectiveApi   写入并下次启动后生效的目标 —— 桥接/路线应�
 
 > **同名命中才自动切换注入目标；不同名只提示待确认。**
 
-理由：外部同名工具（`dlss5-installer.ps1`）在这里踩过坑——拖启动器时它建议的"真游戏"是 `D:\Delta Force\...\DeltaForceClient-Win64-Shipping.exe`（**别的游戏**），而询问默认值是 y，用户回车就装错目录。
+理由：外部同名工具（`dlss5-installer.ps1`）在这里踩过坑——拖启动器时它曾把**另一个游戏的 Shipping EXE**建议为“真游戏”，而询问默认值是 y，用户回车就装错目录。
 
 ---
 
@@ -200,15 +200,14 @@ effectiveApi   写入并下次启动后生效的目标 —— 桥接/路线应�
 
 | 游戏 | 启动器 | 真实渲染 exe | DX 切换 | 通道 |
 | --- | --- | --- | --- | --- |
-| 绝区零 | `E:\11.kehuduanyouxi\米哈游\launcher.exe`（HYP 1.18.0.380） | `...\米哈游\games\ZenlessZoneZero Game\ZenlessZoneZero.exe` | `-force-d3d12`（备选 `-use-d3d12`） | A |
-| 鸣潮 | `E:\...\Wuthering Waves\launcher.exe`（真身 `2.6.5.0\launcher_main.exe`） | `...\Wuthering Waves Game\Client\Binaries\Win64\Client-Win64-Shipping.exe`（930.9 MB） | `-dx12` / `-d3d12`；⚠ 与 `-dx11` 互斥会 UE Fatal error | A |
-| 异环 | `E:\Neverness To Everness\NTELauncher.exe` | `...\Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe`（254 MB）★ 不是 `NTELauncher\NTEGame.exe` | UE5 默认 DX12 | —— |
-| 燕云十六声 | `D:\yysls\Win32\deploy\launcher.exe`（**D 盘**） | `E:\YY16S\yysls_medium\Engine\Binaries\Win64r\yysls.exe`（**E 盘**，跨盘） | `--commandline-dx12-control=1`；或 `setting.ini` 的 `DX12=true`；状态 tag `LocalData\launcher_dx12_control.tag`=1 / `last_graphics_api.tag`=dx12 | A 或 B |
-| 终末地 | `C:\Program Files\GRYPHLINK\Launcher.exe`（本机未安装） | `Endfield.exe`（823 KB 瘦引导器） | **无 DX12 档**：Vulkan 优先 / DX11 优先；兜底 `-force-d3d11` | B（启动器设置） |
+| 绝区零 | `<HoYoPlay目录>\launcher.exe`（HYP 1.18.0.380） | `<游戏目录>\ZenlessZoneZero Game\ZenlessZoneZero.exe` | `-force-d3d12`（备选 `-use-d3d12`） | A |
+| 鸣潮 | `<鸣潮目录>\launcher.exe`（真身 `<版本>\launcher_main.exe`） | `<游戏目录>\Client\Binaries\Win64\Client-Win64-Shipping.exe`（约 931 MB） | `-dx12` / `-d3d12`；⚠ 与 `-dx11` 互斥会 UE Fatal error | A |
+| 异环 | `<异环目录>\NTELauncher.exe` | `<异环目录>\Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe`（约 254 MB）★ 不是 `NTELauncher\NTEGame.exe` | UE5 默认 DX12 | —— |
+| 燕云十六声 | `<启动器盘>\yysls\Win32\deploy\launcher.exe` | `<游戏盘>\yysls_medium\Engine\Binaries\Win64r\yysls.exe`（可跨盘） | `--commandline-dx12-control=1`；或 `setting.ini` 的 `DX12=true`；状态 tag `LocalData\launcher_dx12_control.tag`=1 / `last_graphics_api.tag`=dx12 | A 或 B |
+| 终末地 | `<GRYPHLINK目录>\Launcher.exe` | `Endfield.exe`（823 KB 瘦引导器） | **无 DX12 档**：Vulkan 优先 / DX11 优先；兜底 `-force-d3d11` | B（启动器设置） |
 
 补充同类样本（供启发式回归）：天涯明月刀 `WuXia_Client_x64.exe` ↔ `XVersion\WuXia_Client_dx12.exe`（**双 exe 切 DX，非参数**）；巫师3 `bin\x64_dx12\witcher3.exe` ↔ `bin\x64\witcher3.exe`；三角洲同一游戏有两个 Shipping exe（主模式 / BlackHawkDown）；刺客信条启动器在游戏目录**之外**（Ubisoft Connect）。
 
 ## 附录 B：外部参考
 
-同机的第三方工具 `D:\DLSS5参考\dlss5自动化安装包v2.4.1 bugfix\dlss5-installer.ps1` 有一份等价的 `$KnownGameTable`（字段 `Exe / ApiKey / Route / Note`，含绝区零 `NotSupported`、终末地 `ModeSwitch`），以及 `Get-LauncherShellCheck`（启动器壳识别）。**可交叉核对，但不要直接复制其结论**——它是 PowerShell 单文件工具，判定阈值（如 exe > 50 MB、Depth 6）是为它自己的场景调的。
-
+一份本地第三方工具样本有等价的 `$KnownGameTable`（字段 `Exe / ApiKey / Route / Note`，含绝区零 `NotSupported`、终末地 `ModeSwitch`），以及 `Get-LauncherShellCheck`（启动器壳识别）。**可交叉核对，但不要直接复制其结论**——它是 PowerShell 单文件工具，判定阈值（如 exe > 50 MB、Depth 6）是为它自己的场景调的。

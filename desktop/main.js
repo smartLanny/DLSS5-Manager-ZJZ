@@ -8,8 +8,11 @@ const { createStartupDiagnostics, watchWindow, PROCESS_LAUNCH_GUIDANCE } = requi
 const { createStartupElevation, withPermissionRecovery } = require('./src/product/startup-elevation');
 const { createOperationElevation } = require('./src/product/operation-elevation');
 const { workerArguments, runOperationWorker } = require('./src/product/operation-worker');
-const startup = createStartupDiagnostics();
 const { app, BrowserWindow, ipcMain, dialog, screen, shell, clipboard } = require('electron');
+let portableData = null, portableDataError = null;
+try { portableData = require('./src/product/portable-data').configurePortableData(app); }
+catch (error) { portableDataError = error; }
+const startup = createStartupDiagnostics(portableData ? { roots:[path.join(portableData.logs, 'startup')] } : {});
 const operationWorkerRequested = process.argv.some(value => typeof value === 'string' && (value.startsWith('--operation-worker=') || value.startsWith('--hoyo-launch-worker=')));
 let createAppService, createSrModelService, createLaunchSettingsService, createLaunchCoordinator, installGuards, createFgComponents, classifyApi;
 
@@ -32,14 +35,18 @@ let gameAssessment = null;
 let verificationRecords = null;
 let currentHardware = null;
 let compatibilityFeedback = null;
+let launcherCompatibility = null;
+let managerUpdate = null;
 let windowWatch = null;
 let failureVisible = false;
 let quitting = false;
 let singleInstanceOwned = false;
 app.on('before-quit', () => { quitting = true; });
 const softwareRendering = app.commandLine.hasSwitch('software-rendering');
+const noSandbox = app.commandLine.hasSwitch('no-sandbox');
+const sandboxRetryOnce = app.commandLine.hasSwitch('sandbox-retry-once');
 if (softwareRendering) { app.disableHardwareAcceleration(); startup.log('software-rendering-requested'); }
-startup.log('startup-options', { noSandbox: app.commandLine.hasSwitch('no-sandbox'), disableGpu: app.commandLine.hasSwitch('disable-gpu'),
+startup.log('startup-options', { noSandbox, sandboxRetryOnce, disableGpu: app.commandLine.hasSwitch('disable-gpu'),
   disableGpuSandbox: app.commandLine.hasSwitch('disable-gpu-sandbox'), softwareRendering,
   chromium: process.versions.chrome || '', osRelease: os.release(),
   nodeOptionsPresent: Boolean(process.env.NODE_OPTIONS), electronRunAsNodePresent: Boolean(process.env.ELECTRON_RUN_AS_NODE),
@@ -53,7 +60,9 @@ async function exportStartupReport() {
 
 async function startupFailure(title, error, softwareRetry = false) {
   if (operationWorkerRequested) { startup.log('operation-worker-startup-failed', { title, code: error?.code, message: error?.message }); app.exit(1); return; }
+  const sandboxRetry = error?.sandboxFailure === true && !noSandbox && !sandboxRetryOnce;
   startup.log('startup-failure', { title, code: error?.code || '', type: error?.type, reason: error?.reason, exitCode: error?.exitCode,
+    sandboxFailure: error?.sandboxFailure === true,
     message: error?.message || String(error), stack: error?.stack || '' });
   if (failureVisible) return;
   failureVisible = true;
@@ -67,9 +76,14 @@ async function startupFailure(title, error, softwareRetry = false) {
     }
     await app.whenReady();
     const result = await dialog.showMessageBox({ type: 'error', title: '管理器未能正常启动', message: title,
-      detail: `${error?.message || '启动过程未完成。'}\n可以直接导出精简诊断。不会自动删除旧配置，也不能仅凭此判断缺少 VC++。`,
-      buttons: softwareRetry ? ['导出诊断', '使用软件渲染重启', '关闭'] : ['导出诊断', '关闭'], cancelId: softwareRetry ? 2 : 1 });
+      detail: `${error?.message || '启动过程未完成。'}\n可以直接导出精简诊断。不会自动删除旧配置，也不能仅凭此判断缺少 VC++。${sandboxRetry ? '\n已确认 Electron 子进程启动失败，可只在下一次启动临时关闭沙箱排障；该选择不会保存。' : ''}`,
+      buttons: sandboxRetry ? ['导出诊断', '临时兼容重试', '关闭'] : softwareRetry ? ['导出诊断', '使用软件渲染重启', '关闭'] : ['导出诊断', '关闭'], cancelId: sandboxRetry || softwareRetry ? 2 : 1 });
     if (result.response === 0) { await exportStartupReport(); app.quit(); }
+    else if (sandboxRetry && result.response === 1) {
+      const args = process.argv.slice(1).filter(arg => arg !== '--no-sandbox' && arg !== '--sandbox-retry-once' && !arg.startsWith('--sandbox-retry-once='));
+      startup.log('sandbox-retry-once-requested');
+      app.relaunch({ args:[...args,'--no-sandbox','--sandbox-retry-once'] }); app.quit();
+    }
     else if (softwareRetry && result.response === 1) { app.relaunch({ args: [...process.argv.slice(1).filter(arg => arg !== '--software-rendering'), '--software-rendering'] }); app.quit(); }
     else app.quit();
   } catch (failure) {
@@ -85,7 +99,7 @@ app.on('child-process-gone', (_event, details) => {
   startup.log('child-process-gone', { type: details.type, reason: details.reason, exitCode: details.exitCode, serviceName: details.serviceName, name: details.name });
   if (!quitting && details.type === 'GPU' && ['launch-failed', 'integrity-failure'].includes(details.reason)) {
     void startupFailure('图形子进程无法启动', Object.assign(new Error(`GPU process: ${details.reason} (${details.exitCode})。${PROCESS_LAUNCH_GUIDANCE}`),
-      { type: details.type, reason: details.reason, exitCode: details.exitCode }));
+      { type: details.type, reason: details.reason, exitCode: details.exitCode, sandboxFailure:true }));
   }
 });
 
@@ -113,8 +127,14 @@ async function inspectLaunchMode(id) {
   const state = service.store.read(), entry = state.gameOverrides[path.resolve(service.gameDirectory(id)).toLowerCase()];
   const override = entry?.launchExecutable && path.resolve(entry.launchExecutable).toLowerCase() === path.resolve(exe).toLowerCase() ? entry.launchMode : 'auto';
   const selected = ['steam', 'exe'].includes(override) ? override : 'auto';
-  return { selected, effective: selected === 'auto' ? steamAvailable ? 'steam' : 'exe' : selected, steamAvailable,
-    steamAppId: steamAvailable ? String(verified) : null, steamRoot: steamAvailable ? steamRoot : null, exe };
+  const profileGame = { ...game, scan:{ ...(seed?.scan || service.gameScan(id)), chosen },
+    ...(steamAvailable ? { verifiedSteamAppId:String(verified), steamRoot } : {}) };
+  const selection = require('./src/product/operation-api').resolveOperationApi(profileGame);
+  const profile = launcherCompatibility?.resolveLaunchProfile(profileGame, selection.effectiveApi, { preference:selected });
+  const effective = profile?.launchMode || (selected === 'auto' ? steamAvailable ? 'steam' : 'exe' : selected);
+  return { selected, effective, steamAvailable,
+    steamAppId: steamAvailable ? String(verified) : null, steamRoot: steamAvailable ? steamRoot : null, exe,
+    launchProfile:profile || null, instruction:profile?.reason || null, warning:profile?.warning || null };
 }
 async function setLaunchMode(id, mode) {
   if (!['auto', 'steam', 'exe'].includes(mode)) throw Object.assign(new Error('启动方式无效。'), { code: 'LAUNCH_MODE' });
@@ -283,6 +303,8 @@ function registerIpc() {
   serializedActions.add('components-download');
   serializedActions.add('components-core-activate');
   serializedActions.add('components-provider-select');
+  serializedActions.add('manager-update-prepare');
+  serializedActions.add('manager-update-apply');
   loggedGameActions.add('game-component-apply');
   for (const name of ['hoyo-discover', 'hoyo-pick-game', 'hoyo-pick-launcher', 'hoyo-bind', 'hoyo-preview', 'hoyo-apply', 'hoyo-recover']) serializedActions.add(name);
   const call = (name, fn) => ipcMain.handle(name, async (_event, ...args) => withPermissionRecovery(await service.withError(
@@ -467,6 +489,13 @@ function registerIpc() {
   call('components-list', () => service.listComponents());
   call('components-providers', () => service.inspectComponentProviders());
   call('components-provider-select', id => service.selectComponentProvider(id));
+  call('manager-update-check', () => managerUpdate ? managerUpdate.check() : Promise.reject(Object.assign(new Error('当前版本未配置自动更新清单。'), { code:'UPDATE_CONFIGURATION' })));
+  call('manager-update-prepare', manifest => managerUpdate ? managerUpdate.prepare(manifest) : Promise.reject(Object.assign(new Error('当前版本不能自动准备更新。'), { code:'UPDATE_CONFIGURATION' })));
+  call('manager-update-cancel', () => managerUpdate?.cancel() === true);
+  call('manager-update-apply', async () => {
+    if (!managerUpdate) throw Object.assign(new Error('当前版本不能自动应用更新。'), { code:'UPDATE_CONFIGURATION' });
+    const result = await managerUpdate.launchApply(); setImmediate(() => app.quit()); return result;
+  });
   call('components-updates', () => service.checkComponentUpdates());
   call('components-download', id => service.downloadComponent(id));
   call('game-components', id => service.componentChoices(id));
@@ -620,6 +649,13 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
         ...(typeof fgComponents.catalog === 'function' ? fgComponents.catalog() : []).map(row => ({ sha256: row.sha256, role: 'mfgunlock', compatibility: 'compatible' }))
       ] : [] }
     });
+    if (!worker && typeof service.product?.updateManifestUrl === 'string') {
+      managerUpdate = require('./src/product/manager-update').createManagerUpdate({ currentVersion:app.getVersion(),
+        manifestUrl:service.product.updateManifestUrl, root:portableData?.updates || path.join(userData,'updates'),
+        applicationDirectory:app.isPackaged ? path.dirname(process.execPath) : null,
+        executable:app.isPackaged ? process.execPath : null, portable:Boolean(portableData),
+        progress:value => { if (win && !win.isDestroyed()) win.webContents.send('manager-update-progress',value); } });
+    }
     startup.log('state-store-opened');
     const configRecovery = service.store.readRecoveryStatus?.();
     if (!worker && configRecovery && !['ok', 'missing', 'unread'].includes(configRecovery.state)) {
@@ -692,6 +728,8 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       matched: (id, session) => service.legacyRuntimeContext(id) ? legacyRuntimeVerification.matched(id, session) : null
     };
     const broker = require('./src/product/game-launch-broker').createGameLaunchBroker({ resourcesPath: process.resourcesPath });
+    launcherCompatibility = require('./src/product/launcher-compatibility').createLauncherCompatibility({ userData, broker,
+      assertGameClosed: (gameDir, exe) => installGuards.assertGameClosed(gameDir, exe) });
     const isAdministrator = async () => (await elevation.context()).privilege === 'administrator';
     const hoyoLauncher = require('./src/product/hoyo-launcher').createHoYoLauncher({ broker, isAdministrator });
     const loadingHelper = require('./src/product/loading-helper').createLoadingHelper({ appDir: __dirname, resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
@@ -701,7 +739,8 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
     launchSessions = require('./src/product/launch-session').createLaunchSessions({ userData, processes, broker, helper: loadingHelper, hoyoTimeoutMs: 300000,
       game: async id => { const mode = await inspectLaunchMode(id), layout = service.getLayout(id);
         if (layout.loadingBackend === 'hoyoshade') return hoyoLauncher.resolve(layout);
-        return { exe: mode.exe, launchMode: mode.effective, steamAppId: mode.steamAppId, steamRoot: mode.steamRoot,
+        return { exe: mode.launchProfile?.realExecutable || mode.exe, launchMode: mode.effective, steamAppId: mode.steamAppId, steamRoot: mode.steamRoot,
+        ...(mode.launchProfile ? { launchRequest:mode.launchProfile.launchRequest, launchProfile:mode.launchProfile } : {}),
         ...(layout.loadingMode === 'helper' ? { helper: { gameId: id } } : {}) }; },
       launchDirect: id => service.launch(id), launchHoYo: (id, _target, controls) => hoyoLauncher.launch(service.getLayout(id), controls),
       beforeLaunch: async (id, session) => {
@@ -813,6 +852,7 @@ async function startApplication() {
     await app.whenReady(); startup.exportTo(target); app.quit(); return;
   }
   if (process.argv.includes('--diagnostics')) { await app.whenReady(); await exportStartupReport(); app.quit(); return; }
+  if (noSandbox && !sandboxRetryOnce) throw Object.assign(new Error('不能直接以无沙箱模式启动。请先普通双击；仅在程序确认 Electron 子进程启动失败后，错误框会提供一次临时兼容重试。'), { code:'UNAUTHORIZED_NO_SANDBOX' });
   if (app.commandLine.hasSwitch('as-admin')) startup.log('legacy-whole-app-elevation-ignored');
   singleInstanceOwned = app.requestSingleInstanceLock({ startupNonce: startup.sessionId });
   if (!singleInstanceOwned) {
@@ -838,6 +878,13 @@ async function startApplication() {
   app.setAppUserModelId('com.xiaofeng.dlss5.manager');
   await app.whenReady();
   startup.log('electron-ready');
+  if (portableDataError) throw portableDataError;
+  const prerequisite = require('./src/product/startup-prerequisite').createStartupPrerequisite({ dialog, shell,
+    platform:process.platform, executable:process.execPath });
+  const prerequisiteResult = await prerequisite.ensureReady();
+  startup.log('startup-prerequisite', { status:prerequisiteResult.result?.status || 'unknown',
+    repair:prerequisiteResult.result?.repair || '', action:prerequisiteResult.action || 'none' });
+  if (!prerequisiteResult.proceed) { app.quit(); return; }
   await initializeServices();
     for (const file of addonArgs(process.argv)) {
       try { await operationElevation.assertAvailable(); await service.importAddonFile(file); }

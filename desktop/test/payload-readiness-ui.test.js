@@ -50,7 +50,7 @@ test('missing bundle remains blocked with player-facing recovery instructions',(
 
 test('slim manager explains the exact runtime DLC without exposing build paths',()=>{
  const f=fixture('0.4.5-ota','RTX40',false);
- f.payload.versions['0.4.5-ota'].variants.RTX40={ready:false,files:[],missing:['D:/CodexTemp/build/fixed/RTX40/nvngx_dlssnr.dll'],invalid:[]};
+ f.payload.versions['0.4.5-ota'].variants.RTX40={ready:false,files:[],missing:['X:/Fixtures/build/fixed/RTX40/nvngx_dlssnr.dll'],invalid:[]};
  f.payload.source={runtimeDlcRequired:true,requiredHardwareFamily:'RTX40'};
  f.render();
  assert.match(f.nodes.payloadNotice.innerHTML,/NR-Runtime-RTX40\.zip/);

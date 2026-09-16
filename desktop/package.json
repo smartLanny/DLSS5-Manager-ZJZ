@@ -17,10 +17,15 @@
     "verify:payload": "node scripts/verify-payload.js",
     "icon": "electron scripts/build-icon.js",
     "stage:distribution": "node scripts/stage-manager-distribution.cjs",
+    "prepare:official-bridges": "node scripts/prepare-official-bridge-components.cjs",
     "verify:staging": "node scripts/stage-manager-distribution.cjs --check",
     "build": "node scripts/build-manager.cjs --flavor base",
     "build:base": "node scripts/build-manager.cjs --flavor base",
-    "build:portable": "node scripts/build-manager.cjs --flavor base --portable",
+    "build:portable": "node scripts/build-manager.cjs --flavor base --unpacked-zip",
+    "build:release": "node scripts/build-manager.cjs --flavor base --unpacked-zip --release",
+    "build:local-full": "node scripts/build-local-full.cjs",
+    "build:renodx-addon": "node scripts/build-renodx-addon-package.cjs",
+    "audit:public": "node scripts/audit-public-changes.cjs",
     "build:offline": "node scripts/build-manager.cjs --flavor offline",
     "build:offline:portable": "node scripts/build-manager.cjs --flavor offline --portable",
     "verify:fg-components": "node scripts/verify-fg-components.js",
@@ -41,7 +46,10 @@
   },
   "devDependencies": {
     "electron": "44.3.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "pe-library": "0.4.1",
+    "rcedit": "5.0.2",
+    "resedit": "1.7.2"
   },
   "build": {
     "buildVersion": "0.5.0.2",
@@ -85,14 +93,6 @@
       {
         "from": "scripts/startup-diagnostics.ps1",
         "to": "startup-diagnostics.ps1"
-      },
-      {
-        "from": "scripts/startup-compatible.cmd",
-        "to": "兼容启动.cmd"
-      },
-      {
-        "from": "scripts/startup-compatible.ps1",
-        "to": "startup-compatible.ps1"
       }
     ],
     "win": {

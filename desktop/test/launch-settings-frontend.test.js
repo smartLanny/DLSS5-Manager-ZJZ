@@ -36,7 +36,7 @@ test('renderer requests compile with the real policy and omit dormant fields', (
   assert.deepEqual(policy.validateRequest('fg', mfgDynamic), mfgDynamic);
   assert.equal(mfgDynamic.multiplier, undefined);
   assert.deepEqual(ui.createRequest('fg', { backend: 'mfgunlock', mode: 'fixed', multiplier: '2' }),
-    { backend: 'mfgunlock', mode: 'fixed', multiplier: 2 }, 'MFG 0.9 fixed values are absolute requests');
+    { backend: 'mfgunlock', mode: 'fixed', multiplier: 2 }, 'MFG 1.0/0.9 fixed values are absolute requests');
   assert.throws(() => ui.createRequest('fg', { backend: 'rtx40', mode: 'off' }), /有效/);
   assert.throws(() => ui.createRequest('fg', { backend: 'nvidia', mode: 'fixed', multiplier: '7' }), /2–6/);
   assert.throws(() => ui.createRequest('fg', { backend: 'nvidia', mode: 'dynamic', targetFps: '' }), /整数/);
@@ -119,8 +119,8 @@ test('independent SR initialization only adopts explicitly configured and unowne
 });
 
 test('SR model labels describe the requested choice without claiming universal L quality superiority', () => {
-  assert.deepEqual(ui.SR_MODEL_LABELS, { K: 'K · 老版兼容', M: 'M · 平衡选择', L: 'L · 4K 优化' });
-  assert.equal(ui.SR_MODEL_DESCRIPTIONS.L, '主要优化 4K 超级性能档位。');
+  assert.deepEqual(ui.SR_MODEL_LABELS, { K: 'K · 老版兼容', M: 'M · 均衡推荐', L: 'L · 画质优化（帧率最低）' });
+  assert.equal(ui.SR_MODEL_DESCRIPTIONS.L, '更偏向画质，通常也是三个模型中帧率最低的选择。');
   assert.doesNotMatch(Object.values(ui.SR_MODEL_LABELS).join(''), /最好|最高/);
 });
 
@@ -305,8 +305,8 @@ test('SR model recommendation is hardware-bound and does not write during initia
     await controller.ready;
     assert.equal(controller.getState().drafts.sr.preset, 'auto');
     assert.match(host.innerHTML, new RegExp(`value="auto" selected>\u81ea\u52a8\u63a8\u8350 · ${expected}（\u63a8\u8350）`));
-    assert.match(host.innerHTML, /模型 L · 高画质低性能/);
-    assert.match(host.innerHTML, /模型 M · 推荐（适用 RTX40 \/ RTX50）/);
+    assert.match(host.innerHTML, /模型 L · 画质优化（帧率最低）/);
+    assert.match(host.innerHTML, /模型 M · 均衡推荐（RTX40 \/ RTX50）/);
     assert.equal(writes, 0);
   }
   for (const hardware of [{ source: 'unavailable', series: ['RTX40'] }, { family: 'mixed', series: ['RTX30', 'RTX50'] }, {}]) {

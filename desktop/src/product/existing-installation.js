@@ -8,7 +8,7 @@ const PRIMARY_KINDS = new Set(['addon', 'bridge', 'runtime', 'carrier']);
 const LABELS = Object.freeze({
   reshade: 'ReShade 入口',
   addon: 'NR Core',
-  bridge: '输入桥接',
+  bridge: 'DLSS5 Bridge',
   runtime: 'NR 运行库',
   config: '个人配置',
   carrier: 'DX11 兼容组件'
@@ -49,4 +49,3 @@ function inspectExistingInstallation({ executable, managed = false } = {}) {
 }
 
 module.exports = { inspectExistingInstallation };
-
