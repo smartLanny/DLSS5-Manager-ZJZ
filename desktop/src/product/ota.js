@@ -13,6 +13,7 @@ const DX11_CARRIER = 'dlss5-native-carrier-045-dx11-compat.addon64';
 const D21_ARCHIVE_SHA256 = 'cf6d486a4525c75c5279446bd596b6008fc1eb5e3a8b1863a2ee15f249148107';
 const D21_ADDON_SHA256 = '5fb873dab6f03f27c0b37380dff7ab5ad4ebc0ca295feadba06d00a28a1c9c78';
 const D21_BRIDGE_SHA256 = '1acf3cbe509a031be1763a8231cd81e6019aa3532368cd0b08a6c17bc94b70a2';
+const UNIFIED3_ARCHIVE = '1b51ab5646a10bb3f17db04de52c26f62dc8a40435e24ea145af1bebfcd8be46';
 const PAIRED_OTA_PROFILES = Object.freeze({
   'beta0.4.5-dx11-compat': Object.freeze({
     coreName: 'dlss5-ai渲染超分版-beta0.4.5-dx11-compat-@野生的装机宅-bilibili.addon64',
@@ -242,8 +243,25 @@ function standardPackage(entries, archiveSha256) {
       blockers:['新游戏、RTX40 与具体游戏仍需实机验收'] } } : {}) });
 }
 
-function dx11Package(entries) {
+function dx11Package(entries, archiveSha256) {
   const buildInfo = parseJson(entries.get('build-info.json'), 'build-info.json');
+  if (archiveSha256 === UNIFIED3_ARCHIVE && buildInfo.version === 'beta0.5-dline21-unified3' &&
+      buildInfo.source_commit === '7a90660bc468ca86a02abe2e145638b51489d549' && buildInfo.language === 'zh-CN' &&
+      buildInfo.full_face_backend === true && buildInfo.game_runtime_verified === false && buildInfo.stable_release === false) {
+    const rows = verifyRows(entries, parseJson(entries.get('SHA256.json'), 'SHA256.json'), 'file', 'SHA256.json');
+    const addon = exactlyOne(rows, row => row.sha256 === '01b4155dcca346f6b3485f210191baaaf4af6faa9dfb9b29302c8f7e36ae3c93' && /\.addon64$/i.test(row.name), 'unified3 Core');
+    const bridge = exactlyOne(rows, row => row.name === 'nrchain_nvngx.dll' && row.sha256 === D21_BRIDGE_SHA256, 'unified3 NR chain');
+    const carrier = exactlyOne(rows, row => row.name === DX11_CARRIER && row.sha256 === 'eb604bc1149da67492660a6d9e6dc622ca8fbcd247f67f8592aabc7cee633900', 'unified3 DX11 carrier');
+    const policy = require('./payload-companions'), companions = rows.filter(row => policy.isCompanionName(row.name));
+    policy.validateMap(Object.fromEntries(companions.map(row => [row.name, row.sha256])), '0.5-dline21-unified3');
+    return result(buildInfo, addon, bridge, carrier, 'dx11', instructionText(entries, ['安装说明.txt']), {
+      archiveSha256, companions,
+      canonicalCore: { id: '0.5-dline21-unified3', version: '0.5 D21 unified3', variant: 'zh-CN', architecture: 'x64',
+        interface: 'NGX-D3D12-Feature1', inputInterfaces: ['NGX-D3D12-Feature1'], supportsPresent: true,
+        capabilities: ['same-frame-output'], validation: 'candidate', stableRelease: false, coreUpdateOnly: false,
+        blockers: ['具体游戏和 NVIDIA 实机尚未验证；此 Core 未声明外部 Provider V1 接口。'] }
+    });
+  }
   // Core acceptance archives share the metadata filenames, but are not a
   // matched Manager update. Explain that distinction without widening admission.
   if (buildInfo && buildInfo.scope === 'D3D12 Core-only manual acceptance; not Manager/multi-API OTA') {
@@ -288,7 +306,7 @@ async function readOtaPackage(file) {
   if (standard) return standardPackage(entries, archiveSha256);
   if (dx11) {
     if (!entries.has('build-info.json') || !entries.has('SHA256.json')) throw new Error('DX11 OTA metadata missing');
-    return dx11Package(entries);
+    return dx11Package(entries, archiveSha256);
   }
   throw new Error('OTA manifest missing');
 }

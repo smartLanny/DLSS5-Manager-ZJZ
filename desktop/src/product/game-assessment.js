@@ -17,7 +17,7 @@ function assessmentSections(options) {
   return SECTIONS.filter(section => options.sections.includes(section));
 }
 
-function createGameAssessment({ service, coordinator, environment, operations, launches, verification, launchMode, helper, records, components,
+function createGameAssessment({ service, coordinator, environment, operations, deferred, launches, verification, launchMode, helper, records, components,
   hardware = () => null, antiCheatPresent = dir => require('../core/install-guards').antiCheatPresent(dir) }) {
   async function assess(id, options) {
     const sections = assessmentSections(options), full = options === undefined, failures = [];
@@ -42,7 +42,7 @@ function createGameAssessment({ service, coordinator, environment, operations, l
       // This section reads small configuration/ownership records only. Full
       // binary, environment and runtime verification belongs to diagnostics.
       const [currentLayout, operation, launch, currentSession, launchReadiness, nr, hotkeys, coreVersions, defaults, antiCheat, componentChoices] = await Promise.all([
-        layout(), optional('operation', () => operations.inspect(id), { pending: true, unavailable: true }),
+        layout(), optional('operation', () => operations.inspect(id), { pending: false, unavailable: true, inspectionFailed: true }),
         optional('launch', () => launchMode(id), {}), session(),
         coordinator?.inspectLaunchReadiness ? optional('launchReadiness', () => coordinator.inspectLaunchReadiness(id), null) : null,
         optional('nr', () => service.readNrSettings(id), null), optional('hotkeys', () => service.readGameHotkeys(id), null),
@@ -52,7 +52,7 @@ function createGameAssessment({ service, coordinator, environment, operations, l
         optional('componentChoices', () => service.componentChoices?.(id), null)
       ]);
       const nativeIntegration = inspectNativeEnhancementCapabilities(scan);
-      const layoutFailed = !currentLayout || currentLayout.needsRecovery === true || Boolean(currentLayout.blockers?.length) ||
+      const layoutFailed = !currentLayout || Boolean(currentLayout.blockers?.length) ||
         failures.some(row => row.section === 'layout');
       const owned = !layoutFailed && Boolean(game.installed || currentLayout?.source === 'xiaofeng-external-runtime' ||
         ['feeder', 'vulkan', 'hoyoshade-profile'].includes(currentLayout?.source));
@@ -64,14 +64,16 @@ function createGameAssessment({ service, coordinator, environment, operations, l
         deployment: owned ? currentLayout?.mode || 'local' : 'local', loadingMode: owned ? currentLayout?.loadingMode || 'proxy' : 'proxy',
         ...defaults, effectiveApi: selection.effectiveApi, requiresApiSelection: selection.requiresManualSelection };
       const deployment = { ...currentLayout, installed: owned, version: publicGame.addonVersion,
-        pending: layoutFailed || Boolean(currentLayout?.needsRecovery), needsRecovery: layoutFailed || currentLayout?.needsRecovery === true,
+        pending: Boolean(currentLayout?.needsRecovery), needsRecovery: currentLayout?.needsRecovery === true,
+        inspectionFailed: layoutFailed,
         inspection: 'summary', layoutVerified: currentLayout?.verified === true,
         verified: false, filesVerified: false, runtimeVerified: false };
       Object.assign(value, { game: publicGame, api, hardware: hardware(), nativeIntegration, layout: currentLayout,
         deployment, defaults: resolvedDefaults,
         coreVersions: coreMenu(coreVersions, { installedVersion: publicGame.addonVersion, defaultVersion: resolvedDefaults.version,
           existingUnmanaged: !owned && publicGame.existingInstallation?.detected === true }),
-        componentChoices, nr, hotkeys, operation, launch: { ...launch, session: currentSession, readiness: launchReadiness },
+        componentChoices, nr, hotkeys, operation, waiting: deferred ? await optional('waiting', () => deferred.inspect(id), null) : null,
+        launch: { ...launch, session: currentSession, readiness: launchReadiness },
         antiCheat: { detected: antiCheat,
           message: '反作弊或游戏保护可能阻止加载，当前路线也可能暂时无法启用；使用模组有账号处罚风险，请自行决定。',
           officialUrl: 'https://help.steampowered.com/zh-cn/faqs/view/571A-97DA-70E9-FF74',

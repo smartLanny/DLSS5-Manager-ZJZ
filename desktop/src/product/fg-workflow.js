@@ -9,27 +9,27 @@ function createFgWorkflow({ settings, components, assertClosed }) {
   async function ready(id) { await settings.assertReady(id); await assertClosed(id); }
   async function restoreConfig(id, previous) {
     const now = await settings.inspect(id);
-    if (previous.applied?.fg?.backend === 'mfgunlock') {
+    if (['mfgunlock','dlssg-sm86'].includes(previous.applied?.fg?.backend)) {
       const priorRequest = previous.current?.fg?.valid ? previous.current.fg.request : previous.applied.fg.request;
-      const plan = previous.current?.fg?.valid && typeof settings.previewMfgCompensation === 'function'
+      const plan = previous.applied.fg.backend === 'mfgunlock' && previous.current?.fg?.valid && typeof settings.previewMfgCompensation === 'function'
         ? await settings.previewMfgCompensation(id, previous.current.fg) : await settings.preview(id, 'fg', priorRequest);
       await settings.apply(plan.id, { confirm: true });
       if (previous.requests?.fg?.request) await settings.save(id, 'fg', previous.requests.fg.request);
       return;
     }
-    if (now.applied?.fg?.backend === 'mfgunlock' || now.requests?.fg?.request?.backend === 'mfgunlock') await settings.restore(id, 'fg');
-    if (previous.requests?.fg?.request?.backend === 'mfgunlock') await settings.save(id, 'fg', previous.requests.fg.request);
+    if (['mfgunlock','dlssg-sm86'].includes(now.applied?.fg?.backend) || ['mfgunlock','dlssg-sm86'].includes(now.requests?.fg?.request?.backend)) await settings.restore(id, 'fg');
+    if (['mfgunlock','dlssg-sm86'].includes(previous.requests?.fg?.request?.backend)) await settings.save(id, 'fg', previous.requests.fg.request);
   }
   async function apply(id, input, options = {}) {
     const request = policy.validateRequest('fg', input);
-    if (request.backend !== 'mfgunlock' || request.mode === 'restore') throw failure('SETTINGS_FG_WORKFLOW', '此入口仅准备新版 MFG Unlock。');
+    if (!['mfgunlock','dlssg-sm86'].includes(request.backend) || request.mode === 'restore') throw failure('SETTINGS_FG_WORKFLOW', '此入口仅准备显卡对应的补帧兼容组件。');
     await ready(id);
     if (typeof settings.assessEligibility === 'function') {
       const eligibility = await settings.assessEligibility(id, 'fg', request);
       if (!eligibility.eligible) throw failure('SETTINGS_BLOCKED', eligibility.blockers.map(row => row.message).join('\n'), { eligibility, gameStarted: false });
     }
     const previous = await settings.inspect(id), initial = await components.inspect(id);
-    if (initial.route !== 'compatibility') throw failure('SETTINGS_FG_ROUTE_MISMATCH', '当前显卡不使用 RTX40 MFG Unlock。');
+    if (initial.route !== 'compatibility' || initial.backend && initial.backend !== request.backend) throw failure('SETTINGS_FG_ROUTE_MISMATCH', '补帧组件与所选显卡后端不一致。');
     if (initial.migrationPending) throw failure('SETTINGS_FG_MIGRATION_PENDING', '上次补帧迁移尚未完成，请先恢复。', { migrationToken: initial.migrationToken });
     const legacySettings = previous.applied?.fg?.backend === 'rtx40' || previous.requests?.fg?.request?.backend === 'rtx40';
     if ((initial.legacyNeedsMigration || legacySettings) && options.migrateLegacy !== true)
@@ -52,7 +52,7 @@ function createFgWorkflow({ settings, components, assertClosed }) {
       await settings.save(id, 'fg', request);
       if (migrationToken) await components.commitMigration(id, migrationToken);
       if (prepared.undoToken) await components.commitPrepare(id, prepared.undoToken);
-      return { ...result, saved: true, prepared: true, backend: 'mfgunlock', requiresRestart: true, runtimeVerified: false,
+      return { ...result, saved: true, prepared: true, backend: request.backend, requiresRestart: true, runtimeVerified: false,
         componentsChanged: prepared.changed === true, migrated: Boolean(migrationToken), warnings: plan.warnings || [] };
     } catch (cause) {
       const recoveryErrors = [];
@@ -88,7 +88,8 @@ function createFgWorkflow({ settings, components, assertClosed }) {
   }
   async function prepare(id, options = {}) {
     const previous = await settings.inspect(id);
-    const request = previous.current?.fg?.valid ? previous.current.fg.request : previous.applied?.fg?.backend === 'mfgunlock' ? previous.applied.fg.request : { backend: 'mfgunlock', mode: 'follow' };
+    const selected = await components.inspect(id);
+    const request = previous.current?.fg?.valid ? previous.current.fg.request : ['mfgunlock','dlssg-sm86'].includes(previous.applied?.fg?.backend) ? previous.applied.fg.request : { backend: selected.backend || 'mfgunlock', mode: 'follow' };
     return apply(id, request, options);
   }
   async function recover(id) {

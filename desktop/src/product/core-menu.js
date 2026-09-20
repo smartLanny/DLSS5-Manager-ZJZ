@@ -7,7 +7,8 @@ const CORE_CHOICES = Object.freeze([
   { key: 'stable', label: '0.3.3.4 稳定版', ids: ['0.3.3-dev-r4', '0.3.3.4'] },
   { key: '042', label: '0.4.2', ids: ['0.4.2'] },
   { key: '047', label: '0.4.7', ids: ['0.4.7beta', '0.4.7'] },
-  { key: 'd21', label: '0.5D21 多层叠加版', ids: ['0.5-dline21', '0.5D21', '0.5beta-D21'] }
+  { key: 'd21', label: '0.5D21 多层叠加版', ids: ['0.5-dline21', '0.5D21', '0.5beta-D21'] },
+  { key: 'unified3', label: '0.5D21 unified3 · 五层统一设置', ids: ['0.5-dline21-unified3'] }
 ].map(row => Object.freeze({ ...row, ids: Object.freeze(row.ids) })));
 
 function choiceFor(id) {
@@ -25,7 +26,7 @@ function coreMenu(rows, { installedVersion = null, defaultVersion = null, existi
       (matches.length === 1 ? matches[0] : null);
     if (item) {
       const suffix = choice.key === '047' && !installedVersion && item.id === defaultVersion
-        ? existingUnmanaged ? '（可选替换目标）' : '（新安装推荐）' : choice.key === 'd21' ? '（测试）' : '';
+        ? existingUnmanaged ? '（可选替换目标）' : '（新安装推荐）' : ['d21', 'unified3'].includes(choice.key) ? '（测试）' : '';
       result.push({ ...item, label: `${choice.label}${suffix}` });
       selected.add(item.id);
     } else {

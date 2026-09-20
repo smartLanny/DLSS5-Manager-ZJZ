@@ -6,7 +6,7 @@
   const QUALITY = { game: '交还游戏控制', preserve: '保持当前档位（仅选模型）', dlaa: 'DLAA · 原生分辨率', quality: '质量', balanced: '平衡', performance: '性能', ultraPerformance: '超级性能', custom: '自定义输入比例' };
   const PRESET_PERCENT = { dlaa: 100, quality: 67, balanced: 59, performance: 50, ultraPerformance: 33 };
   const MODES = { restore: '使用原有设置', follow: '跟随游戏倍率', off: '关闭帧生成（驱动）', fixed: '固定倍率', dynamic: '动态目标帧率' };
-  const BACKENDS = { native: '原生 DLSS', optiscaler: 'OptiScaler', nvidia: 'NVIDIA 官方 FG', rtx40: '旧版 RTX40 补帧', mfgunlock: 'RTX40 · MFG Unlock' };
+  const BACKENDS = { native: '原生 DLSS', optiscaler: 'OptiScaler', nvidia: 'NVIDIA 官方 FG', rtx40: '旧版 RTX40 补帧', mfgunlock: 'RTX40 · MFG Unlock', 'dlssg-sm86': 'RTX20/30 · DLSSG（实验）' };
   const SR_MODEL_LABELS = Object.freeze({ K: 'K · 老版兼容', M: 'M · 均衡推荐', L: 'L · 画质优化（帧率最低）' });
   const SR_MODEL_DESCRIPTIONS = Object.freeze({ K: '第一代 Transformer，RTX20 / RTX30 本机推荐。',
     M: 'RTX40 / RTX50 的均衡推荐，兼顾画质与帧率。', L: '更偏向画质，通常也是三个模型中帧率最低的选择。' });
@@ -25,7 +25,7 @@
     const known = hardware.source !== 'unavailable' && series.length === 1 && hardware.family !== 'mixed';
     const relevantNames = names.filter(name => /RTX\s*(20|30|40|50)\d{2}(?:\D|$)/i.test(name));
     return { label: relevantNames.length ? relevantNames.join(' / ').replace(/NVIDIA (?:GeForce )?/g, '') : known ? series[0].replace('RTX', 'RTX ') : '显卡未确认', allNames: names.join(' / '),
-      series: known ? series[0] : null, fgBackend: known && series[0] === 'RTX40' ? 'mfgunlock' : known && series[0] === 'RTX50' ? 'nvidia' : null };
+      series: known ? series[0] : null, fgBackend: known && series[0] === 'RTX40' ? 'mfgunlock' : known && series[0] === 'RTX50' ? 'nvidia' : known && ['RTX20', 'RTX30'].includes(series[0]) ? 'dlssg-sm86' : null };
   }
 
   function recommendedPreset(hardware) {
@@ -71,9 +71,9 @@
       if (quality === 'preserve' && !request.preset) throw new Error('仅改模型时，请选择自动推荐、K、L 或 M。');
       return request;
     }
-    if (domain !== 'fg' || !['nvidia', 'rtx40', 'mfgunlock'].includes(backend)) throw new Error('当前显卡尚未确认可用的 FG 设置后端。');
+    if (domain !== 'fg' || !['nvidia', 'rtx40', 'mfgunlock', 'dlssg-sm86'].includes(backend)) throw new Error('当前显卡尚未确认可用的 FG 设置后端。');
     const mode = fields.mode;
-    if (!(backend === 'nvidia' ? ['restore', 'off', 'fixed', 'dynamic'] : backend === 'mfgunlock' ? ['restore', 'follow', 'fixed', 'dynamic'] : ['restore', 'follow', 'fixed', 'dynamic']).includes(mode)) throw new Error('请选择有效 FG 模式。');
+    if (!(backend === 'dlssg-sm86' ? ['restore', 'off', 'follow', 'fixed'] : backend === 'nvidia' ? ['restore', 'off', 'fixed', 'dynamic'] : ['restore', 'follow', 'fixed', 'dynamic']).includes(mode)) throw new Error('请选择有效 FG 模式。');
     const request = { backend, mode };
     if (mode === 'fixed') {
       const multiplier = Number(fields.multiplier);

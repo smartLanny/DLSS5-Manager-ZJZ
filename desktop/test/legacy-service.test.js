@@ -74,6 +74,15 @@ function fixture(t, controls = {}) {
     receipt: path.join(gameRoot, RECEIPT), pending: path.join(gameRoot, PENDING) };
 }
 
+test('waiting source verification pins the legacy recipe and never touches a running game', async t => {
+  const f = fixture(t); f.state.running = true;
+  const verified = await f.service.verifySource(f.game); assert.equal(verified.ready, true); assert.equal(verified.coreVersion, f.state.version);
+  assert.equal(exists(f.receipt), false); assert.equal(exists(f.pending), false);
+  assert.equal(fs.readFileSync(path.join(f.dir, 'ReShade.ini'), 'utf8'), f.original);
+  f.state.offline = true; await assert.rejects(f.service.verifySource(f.game), { code: 'POOL_OFFLINE' });
+  assert.equal(exists(f.layout.addonDirectory), false);
+});
+
 test('local legacy owner previews without writes, installs full matching recipe, repairs pins and restores borrowed config', async t => {
   const f = fixture(t), config = path.join(f.layout.addonDirectory, 'nr_before_sr.ini'); fs.mkdirSync(path.dirname(config), { recursive: true });
   fs.writeFileSync(config, '[NRBeforeSR]\nIntensity=1.91\nPersonal=1\n'); const originalConfig = fs.readFileSync(config);

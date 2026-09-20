@@ -71,16 +71,26 @@ function harness(options = {}) {
   const compatibilityFeedback = { ...defaultFeedback,
     ...(typeof options.compatibilityFeedback === 'function' ? options.compatibilityFeedback() : options.compatibilityFeedback || {}) };
   const business = {
-    './src/product/app-service': { createAppService: () => service }, './src/product/sr-model-service': { createSrModelService: () => ({ read() {}, migrationInfo: async () => ({ baselineCaptured: false }), ...options.srService }) },
-    './src/product/launch-settings-service': { createLaunchSettingsService: () => launchSettings },
+    './src/product/app-service': { createAppService: () => service }, './src/product/sr-model-service': { createSrModelService: input => { options.srFactory?.(input); return { read() {}, migrationInfo: async () => ({ baselineCaptured: false }), ...options.srService }; } },
+    './src/product/launch-settings-service': { createLaunchSettingsService: input => { options.launchFactory?.(input); return launchSettings; } },
+    './src/product/nvapi-drs': { createNvapiDrs: () => options.legacyDriver || {} },
+    './src/product/nvapi-profile': { createNvapiProfileAdapter: () => options.profileDriver || {} },
+    './src/product/work-scheduler': { createWorkScheduler: () => {
+      const scheduler = require('../src/product/work-scheduler').createWorkScheduler();
+      return { run: (key, work) => scheduler.run(key, () => options.serialize ? options.serialize(work) : work()) };
+    } },
+    './src/product/deferred-operations': { createDeferredOperations: input => {
+      options.deferredFactory?.(input); return { start() {}, dispose() {}, ...options.deferredService };
+    } },
     './src/product/launch-coordinator': { createLaunchCoordinator: () => ({ serialize: options.serialize || (fn => fn()),
       assertMutationReady: options.assertMutationReady || (async () => {}), restoreForUninstall: options.restoreForUninstall || (async () => {}),
-      inspect: options.coordinatorInspect || (async () => ({})), removeLibraryEntry: options.removeLibraryEntry || (async () => ({})), launch: async () => ({ launchSettings: [] }) }) },
+      inspect: options.coordinatorInspect || (async () => ({})), removeLibraryEntry: options.removeLibraryEntry || (async () => ({})), launch: options.launch || (async () => ({ launchSettings: [] })) }) },
     './src/core/install-guards': { assertGameClosed: options.assertGameClosed || (async () => {}) }, './src/product/fg-components': { createFgComponents: () => fgComponents },
     './src/product/game-preparation': { createGamePreparation: () => ({ assertReady: async () => {}, inspect: async () => ({ pending: false }), ...options.preparationService }) },
     './src/product/game-environment': { createGameEnvironment: () => ({ assertReady: async () => {}, inspect: async () => ({ pending: false }), ...options.environmentService }) },
     './src/product/game-support': { classifyApi: () => 'dx12' },
-    './src/product/operation-plan': { createOperationPlans: () => ({ assertReady: async () => {}, ...options.operationService }) },
+    './src/product/operation-api': require('../src/product/operation-api'),
+    './src/product/operation-plan': { createOperationPlans: input => { options.operationFactory?.(input); return { assertReady: async () => {}, ...options.operationService }; } },
     './src/product/operation-elevation': { createOperationElevation: () => ({ assertAvailable: async () => {}, inspect: async () => ({ active: false, canRecover: false }), recover: async () => ({}), ...options.elevationService }) },
     './src/product/operation-worker': { workerArguments: require('../src/product/operation-worker').workerArguments,
       runOperationWorker: async opts => { logs.push({ stage: 'worker-entry', details: opts.args }); if (options.initializeWorker) await opts.initialize(); return options.workerResult || { ok: true }; } },
@@ -88,7 +98,7 @@ function harness(options = {}) {
     './src/product/native-enhancement-probe': { createNativeEnhancementProbe: () => ({ inspect: async (_id, domain) => ({
       support: { status: (domain === 'sr' ? options.noNativeDlss : options.noNativeFg) ? 'unknown' : 'supported' } }) }) },
     './src/product/hoyo-launcher': { createHoYoLauncher: () => ({}) },
-    './src/product/hoyo-workflow': { createHoYoWorkflow: () => ({ ...options.hoyoWorkflow }) },
+    './src/product/hoyo-workflow': { createHoYoWorkflow: input => { options.hoyoFactory?.(input); return { ...options.hoyoWorkflow }; } },
     './src/product/hoyo-launch-elevation': { createHoYoLaunchPlans: () => ({}),
       createHoYoElevatedSessions: ({ normal }) => ({ ...normal, assess: async () => null }) },
     './src/product/runtime-verification': { createRuntimeVerification: () => ({}), emptyVerification: require('../src/product/runtime-verification').emptyVerification },
@@ -148,6 +158,82 @@ function harness(options = {}) {
 
 function saw(h, stage) { return h.logs.some(row => row.stage === stage); }
 function dialogTitle(h, text) { return h.dialogs.some(row => String(row.message || row.title).includes(text)); }
+
+function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
+
+test('launch mode saves merge current game fields and preserve another simultaneous game save', async t => {
+  const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'launch-mode-merge-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = require('../src/product/state-store').createStore(path.join(root, 'settings.json'));
+  const dir = id => path.join(root, id), exe = id => path.join(dir(id), 'Game.exe'); let operations;
+  const h = harness({ operationFactory: input => { operations = input; }, appService: { store,
+    gameDirectory: dir, gameExecutable: exe,
+    assessmentSeed: id => ({ id, dir: dir(id), scan: { chosen: { path: exe(id), api: 'dx12', dx12: true, bitness: 64 } } }) } });
+  await settle();
+  try {
+    await Promise.all([operations.setLaunchMode('first', 'exe'), operations.setLaunchMode('second', 'exe'),
+      store.update(state => ({ gameOverrides: { ...state.gameOverrides, [dir('first').toLowerCase()]: {
+        ...state.gameOverrides[dir('first').toLowerCase()], name: 'Kept name', api: 'dx12', apiExecutable: exe('first') } } }))]);
+    const saved = store.read().gameOverrides;
+    assert.equal(saved[dir('first').toLowerCase()].launchMode, 'exe');
+    assert.equal(saved[dir('first').toLowerCase()].name, 'Kept name');
+    assert.equal(saved[dir('first').toLowerCase()].api, 'dx12');
+    assert.equal(saved[dir('second').toLowerCase()].launchMode, 'exe');
+  } finally { h.window.emit('closed'); }
+});
+
+test('a launch blocks mutations for the same directory while another game remains usable', async () => {
+  const entered = deferred(), release = deferred(), calls = [];
+  const h = harness({ appService: { gameDirectory: id => id === 'other' ? 'C:\\other' : 'C:\\game',
+    renameGame: async id => { calls.push(id); } }, launch: async () => {
+    entered.resolve(); await release.promise; return { launchSettings: [] };
+  } });
+  await settle();
+  const launching = h.handles.get('game-launch')({}, 'game'); await entered.promise;
+  const same = h.handles.get('game-rename')({}, 'alias', 'Alias'), other = h.handles.get('game-rename')({}, 'other', 'Other');
+  try { await other; assert.deepEqual(calls, ['other']); }
+  finally { release.resolve(); await Promise.all([launching, same]); h.window.emit('closed'); }
+  assert.deepEqual(calls, ['other', 'alias']);
+});
+
+test('HoYo launch joins the game directory queue while cancel remains immediate', async () => {
+  const entered = deferred(), release = deferred(); let workflow, launches = 0, cancelled = 0;
+  const h = harness({ hoyoFactory: input => { workflow = input; }, hoyoWorkflow: { cancel: async () => { cancelled++; } },
+    launch: async () => { if (++launches === 1) { entered.resolve(); await release.promise; } return { launchSettings: [] }; } });
+  await settle();
+  const direct = h.handles.get('game-launch')({}, 'game'); await entered.promise;
+  const queued = workflow.launch('game', { cancelled: () => false });
+  try { await h.handles.get('hoyo-cancel')({}, 'client'); await settle(); assert.equal(launches, 1); assert.equal(cancelled, 1); }
+  finally { release.resolve(); await Promise.all([direct, queued]); h.window.emit('closed'); }
+  assert.equal(launches, 2);
+});
+
+test('legacy and current NVIDIA helpers share a short lock without blocking game metadata', async () => {
+  const entered = deferred(), release = deferred(), calls = []; let legacy, current;
+  const h = harness({ srFactory: input => { legacy = input.nvapi; }, launchFactory: input => { current = input.driver; },
+    legacyDriver: { applySrPreset: async () => { calls.push('legacy'); entered.resolve(); await release.promise; } },
+    profileDriver: { write: async () => { calls.push('current'); } },
+    appService: { renameGame: async () => { calls.push('rename'); } } });
+  await settle();
+  const old = legacy.applySrPreset(); await entered.promise; const modern = current.write();
+  try { await h.handles.get('game-rename')({}, 'game', 'Name'); assert.deepEqual(calls, ['legacy', 'rename']); }
+  finally { release.resolve(); await Promise.all([old, modern]); h.window.emit('closed'); }
+  assert.deepEqual(calls, ['legacy', 'rename', 'current']);
+});
+
+test('settings plans apply in their owning game queue and reject unregistered plans', async () => {
+  const entered = deferred(), release = deferred(); let applied = false;
+  const h = harness({ launchService: { preview: async () => ({ id: 'settings-plan' }), apply: async () => { applied = true; } },
+    launch: async () => { entered.resolve(); await release.promise; return { launchSettings: [] }; } });
+  await settle();
+  await h.handles.get('launch-settings-preview')({}, 'game', 'sr', {});
+  const launch = h.handles.get('game-launch')({}, 'game'); await entered.promise;
+  const apply = h.handles.get('launch-settings-apply')({}, 'settings-plan', { confirm: true });
+  try { await settle(); assert.equal(applied, false);
+    await assert.rejects(h.handles.get('launch-settings-apply')({}, 'unknown', { confirm: true }), { code: 'PLAN_EXPIRED' });
+  } finally { release.resolve(); await Promise.all([launch, apply]); h.window.emit('closed'); }
+  assert.equal(applied, true);
+});
 
 test('high-DPI compact work areas keep the first window fully on screen and resizable', async () => {
   const h = harness({ workAreaSize: { width: 960, height: 520 } });
@@ -636,12 +722,13 @@ test('HoYo IPC serializes workflow actions, rejects foreign senders and forwards
     }];
   }));
   workflow.inspect = async (id, options) => {
+    if (!options) return { gameId: id };
     assert.equal(serialized, false); assert.equal(Object.keys(options).join(','), 'retry');
     calls.push({ name: 'inspect', args: [id, options.retry] }); return options.retry;
   };
   const h = harness({ hoyoWorkflow: workflow, serialize: async work => {
-    assert.equal(serialized, false); serialized = true;
-    try { return await work(); } finally { serialized = false; }
+    const previous = serialized; serialized = true;
+    try { return await work(); } finally { serialized = previous; }
   } });
   await settle();
   try {

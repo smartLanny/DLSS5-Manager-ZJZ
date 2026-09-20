@@ -7,6 +7,27 @@ const path = require('path');
 const { PAYLOAD_FILES, DX11_COMPAT_VERSION, DX11_COMPAT_LABEL, DX11_COMPAT_CARRIER } = require('../src/product/constants');
 const { createBundle, createVariantsBundle, createVersionedBundle, createCompactBundle, inspectPayload, requirePayload } = require('../src/product/payload');
 
+test('unified3 requires every exact face resource, hashes nested files and rejects arbitrary paths', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'unified3-payload-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const id = '0.5-dline21-unified3', names = require('../src/product/payload-companions').NAMES;
+  for (const family of ['RTX40', 'RTX50']) for (const kind of ['reshade', 'bridge', 'runtime']) {
+    const file = path.join(dir, 'fixed', family, PAYLOAD_FILES[kind]); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, kind);
+  }
+  for (const name of [PAYLOAD_FILES.addon, PAYLOAD_FILES.config, ...names]) {
+    const file = path.join(dir, 'versions', id, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, name);
+  }
+  const bundle = createCompactBundle(dir, [{ id }], id), save = () => fs.writeFileSync(path.join(dir, 'bundle.json'), JSON.stringify(bundle)); save();
+  assert.equal(requirePayload(dir, 'RTX40', id).companions.length, 7);
+  fs.appendFileSync(path.join(dir, 'versions', id, names[0]), 'changed');
+  assert.throws(() => requirePayload(dir, 'RTX40', id), { code: 'ERR_PAYLOAD_HASH' });
+  fs.writeFileSync(path.join(dir, 'versions', id, names[0]), names[0]);
+  bundle.versions[id].companions['nr_face/unknown.dll'] = 'a'.repeat(64); save();
+  assert.throws(() => requirePayload(dir, 'RTX40', id), { code: 'ERR_PAYLOAD_HASH' });
+  delete bundle.versions[id].companions; save();
+  assert.throws(() => requirePayload(dir, 'RTX40', id), { code: 'ERR_PAYLOAD_HASH' });
+});
+
 test('requires every payload file and detects tampering', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaofeng-payload-'));
   for (const name of Object.values(PAYLOAD_FILES)) fs.writeFileSync(path.join(dir, name), name);

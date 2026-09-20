@@ -75,6 +75,25 @@ function expectOriginals(f) {
   assert.equal(fs.readFileSync(path.join(f.dir, 'unknown.dll.bak'), 'utf8'), 'unproven backup must stay');
 }
 
+test('unified3 resource upgrade survives external to ordinary conversion with original INI and receipt ownership', async t => {
+  const f = fixture(t, 'dx12', { pe: { getImports: () => [], getBitness: () => 64 } });
+  await toExternal(f); const payload = nextPayload(f, '0.5-dline21-unified3');
+  payload.companions = require('../src/product/payload-companions').NAMES.map(name => {
+    const file = path.join(f.root, 'resources', name), bytes = 'inert resource:' + name;
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes);
+    return { kind: 'companion', name, file, actual: sha(bytes) };
+  });
+  const plan = await f.service.preview(f.game, { mode: 'external', payload }); await f.service.apply(plan.planId);
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  const layout = f.service.getLayout(f.game);
+  for (const row of payload.companions) assert.equal(sha(fs.readFileSync(path.join(layout.runtimeDir, row.name))), row.actual);
+  await f.service.restore(f.game);
+  const manifest = JSON.parse(fs.readFileSync(manifestPath(f.gameRoot)));
+  assert.equal(manifest.files.filter(row => row.kind === 'companion').length, 7);
+  for (const row of payload.companions) assert.equal(sha(fs.readFileSync(path.join(f.dir, row.name))), row.actual);
+  assert.equal(fs.readFileSync(path.join(f.dir, INSTALLED_NAMES.config), 'utf8'), f.originals[INSTALLED_NAMES.config]);
+});
+
 for (const api of ['dx11', 'dx12']) test(api + ' ordinary to external to upgrade to ordinary preserves personal files and load paths', async t => {
   const f = fixture(t, api), before = fs.readFileSync(manifestPath(f.gameRoot));
   const preview = await f.service.preview(f.game, { mode: 'external' });

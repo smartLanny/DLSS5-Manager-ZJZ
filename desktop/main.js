@@ -26,6 +26,13 @@ let fgWorkflow = null;
 let preparation = null;
 let environment = null;
 let operationPlans = null;
+let deferredOperations = null;
+const workScheduler = require('./src/product/work-scheduler').createWorkScheduler();
+const gameWorkKey = id => 'game:' + path.resolve(service.gameDirectory(id)).toLowerCase();
+function coordinateDriver(adapter) {
+  return Object.fromEntries(Object.entries(adapter).map(([name, value]) => [name, typeof value === 'function'
+    ? (...args) => workScheduler.run('driver:nvidia-drs', () => value.apply(adapter, args)) : value]));
+}
 let operationElevation = null;
 let hoyoLaunchPlans = null;
 let hoyoWorkflow = null;
@@ -41,7 +48,7 @@ let windowWatch = null;
 let failureVisible = false;
 let quitting = false;
 let singleInstanceOwned = false;
-app.on('before-quit', () => { quitting = true; });
+app.on('before-quit', () => { quitting = true; deferredOperations?.stop(); });
 const softwareRendering = app.commandLine.hasSwitch('software-rendering');
 const noSandbox = app.commandLine.hasSwitch('no-sandbox');
 const sandboxRetryOnce = app.commandLine.hasSwitch('sandbox-retry-once');
@@ -141,8 +148,9 @@ async function setLaunchMode(id, mode) {
   const current = await inspectLaunchMode(id);
   if (current.loadingBackend === 'hoyoshade') throw Object.assign(new Error('米哈游模式的启动方式由客户端绑定决定，请在兼容设置中修改。'), { code: 'LAUNCH_HOYO_BOUND' });
   if (mode === 'steam' && !current.steamAvailable) throw Object.assign(new Error('当前游戏没有可验证的 Steam 安装身份。'), { code: 'LAUNCH_STEAM_UNVERIFIED' });
-  const state = service.store.read(), key = path.resolve(service.gameDirectory(id)).toLowerCase();
-  await service.store.write({ gameOverrides: { ...state.gameOverrides, [key]: { ...state.gameOverrides[key], launchMode: mode, launchExecutable: current.exe } } });
+  const key = path.resolve(service.gameDirectory(id)).toLowerCase();
+  await service.store.update(state => ({ gameOverrides: { ...state.gameOverrides,
+    [key]: { ...state.gameOverrides[key], launchMode: mode, launchExecutable: current.exe } } }));
   await service.refresh(); return inspectLaunchMode(id);
 }
 async function applyEnhancement(id, domain, input, options = {}) {
@@ -153,7 +161,9 @@ async function applyEnhancement(id, domain, input, options = {}) {
     const eligibility = await launchSettings.assessEligibility(id, domain, request);
     if (!eligibility.eligible) throw Object.assign(new Error(eligibility.blockers.map(row => row.message).join('；')), { code: eligibility.blockers[0]?.code || 'SETTINGS_UNAVAILABLE' });
   }
-  if (domain === 'fg' && request.backend === 'mfgunlock' && request.mode !== 'restore') return fgWorkflow.apply(id, request, options);
+  if (domain === 'fg' && ['mfgunlock', 'dlssg-sm86'].includes(request.backend) && request.mode !== 'restore') {
+    return fgWorkflow.apply(id, request, options);
+  }
   if (policy.isRestore(domain, request)) {
     const result = await launchSettings.restore(id, domain);
     return { ...result, saved: true };
@@ -274,7 +284,7 @@ function registerIpc() {
     ? service.withError(() => operationElevation.inspect()) : { ok: false, error: { code: 'IPC_SENDER', message: '请求来源无效。' } });
   ipcMain.handle('operation-elevation-recover', async (event, request) => {
     if (!fromMainWindow(event) || request?.confirm !== true) return { ok: false, error: { code: 'CONFIRM_REQUIRED', message: '请明确恢复已结束的一次性操作。' } };
-    return service.withError(() => launchCoordinator.serialize(() => operationElevation.recover()));
+    return service.withError(() => workScheduler.run('operation-elevation', () => operationElevation.recover()));
   });
   const loggedGameActions = new Set([
     'game-install', 'game-repair', 'game-upgrade-addon', 'game-uninstall', 'game-api-set', 'game-route-apply', 'game-user-addon-set',
@@ -294,23 +304,25 @@ function registerIpc() {
   const serializedActions = new Set([...guardedActions, 'game-launch', 'game-uninstall', 'game-dismiss', 'game-library-remove',
     'game-confirm', 'game-rename', 'settings-update', 'sr-model-write', 'launch-settings-save', 'launch-settings-preview',
     'launch-settings-apply', 'launch-settings-restore', 'launch-settings-recover', 'fg-components-prepare', 'fg-components-restore',
-    'payload-source-pick', 'payload-source-reset', 'payload-source-recheck', 'launch-settings-update', 'launch-settings-reset-all',
+    'payload-source-reset', 'payload-source-recheck', 'launch-settings-update', 'launch-settings-reset-all',
     'game-reframework-recover', 'game-feeder-restore', 'game-preparation-recover', 'fg-components-recover',
     'game-environment-prepare-clean', 'game-environment-preview-clean', 'game-environment-apply', 'game-environment-restore',
     'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm', 'game-user-addon-set']);
-  for (const name of ['addon-import', 'addon-remove', 'pick-addon', 'pick-scan-folder', 'components-pick', 'components-runtime-pick', 'components-runtime-activate', 'game-component-apply']) serializedActions.add(name);
+  for (const name of ['addon-import', 'addon-remove', 'components-runtime-activate', 'game-component-apply']) serializedActions.add(name);
   guardedActions.add('game-component-apply');
-  serializedActions.add('components-download');
   serializedActions.add('components-core-activate');
   serializedActions.add('components-provider-select');
   serializedActions.add('manager-update-prepare');
   serializedActions.add('manager-update-apply');
   loggedGameActions.add('game-component-apply');
   for (const name of ['hoyo-discover', 'hoyo-pick-game', 'hoyo-pick-launcher', 'hoyo-bind', 'hoyo-preview', 'hoyo-apply', 'hoyo-recover']) serializedActions.add(name);
+  const hoyoGameActions = new Set(['hoyo-pick-launcher', 'hoyo-bind', 'hoyo-preview', 'hoyo-apply', 'hoyo-recover']);
+  const hoyoBindingActions = new Set(['hoyo-discover', 'hoyo-pick-game', 'hoyo-pick-launcher', 'hoyo-bind']);
+  const settingsPlanGames = new Map();
   const call = (name, fn) => ipcMain.handle(name, async (_event, ...args) => withPermissionRecovery(await service.withError(
-    () => {
+    async () => {
+      if (_event.sender !== win?.webContents) throw Object.assign(new Error('请求不是来自当前管理器窗口。'), { code: 'IPC_SENDER' });
       const work = async () => {
-        if (_event.sender !== win?.webContents) throw Object.assign(new Error('请求不是来自当前管理器窗口。'), { code: 'IPC_SENDER' });
         if (serializedActions.has(name)) await operationElevation?.assertAvailable();
         if (serializedActions.has(name) && loggedGameActions.has(name) && !['game-operation-recover', 'game-preparation-recover', 'launch-settings-recover', 'fg-components-recover', 'game-reframework-recover', 'game-feeder-restore', 'game-environment-restore'].includes(name)) await operationPlans?.assertReady(args[0]);
         if (serializedActions.has(name) && loggedGameActions.has(name) && name !== 'game-environment-restore') await environment?.assertReady(args[0]);
@@ -319,12 +331,26 @@ function registerIpc() {
         return fn(...args);
       };
       if (serializedActions.has(name) && operationElevation?.busy) throw Object.assign(new Error('一次性管理员操作正在执行，请等待明确结果。'), { code: 'ERR_JOB_BUSY' });
-      return serializedActions.has(name) ? launchCoordinator.serialize(work) : work();
+      if (!serializedActions.has(name)) return work();
+      if (hoyoGameActions.has(name)) {
+        const flow = await hoyoWorkflow.inspect(args[0]);
+        return workScheduler.run(gameWorkKey(flow.gameId), () => hoyoBindingActions.has(name)
+          ? workScheduler.run('hoyo-bindings', work) : work());
+      }
+      if (hoyoBindingActions.has(name)) return workScheduler.run('hoyo-bindings', work);
+      const id = name === 'launch-settings-apply' ? settingsPlanGames.get(args[0])
+        : loggedGameActions.has(name) || name === 'game-dismiss' ? args[0] : null;
+      if (name === 'launch-settings-apply' && !id) throw Object.assign(new Error('预览已过期。'), { code: 'PLAN_EXPIRED' });
+      const key = typeof id === 'string' ? gameWorkKey(id)
+        : name === 'game-confirm' && typeof args[0]?.root === 'string' ? 'game:' + path.resolve(args[0].root).toLowerCase()
+          : name.startsWith('manager-update-') ? 'manager-update' : 'component-inventory';
+      return workScheduler.run(key, work);
     },
     { action: name, gameId: loggedGameActions.has(name) && typeof args[0] === 'string' ? args[0] : null }
   )));
   call('boot', async () => {
     const data = await service.boot();
+    deferredOperations?.start();
     currentHardware = data.hardware;
     for (const warning of data.discoveryWarnings || []) startup.log('launcher-discovery-warning', { code: warning.code, message: warning.message });
     return data;
@@ -373,6 +399,9 @@ function registerIpc() {
   });
   call('game-rename', (id, name) => service.renameGame(id, name));
   call('game-api-set', (id, api, options) => service.setGameApi(id, api, options));
+  call('game-api-preference', (id, api) => service.setGameApiPreference(id, api));
+  call('game-operation-submit', (id, request, consent) => deferredOperations.submit(id, request, consent));
+  call('game-operation-cancel-waiting', id => deferredOperations.cancel(id));
   call('game-route-apply', (id, options) => service.applyGameRoute(id, options));
   call('game-prepare-all', (id, options) => preparation.prepare(id, options));
   call('game-preparation-inspect', id => preparation.inspect(id));
@@ -449,8 +478,16 @@ function registerIpc() {
   call('sr-model-write', (id, selection) => launchCoordinator.writeLegacySr(id, selection));
   call('launch-settings-inspect', id => launchCoordinator.inspect(id));
   call('launch-settings-save', (id, domain, request) => launchSettings.save(id, domain, request));
-  call('launch-settings-preview', (id, domain, request) => launchSettings.preview(id, domain, request));
-  call('launch-settings-apply', (planId, consent) => launchSettings.apply(planId, { confirm: consent?.confirm === true }));
+  call('launch-settings-preview', async (id, domain, request) => {
+    const plan = await launchSettings.preview(id, domain, request);
+    settingsPlanGames.set(plan.id, id);
+    if (settingsPlanGames.size > 256) settingsPlanGames.delete(settingsPlanGames.keys().next().value);
+    return plan;
+  });
+  call('launch-settings-apply', async (planId, consent) => {
+    try { return await launchSettings.apply(planId, { confirm: consent?.confirm === true }); }
+    finally { settingsPlanGames.delete(planId); }
+  });
   call('launch-settings-restore', (id, domain) => launchSettings.restore(id, domain));
   call('launch-settings-recover', id => launchSettings.recover(id));
   call('launch-settings-update', (id, domain, input, options = {}) => applyEnhancement(id, domain, input, options));
@@ -663,8 +700,13 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       void dialog.showMessageBox({ type: 'warning', title: '已保留旧配置', message: configRecovery.message,
         detail: '原配置和游戏备份没有被删除。需要协助时，可通过启动诊断导出当前状态。', buttons: ['知道了'] });
     }
+    const driverScript = name => process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, name))
+      ? path.join(process.resourcesPath, name) : path.join(__dirname, 'src', 'product', name);
+    const nvapi = coordinateDriver(require('./src/product/nvapi-drs').createNvapiDrs({ scriptPath: driverScript('nvapi-drs.ps1') }));
+    const driver = coordinateDriver(require('./src/product/nvapi-profile').createNvapiProfileAdapter({ scriptPath: driverScript('nvapi-profile.ps1') }));
     srModel = createSrModelService({
       userData,
+      nvapi,
       resourcesPath: process.resourcesPath,
       appDir: __dirname,
       gameDirectory: id => service.gameDirectory(id),
@@ -676,7 +718,7 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       resourcesPath: process.resourcesPath, appDir: __dirname
     });
     launchSettings = createLaunchSettingsService({
-      userData, resourcesPath: process.resourcesPath, appDir: __dirname,
+      userData, resourcesPath: process.resourcesPath, appDir: __dirname, driver,
       gameDirectory: id => service.gameDirectory(id),
       getLayout: id => service.getLayout(id), scan: id => service.gameScan(id),
       gameExecutable: id => service.gameExecutable(id), legacySrModel: srModel,
@@ -767,14 +809,22 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
     }
     operationPlans = require('./src/product/operation-plan').createOperationPlans({ userData, service, settings: launchSettings,
       components: fgComponents, fgWorkflow, environment, preparation, guards: installGuards, applyEnhancement,
-      restoreForUninstall: id => launchCoordinator.restoreForUninstall(id), setLaunchMode, inspectLaunchMode });
+      restoreForUninstall: id => launchCoordinator.restoreForUninstall(id), setLaunchMode, inspectLaunchMode,
+      onProgress: value => { if (win && !win.isDestroyed()) win.webContents.send('operation-progress', value); } });
+    deferredOperations = require('./src/product/deferred-operations').createDeferredOperations({
+      userData, service, operations: operationPlans,
+      assertClosed: id => installGuards.assertGameClosed(service.gameDirectory(id), service.gameExecutable(id)),
+      run: (game, work) => workScheduler.run('game:' + path.resolve(game).toLowerCase(), work),
+      beforeApply: async () => { await operationElevation?.assertAvailable(); },
+      emit: value => { if (win && !win.isDestroyed()) win.webContents.send('waiting-operation-updated', value); }
+    });
     verificationRecords = require('./src/product/game-verification-records').createGameVerificationRecords({ userData,
       gameExecutable: id => service.gameExecutable(id), layout: id => service.getLayout(id), coreIdentity: id => service.gameCoreIdentity(id), launchSession: id => launchSessions.inspect(id) });
     const componentAssessment = require('./src/product/component-assessment').createComponentAssessment({ layout: id => service.getLayout(id), allowExplicitExpectedPaths: true,
       knownPayloads: () => service.knownComponentCatalog(),
       getExpectedModules: async id => [...await service.gameModuleManifest(id), ...await fgComponents.ownedModuleManifest(id)] });
     gameAssessment = require('./src/product/game-assessment').createGameAssessment({ service, settings: launchSettings, coordinator: launchCoordinator,
-      environment, operations: operationPlans, launches: launchSessions, verification: runtimeVerification, launchMode: inspectLaunchMode,
+      environment, operations: operationPlans, deferred: deferredOperations, launches: launchSessions, verification: runtimeVerification, launchMode: inspectLaunchMode,
       hardware: () => currentHardware, helper: loadingHelper, records: verificationRecords, components: componentAssessment });
     if (!worker) compatibilityFeedback = require('./src/product/compatibility-feedback').createCompatibilityFeedback({
       assessment: gameAssessment, sessions: launchSessions,
@@ -812,7 +862,10 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       packaged: app.isPackaged, runPowerShell, log: startup.log });
     if (!worker) hoyoWorkflow = require('./src/product/hoyo-workflow').createHoYoWorkflow({ userData, service,
       operations: operationPlans, launches: launchSessions, verification: runtimeVerification,
-      launch: (id, controls) => launchCoordinator.serialize(() => launchCoordinator.launch(id, controls)),
+      launch: (id, controls) => workScheduler.run(gameWorkKey(id), async () => {
+        await operationElevation.assertAvailable();
+        return launchCoordinator.launch(id, controls);
+      }),
       inspectLaunchReadiness: id => launchCoordinator.inspectLaunchReadiness(id),
       elevatedApply: (id, planId, consent) => operationElevation.apply(id, planId, consent),
       beforeMutation: id => installGuards.assertGameClosed(service.gameDirectory(id), service.gameExecutable(id)),
@@ -868,7 +921,7 @@ async function startApplication() {
     startup.log('second-instance-focus', { windowAvailable: Boolean(win) });
     if (!service) return;
     for (const file of addonArgs(argv)) {
-      try { await operationElevation?.assertAvailable(); await launchCoordinator.serialize(() => service.importAddonFile(file)); }
+      try { await operationElevation?.assertAvailable(); await workScheduler.run('component-inventory', () => service.importAddonFile(file)); }
       catch (error) { startup.log('addon-import-deferred', { code: error.code, message: error.message });
         await dialog.showMessageBox({ type: 'warning', title: '组件尚未导入', message: '当前操作尚未结束，请等待结果或恢复后，再导入这个组件。', buttons: ['知道了'] }); }
     }

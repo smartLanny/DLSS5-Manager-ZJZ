@@ -113,14 +113,14 @@ function createFeederRoutingService(options) {
       reason: error.message, code: error.code, runtimeVerified: false }; }
   }
   const dispatch = method => (game, request, ...args) => { const selected = owner(game, request);
-    if (selected === modern && ['previewInstall', 'install'].includes(method)) requireHardware(game, request);
+    if (selected === modern && ['verifySource', 'previewInstall', 'install'].includes(method)) requireHardware(game, request);
     return selected[method](game, request, ...args); };
   return {
     summary, selections: game => Object.fromEntries(['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].map(api => {
       const route = providerRoute(game, { api });
       return [api, summary(game, { api, ...(route.matched ? { loadingBackend: route.loadingBackend } : {}) })];
     })),
-    previewInstall: dispatch('previewInstall'), install: dispatch('install'), inspect: dispatch('inspect'), diagnose: dispatch('inspect'),
+    verifySource: dispatch('verifySource'), previewInstall: dispatch('previewInstall'), install: dispatch('install'), inspect: dispatch('inspect'), diagnose: dispatch('inspect'),
     previewRestore: dispatch('previewRestore'), restore: dispatch('restore'), launch: dispatch('launch'),
     recover: (game, request) => { const chosen = owner(game, request); return chosen.recover ? chosen.recover(game, request) : chosen.restore(game, request); },
     profile: game => { const chosen = owner(game); return chosen.profile ? chosen.profile(game) : null; },

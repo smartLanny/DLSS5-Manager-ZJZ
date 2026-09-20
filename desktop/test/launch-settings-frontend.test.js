@@ -44,8 +44,9 @@ test('renderer requests compile with the real policy and omit dormant fields', (
 
 test('an installation family alone never grants FG capability', () => {
   assert.equal(ui.hardwareFacts({ family: 'RTX40' }).fgBackend, null);
-  assert.equal(ui.hardwareFacts({ family: 'RTX40', series: ['RTX30'] }).fgBackend, null);
-  assert.equal(ui.hardwareFacts({ family: 'RTX40', names: ['NVIDIA GeForce RTX 3080'] }).fgBackend, null);
+  assert.equal(ui.hardwareFacts({ family: 'RTX40', series: ['RTX30'] }).fgBackend, 'dlssg-sm86');
+  assert.equal(ui.hardwareFacts({ family: 'RTX40', names: ['NVIDIA GeForce RTX 3080'] }).fgBackend, 'dlssg-sm86');
+  assert.equal(ui.hardwareFacts({ family: 'RTX40', series: ['RTX20'] }).fgBackend, 'dlssg-sm86');
   assert.equal(ui.hardwareFacts({ family: 'RTX40', series: ['RTX40'], names: ['RTX 3090'] }).fgBackend, null);
   assert.equal(ui.hardwareFacts({ family: 'mixed', series: ['RTX40', 'RTX50'] }).fgBackend, null);
   assert.equal(ui.hardwareFacts({ series: ['RTX40'], source: 'unavailable' }).fgBackend, null);

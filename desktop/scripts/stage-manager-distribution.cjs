@@ -262,6 +262,16 @@ async function buildPayload({ stageRoot, manifest, manifestFile, flavor }) {
       copyFile(sharedChain.source, path.join(targetVersion, 'nrchain_nvngx.dll'));
       stagedEntry.files['nrchain_nvngx.dll'] = sharedChain.expected;
     }
+    if (sourceEntry.companions) {
+      const allowed = new Set(['LICENSE', 'onnxruntime_providers_shared.dll', 'onnxruntime.dll', 'ThirdPartyNotices.txt', 'yunet-dynamic.json', 'yunet-dynamic.onnx', 'YUNET-LICENSE'].map(name => 'nr_face/' + name));
+      if (Object.keys(sourceEntry.companions).length !== allowed.size || Object.keys(sourceEntry.companions).some(name => !allowed.has(name))) fail('Core 人脸配套清单不完整或含未知文件。');
+      for (const [name, expected] of Object.entries(sourceEntry.companions)) {
+        if (!HASH.test(expected)) fail('Core 配套摘要无效。');
+        const source = path.join(payloadRoot, 'versions', id, name);
+        await verifyFile(source, { sha256: expected }, `Core/${id}/${name}`);
+        copyFile(source, path.join(targetVersion, name));
+      }
+    }
   }
   for (const family of FAMILIES) {
     const targetFamily = path.join(outputRoot, 'fixed', family);
@@ -303,6 +313,25 @@ async function buildMfg({ stageRoot, manifest, manifestFile }) {
     providers.push(record);
   }
   return { defaultProvider:spec.defaultProvider, providers };
+}
+
+async function buildSm86({ stageRoot, manifest, manifestFile }) {
+  if (!manifest.sm86 && manifest.packageVersion === '0.5.0-beta.2') return null;
+  const { ID, PIN, SOURCE } = require('../src/product/fg-sm86-components');
+  const sourceRoot = resolveInput(manifestFile, manifest.sm86?.sourceRoot, 'sm86.sourceRoot');
+  ensurePlainDirectory(sourceRoot, 'SM86 来源');
+  const target = path.join(stageRoot, 'resources', 'fg-sm86');
+  const result = { schemaVersion: 1, id: ID, backend: 'dlssg-sm86', version: '0.3.5',
+    source: { repository: 'sdli1995/dlssg_for_sm86', commit: SOURCE,
+      url: `https://github.com/sdli1995/dlssg_for_sm86/tree/${SOURCE}` }, files: {} };
+  for (const [role, pin] of Object.entries(PIN)) {
+    const source = path.join(sourceRoot, pin.name);
+    await verifyFile(source, pin, 'SM86/' + pin.name);
+    copyFile(source, path.join(target, pin.name));
+    result.files[role] = { ...pin, source: `https://github.com/sdli1995/dlssg_for_sm86/blob/${SOURCE}/${pin.name}` };
+  }
+  fs.writeFileSync(path.join(target, 'manifest.json'), JSON.stringify(result, null, 2) + '\n');
+  return result;
 }
 
 async function buildSmallComponents({ stageRoot, manifest, manifestFile, flavor }) {
@@ -460,7 +489,7 @@ function buildBridgeReservation({ stageRoot, manifest, components = null }) {
 async function inspectManifest(manifestFile, flavor = 'base') {
   const manifest = readJson(manifestFile);
   if (manifest.schemaVersion !== 1) fail('staging 清单 schemaVersion 必须为 1。');
-  if (!manifest.packageVersion || !/^0\.5\.0-beta\.2$/i.test(String(manifest.packageVersion))) fail('staging 清单 packageVersion 必须为 0.5.0-beta.2。');
+  if (!manifest.packageVersion || !/^0\.5\.0-beta\.[23]$/i.test(String(manifest.packageVersion))) fail('staging 清单 packageVersion 必须为 0.5.0-beta.2 或 0.5.0-beta.3。');
   if (!['base', 'offline'].includes(flavor)) fail(`未知打包 flavor：${flavor}`);
   const payloadRoot = resolveInput(manifestFile, manifest.core?.payloadRoot, 'core.payloadRoot');
   const selectedCoreIds = [manifest.core?.version, ...(Array.isArray(manifest.core?.versions) ? manifest.core.versions : [])];
@@ -479,9 +508,10 @@ async function stageDistribution({ manifestFile = DEFAULT_MANIFEST, flavor = 'ba
     try {
       const payload = await buildPayload({ stageRoot: checkRoot, manifest: input.manifest, manifestFile, flavor });
       const mfg = await buildMfg({ stageRoot: checkRoot, manifest: input.manifest, manifestFile });
+      const sm86 = await buildSm86({ stageRoot: checkRoot, manifest: input.manifest, manifestFile });
       const components = await buildSmallComponents({ stageRoot: checkRoot, manifest: input.manifest, manifestFile, flavor });
       const resources = await buildBundledResources({ stageRoot: checkRoot, manifest: input.manifest, manifestFile });
-      return { ok: true, flavor, manifest: manifestFile, coreVersion: payload.version, coreVersions: payload.versions, sourcePackage: payload.sourcePackage, mfg, components, resources };
+      return { ok: true, flavor, manifest: manifestFile, coreVersion: payload.version, coreVersions: payload.versions, sourcePackage: payload.sourcePackage, mfg, sm86, components, resources };
     } finally {
       fs.rmSync(checkRoot, { recursive: true, force: true });
     }
@@ -489,11 +519,12 @@ async function stageDistribution({ manifestFile = DEFAULT_MANIFEST, flavor = 'ba
   prepareStageRoot(outputRoot, allowedRoot);
   const payload = await buildPayload({ stageRoot: outputRoot, manifest: input.manifest, manifestFile, flavor });
   const mfg = await buildMfg({ stageRoot: outputRoot, manifest: input.manifest, manifestFile });
+  const sm86 = await buildSm86({ stageRoot: outputRoot, manifest: input.manifest, manifestFile });
   const components = await buildSmallComponents({ stageRoot: outputRoot, manifest: input.manifest, manifestFile, flavor });
   const resources = await buildBundledResources({ stageRoot: outputRoot, manifest: input.manifest, manifestFile });
   const bridge = buildBridgeReservation({ stageRoot: outputRoot, manifest: input.manifest, components: components.packages });
   const report = { schemaVersion: 1, packageVersion: input.manifest.packageVersion, flavor, manifest: manifestFile,
-    stageRoot: path.resolve(outputRoot), coreVersion: payload.version, coreVersions: payload.versions, sourcePackage: payload.sourcePackage, mfg, components, resources, bridge,
+    stageRoot: path.resolve(outputRoot), coreVersion: payload.version, coreVersions: payload.versions, sourcePackage: payload.sourcePackage, mfg, sm86, components, resources, bridge,
     runtimeFiles: FAMILIES.map(family => path.join('payload', 'nr-before-sr', 'fixed', family, 'nvngx_dlssnr.dll')) };
   fs.writeFileSync(path.join(outputRoot, 'staging-report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   return report;

@@ -11,7 +11,7 @@ function createLaunchCoordinator({ service, settings, legacySrModel, guards, com
     return current;
   }
   const closed = id => guards.assertGameClosed(service.gameDirectory(id), service.gameExecutable(id));
-  const hasComponentReceipt = id => fs.existsSync(path.join(service.gameDirectory(id), '_DLSS5_Backup', 'xiaofeng-fg-components.json'));
+  const hasComponentReceipt = id => ['xiaofeng-fg-components.json', 'xiaofeng-fg-sm86.json'].some(name => fs.existsSync(path.join(service.gameDirectory(id), '_DLSS5_Backup', name)));
   async function launchFailure(id, error, phase, launchSettings) {
     const outcomes = Array.isArray(launchSettings) ? launchSettings : [];
     let ownedDomains = null;
@@ -160,7 +160,7 @@ function createLaunchCoordinator({ service, settings, legacySrModel, guards, com
       if (!selection || typeof selection.root !== 'string' || typeof selection.executable !== 'string') {
         return service.addManualSelection(selection);
       }
-      for (const name of ['xiaofeng-launch-settings.json', 'xiaofeng-fg-components.json']) {
+      for (const name of ['xiaofeng-launch-settings.json', 'xiaofeng-fg-components.json', 'xiaofeng-fg-sm86.json']) {
         const file = path.join(selection.root, '_DLSS5_Backup', name);
         if (!fs.existsSync(file)) continue;
         let record; try { record = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {

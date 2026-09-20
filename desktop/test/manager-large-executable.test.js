@@ -6,6 +6,7 @@ const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { loadOwner } = require('./helpers/manager-boundary-loader.cjs');
 const safety = require('../src/product/launch-safety');
 const policy = require('../src/product/streamed-file-digest');
@@ -24,7 +25,14 @@ function fixture(t) {
 function put(root, name, bytes) { const file = path.join(root, name); fs.writeFileSync(file, bytes); return file; }
 async function sparse(file, size) {
   const fd = await fsp.open(file, 'wx');
-  try { await fd.truncate(size); await fd.write(Buffer.from('MZ'), 0, 2, 0); await fd.write(Buffer.from('TAIL'), 0, 4, size - 4); }
+  try {
+    // NTFS truncate alone is not sparse: writing its tail can zero-fill 8 GiB.
+    if (process.platform === 'win32') {
+      const result = spawnSync('fsutil.exe', ['sparse', 'setflag', file], { windowsHide: true, encoding: 'utf8' });
+      assert.equal(result.status, 0, `cannot mark test file sparse: ${result.stderr || result.stdout}`);
+    }
+    await fd.truncate(size); await fd.write(Buffer.from('MZ'), 0, 2, 0); await fd.write(Buffer.from('TAIL'), 0, 4, size - 4);
+  }
   finally { await fd.close(); }
 }
 // Independent logical content generator: does not read the implementation's

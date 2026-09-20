@@ -49,6 +49,25 @@ function fixture(t, alter = value => value) {
     packages: createExternalProviderPackages({ root, currentCore, currentRuntime }) };
 }
 
+test('an explicitly ABI-compatible Core carries only complete whitelisted resources; Feature1-only unified3 remains refused', async t => {
+  const f = fixture(t), names = require('../src/product/payload-companions').NAMES;
+  for (const name of names) {
+    const bytes = Buffer.from('resource:' + name), sha256 = hash(bytes), file = `objects/${sha256}/${path.basename(name)}`;
+    const target = path.join(f.root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, bytes);
+    const row = { name, file, sha256, bytes: bytes.length };
+    f.inventory.packages[1].files.push(row); f.currentCore.companions.push({ ...row, role: 'core-resource' });
+  }
+  fs.writeFileSync(path.join(f.root, 'inventory.json'), JSON.stringify(f.inventory));
+  const selection = { api: 'dx11', architecture: 'x64', hardwareFamily: 'RTX50', loadingBackend: 'local' };
+  const load = () => f.packages.load({ id: 'provider-v1-fixture', selection });
+  const recipe = load().recipe;
+  assert.equal(recipe.files.filter(row => row.role === 'core-resource').length, 7);
+  assert.deepEqual(f.packages.validateRecipe(recipe), recipe);
+  f.currentCore.companions.pop(); assert.throws(load);
+  f.currentCore.id = '0.5-dline21-unified3'; f.currentCore.inputInterfaces = ['NGX-D3D12-Feature1'];
+  assert.throws(load, { code: 'EXTERNAL_PROVIDER_CORE_INCOMPATIBLE' });
+});
+
 test('a selected v1 provider injects the current ABI-compatible Core and shared runtime by exact digest', async t => {
   const f = fixture(t), before = f.packages.inspect();
   assert.equal(before.packages[0].selectable, true); assert.equal(before.packages[0].runtimeVerified, false);

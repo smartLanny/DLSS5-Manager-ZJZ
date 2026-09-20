@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const { fgBackend } = require('./gpu');
 // NVIDIA's DLSS 4.5 announcement names 595.79 as the minimum driver for
 // Dynamic Multi Frame Generation and 6X Mode. Setting enumeration is separate.
 // https://www.nvidia.com/en-us/geforce/news/dlss-4-5-rtx-path-tracing-game-announcements-gdc-2026/
@@ -47,12 +48,12 @@ function assessEnhancementState({ domain, request = {}, game = {}, hardware = {}
   const setting = game.gameSetting || { state: 'unknown', source: null };
   const series = [...new Set(Array.isArray(hardware.series) ? hardware.series : [])];
   const singleGpu = hardware.source !== 'unavailable' && hardware.family !== 'mixed' && series.length === 1;
-  const backend = request.backend || (domain === 'sr' ? 'native' : singleGpu && series[0] === 'RTX40' ? 'mfgunlock' : 'nvidia');
+  const backend = request.backend || (domain === 'sr' ? 'native' : fgBackend(hardware) || 'nvidia');
   const isDriver = backend === 'native' || backend === 'nvidia';
   const feature = domain === 'sr' ? 'DLSS 超分' : 'DLSS 帧生成';
   if (!['sr', 'fg'].includes(domain)) add('SETTINGS_DOMAIN', '图像功能域无效。');
   if (!singleGpu || domain === 'sr' && !/^RTX(?:20|30|40|50)$/.test(series[0] || '') ||
-      domain === 'fg' && (backend === 'nvidia' ? series[0] !== 'RTX50' : !['mfgunlock', 'rtx40'].includes(backend) || series[0] !== 'RTX40'))
+      domain === 'fg' && (backend === 'dlssg-sm86' ? !['RTX20','RTX30'].includes(series[0]) : backend === 'nvidia' ? series[0] !== 'RTX50' : !['mfgunlock', 'rtx40'].includes(backend) || series[0] !== 'RTX40'))
     add('SETTINGS_GPU_UNKNOWN', '当前显卡未确认满足此功能要求。');
   if (support.status !== 'supported' || !['catalog', 'native-integration', 'trusted-mod', 'runtime'].includes(support.source))
     add(support.status === 'unsupported' ? 'SETTINGS_GAME_UNSUPPORTED' : 'SETTINGS_GAME_SUPPORT_UNKNOWN',
@@ -66,6 +67,8 @@ function assessEnhancementState({ domain, request = {}, game = {}, hardware = {}
       add('SETTINGS_DRIVER_VERSION_UNCONFIRMED', '尚未确认当前驱动达到此选项所需版本。');
   }
   const capabilities = support.capabilities || {};
+  const sm86Ready = backend === 'dlssg-sm86' && support.status === 'supported' && game.staticEvidence?.nativeFgAvailable === true && game.staticEvidence?.api === 'dx12';
+  if (backend === 'dlssg-sm86' && !sm86Ready) add('SETTINGS_SM86_INTEGRATION', 'SM86 需要所选 x64 DX12 游戏已有可信的原生 DLSS 帧生成集成。');
   if (backend === 'mfgunlock' && capabilities.mfgUnlock?.available !== true)
     add('SETTINGS_MFG_RUNTIME_UNCONFIRMED', capabilities.mfgUnlock?.api && capabilities.mfgUnlock.api !== 'dx12'
       ? '当前 MFG Unlock 配套仅对已确认的 DX12 路线开放。'
@@ -79,10 +82,11 @@ function assessEnhancementState({ domain, request = {}, game = {}, hardware = {}
     versionIs(mfg.dlssgVersion, '310.9.1') && versionIs(mfg.streamlineVersion, '2.14.1') &&
     mfg.dynamicSupportObserved === true && mfg.dynamicSupported === true && driver.available === true &&
     Number.isInteger(driver.version) && driver.version >= MFG_DYNAMIC_DRIVER;
-  const declaredMultipliers = backend === 'mfgunlock' ? (mfg.available === true && Array.isArray(mfg.multipliers) ? mfg.multipliers : [])
+  const declaredMultipliers = backend === 'dlssg-sm86' ? (sm86Ready ? [2,3,4,...(capabilities.dlssgSm86?.sixXSupported === true && capabilities.dlssgSm86?.gamePluginSupportsSixX === true ? [5,6] : [])] : [])
+    : backend === 'mfgunlock' ? (mfg.available === true && Array.isArray(mfg.multipliers) ? mfg.multipliers : [])
     : Array.isArray(capabilities.multipliers) ? capabilities.multipliers : [2];
   let multipliers = [...new Set(declaredMultipliers.filter(value => Number.isInteger(value) && value >= 2 && value <= 6))];
-  let modes = backend === 'mfgunlock' ? (mfg.available === true ? ['follow', ...(multipliers.length ? ['fixed'] : []), ...(mfgDynamicReady ? ['dynamic'] : [])] : []) : backend === 'nvidia'
+  let modes = backend === 'dlssg-sm86' ? (sm86Ready ? ['off','follow','fixed'] : []) : backend === 'mfgunlock' ? (mfg.available === true ? ['follow', ...(multipliers.length ? ['fixed'] : []), ...(mfgDynamicReady ? ['dynamic'] : [])] : []) : backend === 'nvidia'
     ? ['off', 'fixed', ...(capabilities.dynamic === true ? ['dynamic'] : [])] : [];
   let capabilityOptions = null;
   if (domain === 'fg' && backend === 'nvidia') {

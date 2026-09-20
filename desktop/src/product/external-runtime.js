@@ -25,7 +25,8 @@ const PENDING = '_DLSS5_Backup/xiaofeng-external-pending.json';
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const MAX_FILE = 768 * 1024 * 1024;
-const MANAGED = new Set(['addon', 'bridge', 'runtime', 'carrier', 'config']);
+const MANAGED = new Set(['addon', 'bridge', 'runtime', 'carrier', 'config', 'companion']);
+const companionPolicy = require('./payload-companions');
 const MUTABLE = /\.(?:ini|json|toml|ya?ml)$/i;
 const ADDON = /\.addon(?:32|64)?$/i;
 const PROTECTED = /^(?:dxgi|d3d9|d3d10|d3d11|d3d12|opengl32|dinput8|version|winmm|dsound|nvngx_dlss|nvngx_dlssg|_nvngx)\.dll$/i;
@@ -106,6 +107,7 @@ function createExternalRuntime(options) {
     }
     if (role === 'game-proxy') return key(path.dirname(absolute)) === key(t.dir) && HOYO_PROXIES.some(name => name.toLowerCase() === path.basename(absolute).toLowerCase());
     if (role === 'profile-loader') return key(absolute) === key(path.join(t.runtimeDir, 'ReShade64.dll'));
+    if (role === 'managed' && [t.dir, t.runtimeDir].some(dir => companionPolicy.isCompanionName(path.relative(dir, absolute).replaceAll('\\', '/')))) return true;
     if (![t.dir, t.runtimeDir].some(dir => key(path.dirname(absolute)) === key(dir))) return false;
     const name = path.basename(absolute);
     if (!leaf(name) || /\.exe$/i.test(name) || PROTECTED.test(name)) return false;
@@ -202,7 +204,7 @@ function createExternalRuntime(options) {
     }
     const names = new Set();
     for (const row of value.files) {
-      if (!row || !leaf(row.name) || names.has(row.name.toLowerCase()) || !HASH.test(row.sha256 || '') ||
+      if (!row || !(leaf(row.name) || row.role === 'managed' && row.kind === 'companion' && companionPolicy.isCompanionName(row.name)) || names.has(row.name.toLowerCase()) || !HASH.test(row.sha256 || '') ||
           !HASH.test(row.originHash || '') || !allowed(t, path.join(t.runtimeDir, row.name), row.role) ||
           typeof row.mutable !== 'boolean' || typeof row.localOwned !== 'boolean')
         fail('RECORD', '外置部署记录含未知或重复文件，已保留现状。');
@@ -279,7 +281,7 @@ function createExternalRuntime(options) {
       proxyPaths: saved?.proxy ? [path.join(t.dir, saved.proxy.name)] : [],
       moduleManifest: external ? saved.files.filter(row => !row.mutable).map(row => ({ path: path.join(t.runtimeDir, row.name),
         name: row.name, kind: row.kind, role: ({ addon: 'core', bridge: 'chain', runtime: 'nr-runtime', carrier: 'carrier', loader: 'reshade' })[row.kind] || row.role,
-        sha256: row.sha256, architecture: row.architecture ?? (MANAGED.has(row.kind) || row.kind === 'loader' ? 64 : null) })) : [] };
+        sha256: row.sha256, architecture: row.architecture ?? (row.kind === 'companion' ? /\.dll$/i.test(row.name) ? 64 : null : MANAGED.has(row.kind) || row.kind === 'loader' ? 64 : null) })) : [] };
   }
   function profileKnownComponents(t, saved) {
     if (!saved || saved.origin !== 'direct_hoyo') return [];
@@ -440,11 +442,12 @@ function createExternalRuntime(options) {
     for (const row of manifest.files) {
       if (!MANAGED.has(row.kind)) continue;
       const file = path.resolve(t.gameRoot, row.rel);
-      if (key(path.dirname(file)) !== key(t.dir) || !allowed(t, file, 'managed')) fail('LAYOUT', '当前安装含其他运行目录，请先恢复普通安装。');
+      if (!allowed(t, file, 'managed')) fail('LAYOUT', '当前安装含其他运行目录，请先恢复普通安装。');
       const actual = await digest(file);
       if (!actual || row.kind !== 'config' && actual !== row.installedSha256) fail('FILE_CHANGED', '已安装文件缺失或被修改，未迁移。', { file });
-      files.push({ name: path.basename(file), role: 'managed', kind: row.kind, mutable: row.kind === 'config',
-        sha256: actual, originHash: actual, localOwned: true, source: file }); names.add(path.basename(file).toLowerCase());
+      const name = path.relative(t.dir, file).replaceAll('\\', '/');
+      files.push({ name, role: 'managed', kind: row.kind, mutable: row.kind === 'config',
+        sha256: actual, originHash: actual, localOwned: true, source: file }); names.add(name.toLowerCase());
     }
     const config = path.join(t.dir, INSTALLED_NAMES.config);
     if (!names.has(INSTALLED_NAMES.config.toLowerCase()) && await digest(config)) {
@@ -683,6 +686,12 @@ function createExternalRuntime(options) {
           sha256: spec.actual, originHash: spec.actual, localOwned: false, originAbsent: true, source: spec.file, architecture: 64 });
       }
     }
+    if (!(hoyo && request.inputRoute === 'feeder')) for (const spec of companionPolicy.validateRows(payload?.companions, payload?.version)) {
+      if (await digest(spec.file) !== spec.actual || /\.dll$/i.test(spec.name) && typeof pe.getBitness === 'function' && pe.getBitness(spec.file) !== 64)
+        fail('PACKAGE', 'Core 附属资源来源或位数无效。');
+      rows.push({ name: spec.name, kind: 'companion', role: 'managed', mutable: false, sha256: spec.actual,
+        originHash: spec.actual, localOwned: false, originAbsent: true, source: spec.file, architecture: /\.dll$/i.test(spec.name) ? 64 : null });
+    }
     const marker = file => { const bytes = fs.readFileSync(file); return bytes.includes(Buffer.from('Searching for add-ons')) || bytes.includes(Buffer.from('Searching for add-ons', 'utf16le')); };
     if (!marker(payload.reshade.file)) fail('PACKAGE', '首次外置部署需要支持 Add-on 的 ReShade。');
     const proxies = [];
@@ -775,6 +784,7 @@ function createExternalRuntime(options) {
       compatibility: source.compatibility, warnings: profile.warnings, inactiveAddons, configured: profile.configured });
   }
   async function previewLocalDirect(t, game, saved, request, internal) {
+    const resources = request.payload ? companionPolicy.validateRows(request.payload.companions, request.payload.version) : [];
     if (key(saved.sourceLayout?.baseDir || '.') !== key(t.dir) || key(saved.sourceLayout?.addonDir || '.') !== key(t.dir))
       fail('DIRECT_LOCAL_UNSUPPORTED', '原配置使用自定义插件目录，普通目录路线尚不能接入。可继续外置部署，或使用独立卸载恢复原配置。');
     getLayout(game);
@@ -803,9 +813,9 @@ function createExternalRuntime(options) {
           entry.original = { existed: true, sha256: before, backupRel: path.relative(t.gameRoot, backup) };
           await change(backup, 'original-backup', destination, undefined, before);
         }
-        const replacement = request.payload?.[row.kind];
+        const replacement = row.kind === 'companion' ? request.payload?.companions?.find(item => item.name === row.name) : request.payload?.[row.kind];
         if (replacement && !row.mutable) {
-          if (await digest(replacement.file) !== replacement.actual || typeof pe.getBitness === 'function' && pe.getBitness(replacement.file) !== 64) fail('PACKAGE', '普通目录配套来源改变。');
+          if (await digest(replacement.file) !== replacement.actual || (row.kind !== 'companion' || /\.dll$/i.test(row.name)) && typeof pe.getBitness === 'function' && pe.getBitness(replacement.file) !== 64) fail('PACKAGE', '普通目录配套来源改变。');
           entry.installedSha256 = replacement.actual;
         }
         await change(destination, row.role, replacement && !row.mutable ? replacement.file : source, undefined, entry.installedSha256);
@@ -814,6 +824,14 @@ function createExternalRuntime(options) {
         if (before !== (row.originAbsent ? null : row.originHash)) fail('FILE_CHANGED', '原用户插件或设置已变化，未覆盖。', { file: destination });
         await change(destination, row.role, source, undefined, actual);
       }
+    }
+    for (const resource of resources.filter(item => !saved.files.some(row => row.kind === 'companion' && row.name === item.name))) {
+      const destination = path.join(t.dir, resource.name);
+      if (await digest(destination) !== null) fail('DIRECT_LOCAL_CONFLICT', '普通目录已有未受管资源，未覆盖。', { file: destination });
+      if (await digest(resource.file) !== resource.actual || /\.dll$/i.test(resource.name) && typeof pe.getBitness === 'function' && pe.getBitness(resource.file) !== 64)
+        fail('PACKAGE', '普通目录 Core 附属资源来源改变。');
+      await change(destination, 'managed', resource.file, undefined, resource.actual);
+      manifest.files.push({ rel: path.relative(t.gameRoot, destination), kind: 'companion', installedSha256: resource.actual, original: { existed: false } });
     }
     const initial = saved.retiredProxy ? { name: saved.retiredProxy.name, before: saved.retiredProxy.sha256, snapshot: saved.retiredProxy.snapshot, owned: true } : saved.initialProxy;
     const proxyFile = path.join(t.dir, initial.name), activeProxy = path.join(t.dir, saved.proxy.name);
@@ -888,7 +906,8 @@ function createExternalRuntime(options) {
       getLayout(game);
       for (const row of rows) {
         const actual = await digest(row.source);
-        if (!actual && !request.payload?.[row.kind] || actual && !row.mutable && actual !== row.sha256)
+        const replacement = row.kind === 'companion' ? request.payload?.companions?.find(item => item.name === row.name) : request.payload?.[row.kind];
+        if (!actual && !replacement || actual && !row.mutable && actual !== row.sha256)
           fail('FILE_CHANGED', '外置组件缺失或被修改，未覆盖。', { file: row.source });
         row.sha256 = actual;
       }
@@ -965,10 +984,25 @@ function createExternalRuntime(options) {
         if (entry) entry.installedSha256 = spec.actual;
       }
       payloadVersion = payload.version || request.version || payloadVersion;
+      if (saved?.hoyoProfile?.inputRoute !== 'feeder') for (const spec of companionPolicy.validateRows(payload.companions, payload.version)) {
+        if (await digest(spec.file) !== spec.actual) fail('PACKAGE', 'Core 附属资源摘要无效。');
+        let row = rows.find(value => value.kind === 'companion' && value.name === spec.name);
+        if (row) { row.source = spec.file; row.sha256 = spec.actual; }
+        else {
+          row = { name: spec.name, kind: 'companion', role: 'managed', mutable: false, sha256: spec.actual,
+            originHash: spec.actual, localOwned: false, originAbsent: true, source: spec.file };
+          rows.push(row);
+        }
+        let entry = currentManifest.files.find(value => value.kind === 'companion' && value.rel === path.relative(t.gameRoot, path.join(t.dir, spec.name)));
+        if (entry) entry.installedSha256 = spec.actual;
+        else currentManifest.files.push({ rel: path.relative(t.gameRoot, path.join(t.dir, spec.name)), kind: 'companion',
+          installedSha256: spec.actual, original: { existed: false } });
+      }
       currentManifest.payloadVersion = payloadVersion;
       currentManifest.updatedAt = new Date().toISOString();
     }
     for (const row of rows.filter(row => !row.mutable)) {
+      if (row.kind === 'companion' && !/\.dll$/i.test(row.name)) { row.architecture = null; continue; }
       if (typeof pe.getBitness === 'function') {
         row.architecture = pe.getBitness(row.source);
         if ((MANAGED.has(row.kind) || row.kind === 'loader') && row.architecture !== 64)

@@ -10,6 +10,7 @@ const { appError, MESSAGES } = require('./errors');
 const { inspectAddonLayout, requireAddonLayout } = require('./reshade-layout');
 const { assess, classifyApi, isDx11Only } = require('./game-support');
 const { sha256 } = require('./payload');
+const companionPolicy = require('./payload-companions');
 const { ensureDefaultReShadeHotkey } = require('./hotkeys');
 const { createDeploymentTiming, readDeploymentTiming, attachDeploymentTiming } = require('./deployment-timing');
 const coreVersionText = value => {
@@ -36,6 +37,8 @@ function createInstaller(overrides = {}) {
   const refDigest = overrides.reframeworkFileDigest || sha256;
 
   const safe = (gameDir, target) => journal.safePath(gameDir, path.relative(gameDir, target));
+  const companionWrites = (value, version, dir) => companionPolicy.validateRows(value, version)
+    .map(row => ({ kind: 'companion', source: row.file, target: path.join(dir, row.name), expected: row.actual }));
 
   function refError(code, message, details) { throw Object.assign(new Error(message), { code, details }); }
   const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
@@ -585,6 +588,7 @@ function createInstaller(overrides = {}) {
         const loaderTarget = path.join(exeDir, manifest.reshadeRoute === 'd3d12' ? 'd3d12.dll' : INSTALLED_NAMES.reshade);
         const writes = ['addon', 'bridge', 'runtime', ...(!reshade.installed ? ['reshade'] : []), ...(carrierRequired ? ['carrier'] : [])]
           .map(kind => ({ kind, source: payload[kind].file, target: kind === 'reshade' ? loaderTarget : installedFile(exeDir, kind), expected: payload[kind].actual }));
+        writes.push(...companionWrites(payload.companions, payload.version, exeDir));
         const adoptions = await preflightWrites(gameDir, manifest, writes, payload.version, payload.versionInfo);
         const rootRow = findEntry(manifest, path.relative(gameDir, coreTarget));
         const refContext = await preflightRef(gameDir, exePath, manifest,
@@ -631,6 +635,8 @@ function createInstaller(overrides = {}) {
           installedFile(exeDir, 'bridge'), 'bridge', payload.bridge.actual);
         await writeManaged(gameDir, manifest, payload.runtime.file,
           installedFile(exeDir, 'runtime'), 'runtime', payload.runtime.actual);
+        for (const write of writes.filter(row => row.kind === 'companion'))
+          await writeManaged(gameDir, manifest, write.source, write.target, write.kind, write.expected);
 
         if (carrierRequired) {
           await writeManaged(gameDir, manifest, payload.carrier.file,
@@ -823,6 +829,16 @@ function createInstaller(overrides = {}) {
       });
     }
 
+    const companionRows = manifest?.files.filter(row => row.kind === 'companion') || [];
+    const resourceNames = companionPolicy.required(manifest?.payloadVersion) ? companionPolicy.NAMES :
+      [...new Set(companionRows.map(row => path.relative(exeDir, path.resolve(gameDir, row.rel)).replaceAll('\\', '/')))];
+    for (const name of resourceNames) {
+      if (!companionPolicy.isCompanionName(name)) throw appError('ERR_BACKUP_INVALID');
+      const file = safe(gameDir, path.join(exeDir, name)), record = companionRows.find(row => samePath(path.resolve(gameDir, row.rel), file));
+      const actual = fs.existsSync(file) && fs.statSync(file).isFile() ? sha256(file) : null;
+      components.push({ key: 'companion:' + name, label: name, file, sha256: actual, expectedSha256: record?.installedSha256 || null,
+        ok: Boolean(actual && record?.installedSha256 === actual), detail: actual ? null : '文件缺失' });
+    }
     return {
       installed: Boolean(manifest),
       complete: Boolean(manifest) && !routeMismatch && components.every(row => row.ok),
@@ -874,7 +890,7 @@ function createInstaller(overrides = {}) {
         await noLinks(item.source); await noLinks(target);
         if (fs.existsSync(target)) throw appError('ERR_FILE_CHANGED', { rel: row.rel });
         if (sha256(item.source) !== item.sha256) throw appError('ERR_FILE_CHANGED');
-        await journal.capture(gameDir, target); await fs.promises.copyFile(item.source, target);
+        await journal.capture(gameDir, target); await fs.promises.mkdir(path.dirname(target), { recursive: true }); await fs.promises.copyFile(item.source, target);
         if (sha256(target) !== item.sha256) throw appError('ERR_FILE_CHANGED');
       }
       if (entries.length || addonPolicy?.changes.some(row => row.action !== 'keep' && row.action !== 'preserve')) await saveManifest(gameDir, manifest);
@@ -964,6 +980,7 @@ function createInstaller(overrides = {}) {
         if (addonPolicy) await require('./native-addon-policy').assertNativeAddonPolicy(gameDir, addonPolicy);
         else requireAddonLayout(exeDir);
         const writes = [{ kind: 'addon', source: addon.file, target, expected: addon.addonSha256 }];
+        writes.push(...companionWrites(addon.companions, version || addon.id, exeDir));
         if (addon.bridgeFile) writes.push({ kind: 'bridge', source: addon.bridgeFile, target: installedFile(exeDir, 'bridge'), expected: addon.bridgeSha256 });
         if (carrierRequired) writes.push({ kind: 'carrier', source: addon.carrierFile, target: carrierTarget, expected: addon.carrierSha256 });
         const adoptions = await preflightWrites(gameDir, manifest, writes, version || addon.id, versionInfo || addon.versionInfo);
@@ -985,6 +1002,8 @@ function createInstaller(overrides = {}) {
           await applyAddonConfigEdit(gameDir, manifest, addonPolicy.configEdit);
         }
         await writeManaged(gameDir, manifest, addon.file, target, 'addon', addon.addonSha256);
+        for (const write of writes.filter(row => row.kind === 'companion'))
+          await writeManaged(gameDir, manifest, write.source, write.target, write.kind, write.expected);
         await applyRefUpdate(refContext);
         if (addon.bridgeFile) {
           await writeManaged(gameDir, manifest, addon.bridgeFile,

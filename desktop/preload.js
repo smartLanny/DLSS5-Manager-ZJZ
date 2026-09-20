@@ -72,6 +72,19 @@ contextBridge.exposeInMainWorld('manager', Object.freeze({
   removeGame: id => invoke('game-library-remove', id),
   renameGame: (id, name) => invoke('game-rename', id, name),
   setGameApi: (id, api, options) => invoke('game-api-set', id, api, options),
+  setGameApiPreference: (id, api) => invoke('game-api-preference', id, api),
+  requestOperation: (id, request, consent) => invoke('game-operation-submit', id, request, consent),
+  cancelWaitingOperation: id => invoke('game-operation-cancel-waiting', id),
+  onWaitingOperation: callback => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('waiting-operation-updated', listener);
+    return () => ipcRenderer.removeListener('waiting-operation-updated', listener);
+  },
+  onOperationProgress: callback => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('operation-progress', listener);
+    return () => ipcRenderer.removeListener('operation-progress', listener);
+  },
   applyGameRoute: (id, options) => invoke('game-route-apply', id, options),
   prepareGame: (id, options) => invoke('game-prepare-all', id, options),
   inspectPreparation: id => invoke('game-preparation-inspect', id),

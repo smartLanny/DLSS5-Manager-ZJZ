@@ -28,13 +28,21 @@ async function hashFile(file) {
   return hash.digest('hex');
 }
 
-function createFgPendingRecovery({ journal, assertGameClosed, providerLibrary }) {
+function createFgPendingRecovery({ journal, assertGameClosed, providerLibrary, backend }) {
+  const sm86 = backend === 'dlssg-sm86', product = sm86 ? 'xiaofeng-fg-sm86' : PRODUCT;
   const known = providerLibrary?.knownProviderForHash || knownProviderForHash;
   const providers = () => providerLibrary?.providers() || PROVIDERS;
   function kind(t, rel) {
     const dest = journal.safePath(t.game, rel), normalized = canonicalRel(path.relative(t.game, dest));
     if (canonicalRel(rel) !== normalized) return null;
     if (normalized === '_dlss5_backup/manifest.json') return 'manifest';
+    if (sm86) {
+      if (normalized === '_dlss5_backup/xiaofeng-fg-sm86.json') return 'receipt';
+      if (key(path.dirname(dest)) !== key(t.dir)) return null;
+      if (path.basename(dest).toLowerCase() === 'version.dll') return 'addon';
+      if (path.basename(dest).toLowerCase() === 'dlssg_sm86.ini') return 'config';
+      return null;
+    }
     if (normalized === '_dlss5_backup/xiaofeng-fg-components.json') return 'receipt';
     if (normalized === '_dlss5_backup/xiaofeng-fg-migration.json') return 'migration';
     if (new RegExp(`^_dlss5_backup/\\.fg-migration/${UUID}/(?:[0-9]|1[0-5])\\.bin$`, 'i').test(normalized)) return 'migration-snapshot';
@@ -52,6 +60,7 @@ function createFgPendingRecovery({ journal, assertGameClosed, providerLibrary })
     return { file, text, state };
   }
   function identified(t, state) {
+    if (sm86) return state?.owner?.product === product || state?.files?.some(row => canonicalRel(row.rel) === '_dlss5_backup/xiaofeng-fg-sm86.json') === true;
     return state?.owner?.product === PRODUCT || state?.files?.some(row => {
       try { return ['addon', 'receipt', 'migration', 'migration-snapshot'].includes(kind(t, row.rel)) ||
         kind(t, row.rel) === 'legacy-component' && /^RTX40MFG/i.test(path.basename(row.rel)); } catch { return false; }
@@ -73,8 +82,9 @@ function createFgPendingRecovery({ journal, assertGameClosed, providerLibrary })
         !Array.isArray(state.files) || state.files.length < 1 || state.files.length > 96 || !Array.isArray(state.dirs) || state.dirs.length > 160)
       fail('SETTINGS_FG_FILE_RECOVERY_INVALID', 'FG 文件事务范围无效，已保留。');
     const owner = state.owner, checks = new Map(), targets = new Set(), directories = new Set();
+    if (sm86 && !owner) fail('SETTINGS_FG_FILE_RECOVERY_OTHER', 'SM86 事务缺少专属恢复身份，未执行恢复。');
     if (owner !== undefined) {
-      if (!owner || owner.version !== 1 || owner.product !== PRODUCT || key(owner.exe || '.') !== key(t.exe) || key(owner.game || '.') !== key(t.game) ||
+      if (!owner || owner.version !== 1 || owner.product !== product || key(owner.exe || '.') !== key(t.exe) || key(owner.game || '.') !== key(t.game) ||
           !PHASES.includes(owner.operation) || !Array.isArray(owner.checks) || owner.checks.length > 96)
         fail('SETTINGS_FG_FILE_RECOVERY_OTHER', 'FG 文件事务归属或 EXE 不一致，未执行恢复。');
       for (const check of owner.checks) {
@@ -128,7 +138,7 @@ function createFgPendingRecovery({ journal, assertGameClosed, providerLibrary })
     const gameKey = key(t.game); if (locks.has(gameKey)) fail('SETTINGS_FG_FILE_BUSY', '该游戏正在进行 FG 文件操作。');
     locks.add(gameKey);
     try { return await journal.transaction(t.game, async () => {
-      const context = { version: 1, product: PRODUCT, exe: t.exe, game: t.game, operation, checks: [] };
+      const context = { version: 1, product, exe: t.exe, game: t.game, operation, checks: [] };
       contexts.set(gameKey, context);
       await journal.setOwner(t.game, context);
       try { return await work(); }

@@ -27,6 +27,9 @@ function fixture(t, name = 'OnimushaWotS.exe') {
   fs.writeFileSync(path.join(storage, 'nr_before_sr.ini'), config.replace('Style=1', 'Style=2'));
   fs.writeFileSync(path.join(gameDir, 'ReShade.ini'), '[INPUT]\nKeyOverlay=36,0,0,0\n');
   const manifest = newManifest(gameDir, exe, 'dx12'); manifest.payloadVersion = '0.4.7beta';
+  const coreName = 'nr-before-sr.zh-CN.addon64', coreBytes = Buffer.from('synthetic installed 0.4.7 Core');
+  fs.writeFileSync(path.join(gameDir, coreName), coreBytes);
+  manifest.files.push({ rel: coreName, kind: 'addon', installedSha256: require('node:crypto').createHash('sha256').update(coreBytes).digest('hex'), original: { existed: false } });
   fs.mkdirSync(path.dirname(manifestPath(gameDir)), { recursive: true });
   fs.writeFileSync(manifestPath(gameDir), JSON.stringify(manifest));
   const chosen = { path: exe, name, bitness: 64, api: 'dx12', apiResolution: { api: 'dx12' } };
@@ -78,6 +81,7 @@ test('REFramework NR edits and 0.4.7 defaults target the effective storage INI a
   assert.match(fs.readFileSync(path.join(f.storage, 'nr_before_sr.ini'), 'utf8'), /Style=1/);
   await f.service.applyDefault('ref-game');
   assert.equal((await f.service.readNrSettings('ref-game')).Intensity, 1.2);
+  assert.equal((await f.service.readNrSettings('ref-game')).coreIdentity.identityStatus, 'verified');
   assert.deepEqual(fs.readFileSync(path.join(f.gameDir, 'nr_before_sr.ini')), rootBefore);
   await f.service.writeGameHotkey('ref-game', 'reshade', { key: 187, ctrl: true, shift: false, alt: false });
   assert.equal((await f.service.readGameHotkeys('ref-game')).reshade.key, 187);
@@ -96,6 +100,20 @@ test('an interrupted REFramework operation exposes the dedicated recovery route'
   assert.equal((await f.service.readReframework('ref-game')).needsRecovery, true);
   await f.service.recoverReframework('ref-game');
   assert.deepEqual(f.calls.map(row => row[0]), ['recover']);
+});
+
+test('an active REFramework Core mirror cannot borrow the root Core identity after its bytes diverge', async t => {
+  const f = fixture(t); await f.service.boot();
+  const core = 'nr-before-sr.zh-CN.addon64', mirror = path.join(f.storage, core);
+  fs.copyFileSync(path.join(f.gameDir, core), mirror);
+  const same = await f.service.readNrSettings('ref-game');
+  assert.equal(same.coreIdentity.identityStatus, 'verified'); assert.equal(same.coreIdentity.corePath, mirror);
+  fs.writeFileSync(mirror, 'different synthetic cached Core');
+  const changed = await f.service.readNrSettings('ref-game');
+  assert.equal(changed.coreIdentity.identityStatus, 'changed'); assert.equal(changed.contract.known, false);
+  const before = fs.readFileSync(path.join(f.storage, 'nr_before_sr.ini'));
+  await assert.rejects(f.service.applyDefault('ref-game'), { code: 'ERR_BAD_REQUEST' });
+  assert.deepEqual(fs.readFileSync(path.join(f.storage, 'nr_before_sr.ini')), before);
 });
 
 test('one-click install prepares detected REFramework automatically and existing upgrades prepare ownership first', async t => {

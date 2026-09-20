@@ -326,6 +326,14 @@ function createLegacyService(options = {}) {
     if (!runtime.externalProviders?.selectedId?.()) catalog.resolve(inferred);
     return inferred;
   }
+  async function verifySource(game, request = {}) {
+    const t = selected(game), old = readReceipt(game), selection = selectionFor(game, request, old);
+    const pkg = await runtime.verify(old ? { root: runtime.root, recipe: old.recipe, fingerprint: old.recipeFingerprint } : selection);
+    if (old && pkg.fingerprint !== old.recipeFingerprint) fail('PINNED_PACKAGE_UNAVAILABLE', '原配套来源当前不可用，等待不会改装另一版本。');
+    if (request.version !== undefined && ![pkg.recipe.id, pkg.recipe.coreVersion].includes(request.version)) fail('VERSION', '所选版本没有对应完整 Feeder 配套。');
+    if (pe.getBitness(t.exe) !== (selection.architecture === 'x86' ? 32 : 64)) fail('ARCHITECTURE', 'Feeder 位数必须匹配实际 EXE。');
+    return { ready: true, packageId: pkg.recipe.id, coreVersion: pkg.recipe.coreVersion, identity: pkg.fingerprint, runtimeVerified: false };
+  }
   async function compile(game, request = {}) {
     const t = selected(game); await closed(t); const old = readReceipt(game), selection = selectionFor(game, request, old);
     const pkg = await runtime.verify(old ? { root: runtime.root, recipe: old.recipe, fingerprint: old.recipeFingerprint } : selection), recipe = pkg.recipe;
@@ -806,7 +814,7 @@ function createLegacyService(options = {}) {
     }
     return result;
   }
-  return Object.freeze({ summary, inspect, diagnose: inspect, previewInstall, install, previewRestore, restore, previewRecovery, recover,
+  return Object.freeze({ summary, inspect, diagnose: inspect, verifySource, previewInstall, install, previewRestore, restore, previewRecovery, recover,
     launch, prepareLaunch, recordLaunch, profile, getLayout: profile, localLayout, ownedModuleManifest, receipt: readReceipt, receiptFile: game => selected(game).receipt,
     configDir: (game, kind = 'nr') => { const row = readReceipt(game), layout = row?.layout || localLayout(game); return kind === 'nr' ? row?.recipe.hostRequired ? path.join(layout.addonDirectory, 'host64/addons') : layout.addonDirectory : path.dirname(layout.activeConfigPath); },
     feedbackLogDirectory: async game => { const row = readReceipt(game); return row ? row.layout.addonDirectory : null; } });

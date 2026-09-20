@@ -6,17 +6,18 @@ const { prepareCoreCatalog } = require('../scripts/prepare-core-catalog');
 const { resolveVersion } = require('../src/product/version-selection');
 const complete = { supportsPresent: true, inputInterfaces: ['NGX-D3D12-Feature1'] };
 
-test('five primary choices carry actual identities, not display-name aliases', () => {
+test('primary choices retain actual identities and separate unified3 from the previous D21', () => {
   const input = CORE_CHOICES.map(row => ({ id: row.ids[0], ready: true, source: 'external', compatibility: 'dx12' }));
   const original = structuredClone(input), result = coreMenu(input, { defaultVersion: '0.4.7beta' });
   assert.deepEqual(result.map(row => row.id), input.map(row => row.id));
-  assert.equal(result.length, 5); assert.match(result[3].label, /0\.4\.7.*新安装推荐/);
+  assert.equal(result.length, 6); assert.match(result[3].label, /0\.4\.7.*新安装推荐/);
+  assert.equal(result[5].id, '0.5-dline21-unified3'); assert.match(result[5].label, /unified3.*测试/);
   assert.match(result[4].label, /D21.*测试/); assert.doesNotMatch(result[4].label, /默认|推荐/);
   assert.deepEqual(input, original); assert.equal(result[4].compatibility, 'dx12');
 });
 test('missing sources are visible but cannot be installed', () => {
   const rows = coreMenu([]);
-  assert.equal(rows.length, 5); assert.ok(rows.every(row => row.ready === false && row.verification === 'unavailable'));
+  assert.equal(rows.length, 6); assert.ok(rows.every(row => row.ready === false && row.verification === 'unavailable'));
   assert.ok(rows.every(row => !row.label.includes('新安装默认')));
 });
 test('installed D12 and imported updates survive a five-choice menu without upgrading', () => {

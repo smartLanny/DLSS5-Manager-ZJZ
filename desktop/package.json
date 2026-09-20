@@ -1,6 +1,6 @@
 {
   "name": "xiaofeng-dlss5-manager",
-  "version": "0.5.0-beta.2",
+  "version": "0.5.0-beta.3",
   "private": true,
   "description": "A beginner-friendly desktop manager for the DLSS 5 NR-before-SR add-on.",
   "main": "main.js",
@@ -39,6 +39,8 @@
     "verify:distribution": "node scripts/verify-distribution-policy.js",
     "pretest:game-page": "node ../scripts/build-desktop-contract.mjs",
     "test:game-page": "electron test/game-page-frontend.electron.cjs",
+    "test:experience": "electron test/manager-experience.electron.cjs",
+    "test:nr-settings": "electron test/nr-settings.electron.cjs",
     "demo:ui": "electron test/game-page-frontend.electron.cjs --demo"
   },
   "dependencies": {
@@ -52,7 +54,7 @@
     "resedit": "1.7.2"
   },
   "build": {
-    "buildVersion": "0.5.0.2",
+    "buildVersion": "0.5.0.3",
     "appId": "com.xiaofeng.dlss5.manager",
     "productName": "DLSS 5 AI 超分管理器",
     "files": [
@@ -83,7 +85,7 @@
         "to": "Core第三方许可.txt"
       },
       {
-        "from": "docs/manager-0.5.0-beta.2-use.txt",
+        "from": "docs/manager-0.5.0-beta.3-use.txt",
         "to": "使用说明.txt"
       },
       {

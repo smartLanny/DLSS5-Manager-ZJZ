@@ -6,9 +6,10 @@ const { fail, noLinks, sha256 } = require('./launch-safety');
 const compiler = require('./launch-profile-plan');
 const ini = require('./launch-ini');
 const mfgUnlock = require('./mfgunlock-config');
+const sm86 = require('./fg-sm86-config');
 const DRS = compiler.DRS;
 const IDS = Object.freeze({ sr:[DRS.srOverride,DRS.srMode,DRS.srRatio,DRS.srPreset], fg:[DRS.fgMode,DRS.fgCount,DRS.fgDynamicMax,DRS.fgTarget] });
-const FILES = Object.freeze({ optiscaler:'OptiScaler.ini', mfgunlock:'ReShade.ini', rtx40:'RTX40MFG-Universal.json', cet:path.join('plugins','cyber_engine_tweaks','mods','RTX40MFG','RTX40MFG-Universal.json') });
+const FILES = Object.freeze({ optiscaler:'OptiScaler.ini', mfgunlock:'ReShade.ini', 'dlssg-sm86':sm86.FILE, rtx40:'RTX40MFG-Universal.json', cet:path.join('plugins','cyber_engine_tweaks','mods','RTX40MFG','RTX40MFG-Universal.json') });
 const CONTROL_KEYS = ['version','followGame','mode','multiplier','dynamicTargetFrameRate','dynamicExperimental56'];
 const INI_KEYS = ['UpscaleRatioOverrideEnabled','UpscaleRatioOverrideValue'];
 const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
@@ -19,7 +20,7 @@ function validateRequest(domain, input) {
     'runtimeMode','hdrMode','depthEdgeGuard','freezeFallback','reflexSourceCap','maxCount','temporalFix','blackwellFrameworkKernels',
     'thinGeometryIntermediateScatter','thinGeometryValidatedWarpBlend','thinGeometryPreviousScatter','raiseFrameCeiling'];
   if (Object.keys(input).some(k=>!allowed.includes(k))) fail('SETTINGS_INPUT','请求含不属于此设置域的字段。');
-  if (domain === 'sr' && !['native','optiscaler'].includes(input.backend) || domain === 'fg' && !['nvidia','rtx40','mfgunlock'].includes(input.backend)) fail('SETTINGS_BACKEND','请选择已安装的对应后端。');
+  if (domain === 'sr' && !['native','optiscaler'].includes(input.backend) || domain === 'fg' && !['nvidia','rtx40','mfgunlock','dlssg-sm86'].includes(input.backend)) fail('SETTINGS_BACKEND','请选择已安装的对应后端。');
   const request = structuredClone(input);
   if (domain === 'sr') {
     if (request.backend === 'native' && request.quality === 'preserve') {
@@ -29,6 +30,7 @@ function validateRequest(domain, input) {
   } else if (request.backend === 'nvidia') nativeFg(request);
   else if(request.mode==='restore'){if(Object.keys(request).some(k=>!['backend','mode'].includes(k)))fail('SETTINGS_INPUT','恢复请求不能包含倍率。');}
   else if(request.backend==='mfgunlock') compiler.planMfgUnlock('',withoutBackend(request));
+  else if(request.backend==='dlssg-sm86') sm86.compile('',withoutBackend(request));
   else compiler.planRtx40Mfg('{"version":11}', withoutBackend(request));
   return request;
 }
@@ -68,6 +70,7 @@ async function readText(file, allowMissing=false) {
 async function controlPath(root, backend) {
   if(backend==='optiscaler')return FILES.optiscaler;
   if(backend==='mfgunlock')return FILES.mfgunlock;
+  if(backend==='dlssg-sm86')return FILES[backend];
   if(process.env.RTX40_MFG_CONFIG_PATH)fail('SETTINGS_PATH_OVERRIDE','检测到社区后端自定义配置路径；请先在该后端确认路径，管理器不会猜测。');
   // The pinned universal backend gives CET priority, never writes both copies.
   const cetInit=path.join(root,path.dirname(FILES.cet),'init.lua');
@@ -76,10 +79,11 @@ async function controlPath(root, backend) {
   return FILES.rtx40;
 }
 function validConfigName(name, backend) {
-  return backend==='optiscaler' ? name===FILES.optiscaler : backend==='mfgunlock' ? name===FILES.mfgunlock : backend==='rtx40' && [FILES.rtx40,FILES.cet].includes(name);
+  return backend==='optiscaler' ? name===FILES.optiscaler : backend==='mfgunlock' ? name===FILES.mfgunlock : backend==='dlssg-sm86' ? name===FILES[backend] : backend==='rtx40' && [FILES.rtx40,FILES.cet].includes(name);
 }
 function values(text, backend) {
   if(backend==='mfgunlock')return mfgUnlock.values(text);
+  if(backend==='dlssg-sm86')return sm86.values(text);
   if(backend==='optiscaler') {
     compiler.planOptiScalerSr(text,{quality:'game'});
     return Object.fromEntries(INI_KEYS.map(k=>[k,ini.getIni(text,'UpscaleRatio',k)]));
@@ -90,6 +94,7 @@ function values(text, backend) {
 }
 function restoreText(current, original, afterValues, backend) {
   if(backend==='mfgunlock')return mfgUnlock.restore(current,original,afterValues);
+  if(backend==='dlssg-sm86')return sm86.restore(current,original,afterValues);
   const now=values(current,backend), before=values(original,backend);
   for(const key of Object.keys(afterValues))if(!same(now[key],afterValues[key]))fail('SETTINGS_EXTERNAL_CHANGE','本工具修改的设置已被其他程序改变，保留当前配置和备份。');
   if(backend==='rtx40') {
@@ -109,7 +114,7 @@ function restoreText(current, original, afterValues, backend) {
   return result;
 }
 function compileFile(text, request) {
-  const result=request.backend==='optiscaler' ? compiler.planOptiScalerSr(text,withoutBackend(request)) : request.backend==='mfgunlock' ? compiler.planMfgUnlock(text,withoutBackend(request)) : compiler.planRtx40Mfg(text,withoutBackend(request));
+  const result=request.backend==='optiscaler' ? compiler.planOptiScalerSr(text,withoutBackend(request)) : request.backend==='mfgunlock' ? compiler.planMfgUnlock(text,withoutBackend(request)) : request.backend==='dlssg-sm86' ? sm86.compile(text,withoutBackend(request)) : compiler.planRtx40Mfg(text,withoutBackend(request));
   if(request.backend==='rtx40'&&Buffer.byteLength(result.content)>4096)fail('SETTINGS_SIZE','生成的配置超过社区后端实际 4096 字节读取上限，保留原文件。');
   return result;
 }

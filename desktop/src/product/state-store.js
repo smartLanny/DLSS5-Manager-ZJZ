@@ -221,7 +221,12 @@ function createStore(file, options = {}) {
     writes = next.catch(() => {}); // Keep later writes usable; the caller still receives the rejection.
     return next;
   }
-  return { read, write, readRecoveryStatus: () => structuredClone(status) };
+  function update(mutator) {
+    const next = writes.then(() => writeNow(mutator(read())));
+    writes = next.catch(() => {});
+    return next;
+  }
+  return { read, write, update, readRecoveryStatus: () => structuredClone(status) };
 }
 
 module.exports = { DEFAULTS, validate, createStore, uniquePaths, uniqueManualExecutables, normalizeGameOverrides, normalizeExcludedGames };

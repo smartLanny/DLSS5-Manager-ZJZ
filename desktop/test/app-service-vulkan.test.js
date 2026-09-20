@@ -190,7 +190,10 @@ test('Vulkan NR settings and ReShade shortcut use the external profile instead o
   await f.service.writeGameHotkey(f.gameId, 'reshade', { key: 187, ctrl: true, shift: false, alt: false });
   assert.match(fs.readFileSync(path.join(f.configDir, 'ReShade.ini'), 'utf8'), /KeyOverlay=187,1,0,0/);
   assert.equal((await f.service.readGameHotkeys(f.gameId)).reshade.key, 187);
-  await f.service.applyDefault(f.gameId);
+  // This route-only fixture intentionally has no Core/recipe receipt; a menu
+  // version alone cannot authorize inferred defaults for an unknown binary.
+  await assert.rejects(f.service.applyDefault(f.gameId), { code: 'ERR_BAD_REQUEST' });
+  assert.equal((await f.service.readNrSettings(f.gameId)).contract.known, false);
   assert.equal(fs.existsSync(path.join(f.gameDir, 'nr_before_sr.ini')), false);
   assert.equal(fs.existsSync(path.join(f.gameDir, 'ReShade.ini')), false);
 });

@@ -39,10 +39,81 @@ test('preview never writes and Apply executes deployment, NR, SR and FG exactly 
   const result = await f.plans.apply(plan.planId, { confirm: true, fingerprint: plan.fingerprint });
   assert.equal(result.applied, true); assert.deepEqual(f.calls, ['deployment', 'nr', 'sr', 'fg']); assert.equal((await f.plans.inspect('game')).pending, false);
 });
+
+test('waiting preparation validates sources and settings without a deployment preview or game transaction', async t => {
+  const f = fixture(t), checked = [];
+  f.service.validateWaitingComponents = async (_id, request) => { checked.push(request); return { ready: true, deployment: true, nrContract: { configContract: 'nr-uniform-v1' }, identity: 'verified-source' }; };
+  f.service.previewDeployment = async () => { throw Error('closed-game deployment preview must not run while preparing to wait'); };
+  const prepared = await f.plans.prepareForWaiting('game', { api: 'dx12', deployment: 'external', version: 'core1', nr: { ProcessingStart: 'After', Intensity: 1.23456789 } });
+  assert.equal(prepared.ready, true); assert.equal(prepared.preparationOnly, true); assert.equal(checked.length, 1);
+  assert.deepEqual(f.calls, []); assert.deepEqual(f.deploymentPreviews, []);
+  assert.equal(fs.existsSync(path.join(f.options.userData, 'operation-plans')), false);
+  assert.match(fs.readFileSync(f.config, 'utf8'), /Intensity=1/);
+});
+
+test('waiting preparation requires verified resources for an FG provider and preserves source failures', async t => {
+  const f = fixture(t); f.service.validateWaitingComponents = async () => ({ ready: true, deployment: false });
+  f.options.components.previewProvider = async (_id, provider) => ({ blockers: provider === require('../src/product/fg-sm86-components').ID ? ['SM86 resource missing'] : ['MFG hash mismatch'] });
+  const prepared = await f.plans.prepareForWaiting('game', { fg: { backend: 'dlssg-sm86', mode: 'follow' } });
+  assert.equal(prepared.ready, false); assert.deepEqual(prepared.blockers, ['SM86 resource missing']);
+  f.service.validateWaitingComponents = async () => { throw Object.assign(new Error('missing selected runtime'), { code: 'ERR_PAYLOAD_MISSING' }); };
+  await assert.rejects(f.plans.prepareForWaiting('game', { api: 'dx12', version: 'core1' }), { code: 'ERR_PAYLOAD_MISSING' });
+  assert.deepEqual(f.calls, []); assert.equal(fs.existsSync(path.join(f.options.userData, 'operation-plans')), false);
+});
 test('EXE or configuration changes after preview block all writes', async t => {
   const f = fixture(t), plan = await f.plans.preview('game', { nr: { Intensity: 0.5 } });
   fs.writeFileSync(f.exe, 'different exe');
   await assert.rejects(f.plans.apply(plan.planId, { confirm: true, fingerprint: plan.fingerprint }), { code: 'OPERATION_CHANGED' }); assert.deepEqual(f.calls, []);
+});
+
+for (const scenario of ['pure NR', 'same-path Core update', 'new deployment directory']) test(`external INI changes during ${scenario} win over the reviewed NR draft`, async t => {
+  const f = fixture(t); let active = f.config;
+  f.service.readNrSettings = async () => ({ file: active, contract: { version: '0.4.7beta' } });
+  f.service.applyDeployment = async () => {
+    f.calls.push('deployment');
+    if (scenario === 'new deployment directory') {
+      active = path.join(f.dir, 'new-profile', 'nr_before_sr.ini'); fs.mkdirSync(path.dirname(active));
+      fs.writeFileSync(active, '[NRBeforeSR]\nIntensity=1.2\n');
+    } else fs.writeFileSync(active, '[NRBeforeSR]\nIntensity=0.72222\n');
+  };
+  f.options.onProgress = ({ phase }) => {
+    if (phase === 'nr' && scenario !== 'same-path Core update') fs.writeFileSync(active, '[NRBeforeSR]\nIntensity=0.72222\n');
+  };
+  f.plans = createOperationPlans(f.options);
+  const plan = await f.plans.preview('game', { ...(scenario === 'pure NR' ? {} : { version: 'core1' }), nr: { Intensity: 1.5 } });
+  await assert.rejects(f.plans.apply(plan.planId, { confirm: true, fingerprint: plan.fingerprint }), { code: 'OPERATION_NR_CHANGED' });
+  assert.equal(f.calls.includes('nr'), false); assert.match(fs.readFileSync(active, 'utf8'), /Intensity=0.72222/);
+});
+
+test('a new deployment INI is bound immediately after deployment and passed to the atomic NR writer', async t => {
+  const f = fixture(t); let active = f.config, written;
+  f.service.readNrSettings = async () => ({ file: active, contract: { version: '0.4.7beta' } });
+  f.service.applyDeployment = async () => {
+    active = path.join(f.dir, 'new-profile', 'nr_before_sr.ini'); fs.mkdirSync(path.dirname(active));
+    fs.writeFileSync(active, '[NRBeforeSR]\nIntensity=1.2\nExperimental=keep\n');
+  };
+  f.service.writeNrSettings = async (_id, patch, options) => {
+    written = options;
+    const expected = crypto.createHash('sha256').update(fs.readFileSync(active)).digest('hex');
+    assert.equal(options.expectedFingerprint, expected);
+    return require('../src/product/nr-config').writeConfig(active, patch, '0.4.7beta', options);
+  };
+  const plan = await f.plans.preview('game', { version: 'core1', nr: { Intensity: 1.5 } });
+  await f.plans.apply(plan.planId, { confirm: true, fingerprint: plan.fingerprint });
+  assert.ok(written); assert.match(fs.readFileSync(active, 'utf8'), /Intensity=1.5/); assert.match(fs.readFileSync(active, 'utf8'), /Experimental=keep/);
+  assert.match(fs.readFileSync(f.config, 'utf8'), /Intensity=1\n/);
+});
+
+test('the reviewed NR fingerprint reaches the writer and rejects a change during its own preparation', async t => {
+  const f = fixture(t), original = crypto.createHash('sha256').update(fs.readFileSync(f.config)).digest('hex');
+  f.service.writeNrSettings = async (_id, patch, options) => {
+    assert.equal(options.expectedFingerprint, original);
+    fs.writeFileSync(f.config, '[NRBeforeSR]\nIntensity=0.83333\n');
+    return require('../src/product/nr-config').writeConfig(f.config, patch, '0.4.7beta', options);
+  };
+  const plan = await f.plans.preview('game', { nr: { Intensity: 1.5 } });
+  await assert.rejects(f.plans.apply(plan.planId, { confirm: true, fingerprint: plan.fingerprint }), { code: 'ERR_NR_CONFIG_CHANGED' });
+  assert.match(fs.readFileSync(f.config, 'utf8'), /Intensity=0.83333/);
 });
 test('failed later stage leaves completed stages visible and blocks writes until owner recovery', async t => {
   const f = fixture(t); f.options.applyEnhancement = async () => { throw Object.assign(new Error('locked'), { code: 'EPERM' }); };
@@ -52,6 +123,28 @@ test('failed later stage leaves completed stages visible and blocks writes until
   await assert.rejects(f.plans.preview('game', { launchMode: 'exe' }), { code: 'OPERATION_RECOVERY_REQUIRED' });
   const recovered = await f.plans.recover('game'); assert.equal(recovered.recovered, true); assert.match(recovered.notice, /已完成的设置仍保留/);
   assert.deepEqual(JSON.parse(fs.readFileSync(f.config)), { Intensity: 0.5 });
+});
+
+test('an external deployment journal recovers through its owner even without a unified ledger', async t => {
+  const f = fixture(t); let pending = true, checks = 0;
+  f.options.guards.assertGameClosed = async () => { f.calls.push('closed'); };
+  f.service.inspectDeployment = async () => { checks++; return { mode: 'external', pending, needsRecovery: pending }; };
+  f.service.recoverDeployment = async () => { f.calls.push('recover-external'); pending = false; return { recovered: true, source: 'external' }; };
+  const result = await f.plans.recover('game');
+  assert.equal(result.recovered, true); assert.equal(result.source, 'external'); assert.equal(checks, 2);
+  assert.deepEqual(f.calls, ['closed', 'recover-external']);
+  assert.equal(fs.existsSync(path.join(f.options.userData, 'operation-plans')), false);
+  assert.equal((await f.plans.recover('game')).recovered, false);
+});
+
+test('journal-only recovery retains an unresolved owner state and never creates a replacement ledger', async t => {
+  const f = fixture(t);
+  f.service.inspectDeployment = async () => ({ pending: true });
+  f.service.recoverDeployment = async () => { f.calls.push('recover-external'); return { recovered: false }; };
+  await assert.rejects(f.plans.recover('game'), { code: 'OPERATION_RECOVERY_REQUIRED' });
+  assert.deepEqual(f.calls, ['recover-external']); assert.equal(fs.existsSync(path.join(f.options.userData, 'operation-plans')), false);
+  f.options.guards.assertGameClosed = async () => { throw Object.assign(Error('running'), { code: 'errGameRunning' }); };
+  await assert.rejects(f.plans.recover('game'), { code: 'errGameRunning' }); assert.deepEqual(f.calls, ['recover-external']);
 });
 test('each uninstall requires an explicit clean or restore choice and bound fingerprint', async t => {
   const f = fixture(t), clean = await f.plans.preview('game', { uninstall: 'clean' });

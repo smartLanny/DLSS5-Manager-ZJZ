@@ -26,6 +26,13 @@ function payloadFamily(series) {
   return null;
 }
 
+// FG selection uses the physical generation, never the shared NR payload family.
+function fgBackend(hardware) {
+  const series = [...new Set(Array.isArray(hardware?.series) ? hardware.series : [])];
+  if (hardware?.source === 'unavailable' || hardware?.family === 'mixed' || series.length !== 1) return null;
+  return ['RTX20', 'RTX30'].includes(series[0]) ? 'dlssg-sm86' : series[0] === 'RTX40' ? 'mfgunlock' : series[0] === 'RTX50' ? 'nvidia' : null;
+}
+
 function detectGpu(options = {}) {
   const run = options.run || (() => execFileSync('powershell', [
     '-NoProfile', '-Command',
@@ -61,4 +68,4 @@ function detectGpuAsync(options = {}) {
   return result;
 }
 
-module.exports = { FAMILIES, classifyGpu, classifySeries, detectGpu, detectGpuAsync };
+module.exports = { FAMILIES, classifyGpu, classifySeries, detectGpu, detectGpuAsync, fgBackend };

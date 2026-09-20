@@ -365,8 +365,8 @@ function openComponentManager() {
 }
 
 async function importRequiredRuntimeDlc(button) {
-  if (state.busy) return;
-  setBusy(true);
+  if (button?.dataset.runtimeImport === 'pending') return;
+  if (button) button.dataset.runtimeImport = 'pending';
   if (button) button.disabled = true;
   try {
     const result = unwrap(await window.manager.pickRuntimeDlc());
@@ -377,7 +377,7 @@ async function importRequiredRuntimeDlc(button) {
   } catch (error) {
     toast(error.message, true);
   } finally {
-    setBusy(false);
+    if (button) delete button.dataset.runtimeImport;
     if (button) button.disabled = false;
   }
 }

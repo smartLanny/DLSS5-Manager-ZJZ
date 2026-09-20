@@ -20,7 +20,7 @@ const { readOtaPackage } = require('./ota');
 const { createFeedbackCollector } = require('./feedback');
 const { createExternalRuntime, RECEIPT: EXTERNAL_RECEIPT, PENDING: EXTERNAL_PENDING } = require('./external-runtime');
 const { resolveVersion } = require('./version-selection');
-const { resolvePayloadDirectory, inspectSource } = require('./payload-source');
+const { resolvePayloadDirectory } = require('./payload-source');
 const { createVulkanService } = require('./vulkan-service');
 const { inspectNativeEnhancementCapabilities } = require('./game-enhancement-capabilities');
 const { createGameLaunchBroker } = require('./game-launch-broker');
@@ -35,6 +35,20 @@ const QUIET_READ_ACTIONS = new Set(['boot', 'games-refresh', 'games-list', 'game
 
 function createAppService({ userData, resourcesPath, appDir, documentsDir, version = '0.0.0', overrides = {} }) {
   const store = createStore(path.join(userData, 'settings.json'));
+  const updateGameOverride = (key, fields) => store.update(state => ({ gameOverrides: { ...state.gameOverrides,
+    [key]: { ...state.gameOverrides[key], ...fields } } }));
+  async function writeApiPreference(key, api, exe) {
+    let receipt;
+    const saved = await store.update(state => {
+      const before = state.gameOverrides[key] || {};
+      receipt = { before: { api: before.api || 'auto', apiExecutable: before.apiExecutable || null },
+        after: { api: api || 'auto', apiExecutable: exe } };
+      return { gameOverrides: { ...state.gameOverrides, [key]: { ...before, ...receipt.after } } };
+    });
+    const after = saved.gameOverrides[key] || {};
+    receipt.after = { api: after.api || 'auto', apiExecutable: after.apiExecutable || null };
+    return receipt;
+  }
   const storageApi = require('./component-storage');
   const storageState = store.read();
   const componentStorage = storageApi.resolveComponentStorage({ userData, configuredRoot:storageState.componentLibraryPath,
@@ -321,7 +335,11 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const core = files.find(file => file.sha256 === coreHash && /\.addon64$/i.test(file.name)), runtime = files.find(file => file.sha256 === runtimeHash && /\.dll$/i.test(file.name));
     return {
       currentCore: { id:version, version, file:core?.file, sha256:coreHash, architecture:'x64', inputInterfaces:entry.inputInterfaces || [], capabilities:entry.capabilities || [],
-        companions:chain ? [{role:'core-chain',name:'nrchain_nvngx.dll',file:chain.file,sha256:chain.sha256,bytes:chain.bytes}] : [],
+        companions:[...(chain ? [{role:'core-chain',name:'nrchain_nvngx.dll',file:chain.file,sha256:chain.sha256,bytes:chain.bytes}] : []),
+          ...Object.entries(require('./payload-companions').validateMap(entry.companions, version)).map(([name, hash]) => {
+            const item = files.find(file => file.name === name && file.sha256 === hash);
+            return { role: 'core-resource', name, file: item?.file, sha256: hash, bytes: item?.bytes };
+          })],
         config:config && {role:'core-config',name:'nr_before_sr.ini',file:config.file,sha256:config.sha256,bytes:config.bytes} },
       currentRuntime: runtime && { file:runtime.file, sha256:runtimeHash, bytes:runtime.bytes, family:hardware.family }
     };
@@ -364,7 +382,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (!v1 || !/^[a-f0-9]{64}$/.test(coreHash || '') || !/^[a-f0-9]{64}$/.test(runtimeHash || '') ||
           !/^[a-f0-9]{64}$/.test(chainHash || '') || !/^[a-f0-9]{64}$/.test(configHash || '') || !['RTX40', 'RTX50'].includes(family))
         return { registered: false, selectedId: null, reason: '当前 payload 没有完整 V1 Core、同源 chain、配置与运行库。' };
-      const identity = [path.resolve(payloadDir).toLowerCase(), version, family, coreHash, chainHash, configHash, runtimeHash].join('|');
+      const identity = [path.resolve(payloadDir).toLowerCase(), version, family, coreHash, chainHash, configHash, runtimeHash, JSON.stringify(entry.companions || {})].join('|');
       if (force || registeredProviderContext !== identity) {
         await componentLibrary.registerPayloadContext(payloadDir, version, family);
         registeredProviderContext = identity;
@@ -405,17 +423,25 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
 
   async function selectPayloadSource(selectedPath) {
     const directory = selectedPath === null ? bundledPayloadDir : resolvePayloadDirectory(selectedPath);
-    readBundle(directory);
+    const sourceBundle = readBundle(directory), current = store.read();
     const identity = sha256(path.join(directory, 'bundle.json'));
-    const inspected = inspectSource(directory, { hardwareFamily: hardware.family });
+    payloadInspection.invalidate(directory);
+    let inspected;
+    try { inspected = await payloadInspection.prime(directory, { allowMissingBundle: true, hardwareFamily: hardware.family,
+      version: sourceBundle.versions?.[current.addonVersion] ? current.addonVersion : undefined }); }
+    catch (error) {
+      if (error.code === 'ERR_PAYLOAD_SOURCE_CHANGED') throw error;
+      throw Object.assign(new Error('外部组件目录的清单、路径或文件校验失败。'), { code: error.code === 'ERR_PAYLOAD_MISSING' ? 'ERR_PAYLOAD_SOURCE_MISSING' : 'ERR_PAYLOAD_SOURCE_HASH', details: { path: directory, ...(error.details || {}) } });
+    }
+    if (inspected.missing.length) throw Object.assign(new Error('外部组件目录缺少所需文件。'), { code: 'ERR_PAYLOAD_SOURCE_MISSING', details: { path: directory, files: inspected.missing } });
+    if (!inspected.ready || inspected.invalid.length) throw Object.assign(new Error('外部组件目录文件与清单哈希不一致。'), { code: 'ERR_PAYLOAD_SOURCE_HASH', details: { path: directory, files: inspected.invalid } });
     readBundle(directory);
     if (sha256(path.join(directory, 'bundle.json')) !== identity) throw appError('ERR_PAYLOAD_SOURCE_CHANGED', { path: directory });
-    const current = store.read();
-    await store.write({ payloadSourcePath: selectedPath === null ? null : directory,
+    await store.update(latest => ({ payloadSourcePath: selectedPath === null ? null : directory,
       payloadSourceIdentity: selectedPath === null ? null : identity,
-      addonVersion: inspected.versions && current.addonVersion && !inspected.versions[current.addonVersion] ? null : current.addonVersion });
+      addonVersion: inspected.versions && latest.addonVersion && !inspected.versions[latest.addonVersion] ? null : latest.addonVersion }));
     payloadDir = directory;
-    payloadInspection.invalidate();
+    await payloadInspection.prime(payloadDir, { allowMissingBundle: true, hardwareFamily: hardware.family, version: selectedVersion() });
     return payloadState();
   }
 
@@ -635,14 +661,13 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     let settingChange, preferenceWritten = false;
     try {
       settingChange = await gameApiSettings.apply(game, plan.request.api || 'auto');
-      await store.write({ gameOverrides: { ...state.gameOverrides, [key]: { ...state.gameOverrides[key], api: plan.request.api || 'auto', apiExecutable: game.scan.chosen.path } } });
-      preferenceWritten = true;
+      preferenceWritten = await writeApiPreference(key, plan.request.api || 'auto', game.scan.chosen.path);
       const profile = await hoyo.apply(plan.profile.planId, consent);
       if (plan.legacy) await feeder.install(plan.routed, { version: plan.legacy.packageId, expectedPlanId: plan.legacy.planId, api: plan.api, loadingBackend: 'hoyoshade',
         layout: hoyo.profile(game), allowAntiCheat: consent.allowAntiCheat === true });
       return refreshAfterMutation({ ...profile, applied: true, runtimeVerified: false });
     } catch (error) {
-      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange);
+      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
       throw error;
     }
   }
@@ -735,6 +760,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (!imported || !manifest) throw appError('ERR_ADDON_NOT_FOUND', { reason: 'Install a bundled base before applying an imported update.' });
       if (components.bridge) throw Object.assign(new Error('导入的 OTA 保留其桥接配套；独立切换需要选择已验证接口的内置 Core。'), { code: 'COMPONENT_BRIDGE_CORE' });
       const result = { version, versionInfo: { compatibility: imported.compatibility },
+        ...(imported.companions ? { companions: imported.companions } : {}),
         addon: { file: imported.file, actual: imported.addonSha256, expected: imported.addonSha256, name: INSTALLED_NAMES.addon } };
       for (const kind of ['bridge', 'runtime', 'config', 'reshade', 'carrier']) {
         const provided = kind === 'bridge' ? imported.bridgeFile : kind === 'carrier' ? imported.carrierFile : null;
@@ -769,6 +795,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       notes: entry.notes || '', coreUpdateOnly: true, addonOnly: true, ota: true, ready: true,
       compatibility: null, file: payload.addon.file, addonSha256: payload.addon.actual,
       bridgeFile: payload.bridge.file, bridgeSha256: payload.bridge.actual, carrierFile: null,
+      ...(payload.companions ? { companions: payload.companions } : {}),
       versionInfo: { compatibility: null, coreUpdateOnly: true } };
   }
 
@@ -886,7 +913,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const importedAddonHash = sha256(imported.file);
     const importedBridgeHash = imported.bridgeFile ? sha256(imported.bridgeFile) : null;
     const importedCarrierHash = imported.carrierFile ? sha256(imported.carrierFile) : null;
-    const files = (base.files || []).map(row => {
+    const files = (base.files || []).filter(row => row.kind !== 'companion').map(row => {
       if (row.kind === 'addon') {
         return { ...row, file: imported.file, actual: importedAddonHash, expected: imported.addonSha256 || importedAddonHash, exists: true, valid: !imported.addonSha256 || importedAddonHash === imported.addonSha256 };
       }
@@ -897,6 +924,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     });
     if (importedCarrierHash) files.push({ kind: 'carrier', name: path.basename(imported.carrierFile), file: imported.carrierFile,
       actual: importedCarrierHash, expected: imported.carrierSha256 || importedCarrierHash, exists: true, valid: !imported.carrierSha256 || importedCarrierHash === imported.carrierSha256 });
+    if (imported.companions) files.push(...imported.companions);
     return {
       payload: { ...base, files, selectedVersion: imported.id, versionInfo: { compatibility: imported.compatibility } },
       payloadVersion: imported.id,
@@ -963,7 +991,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       };
     }
     const payload = inspected.payload;
-    const mapped = Object.fromEntries(payload.files.map(row => [row.kind, row]));
+    const mapped = Object.fromEntries(payload.files.filter(row => row.kind !== 'companion').map(row => [row.kind, row]));
+    if (payload.files.some(row => row.kind === 'companion')) mapped.companions = payload.files.filter(row => row.kind === 'companion');
     mapped.versionInfo = payload.versionInfo || (payload.versions && payload.versions[payload.selectedVersion]);
     const result = await installer.diagnose({ gameDir: game.dir, payload: mapped, payloadVersion: inspected.payloadVersion,
       payloadVersionLabel: inspected.payloadVersionLabel, scan: game.scan });
@@ -1054,10 +1083,14 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     return game;
   }
 
-  async function rollbackApiChoice(error, state, key, settingChange) {
-    const current = store.read(), previous = state.gameOverrides[key] || {};
-    try { await store.write({ gameOverrides: { ...current.gameOverrides,
-      [key]: { ...current.gameOverrides[key], api: previous.api || 'auto', apiExecutable: previous.apiExecutable || null } } }); }
+  async function rollbackApiChoice(error, _state, key, settingChange, receipt) {
+    try { if (receipt) await store.update(current => {
+      const latest = current.gameOverrides[key] || {};
+      if (['api', 'apiExecutable'].some(field => (latest[field] || (field === 'api' ? 'auto' : null)) !== receipt.after[field])) {
+        error.details = { ...error.details, preferenceExternalChangeRetained: true }; return {};
+      }
+      return { gameOverrides: { ...current.gameOverrides, [key]: { ...latest, ...receipt.before } } };
+    }); }
     catch { error.details = { ...error.details, preferenceRollbackFailed: true }; }
     if (settingChange?.changed) try {
       const restored = await settingChange.rollback();
@@ -1111,9 +1144,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     let settingChange, preferenceWritten = false, result;
     try {
       settingChange = await gameApiSettings.apply(game, options.api);
-      await store.write({ gameOverrides: { ...state.gameOverrides,
-        [key]: { ...state.gameOverrides[key], api: options.api, apiExecutable: chosen.path } } });
-      preferenceWritten = true;
+      preferenceWritten = await writeApiPreference(key, options.api, chosen.path);
       if (nextApi === 'vulkan') result = providerVulkan.matched && providerVulkan.transportOwner === 'legacy-feeder'
         ? await feeder.install(routed, { ...options, api: 'vulkan', loadingBackend: providerVulkan.loadingBackend })
         : await vulkan.install(routed, options);
@@ -1125,10 +1156,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         result = await prepareDetectedReframework(routed, result);
       }
     } catch (error) {
-      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange);
+      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
       throw error;
     }
-    internal.onAppliedState?.({ state, key, settingChange });
+    internal.onAppliedState?.({ state, key, settingChange, preferenceWritten });
     return refreshAfterMutation({ ...result, appliedRoute: { api: nextApi, version: nextApi === 'vulkan' ? options.version : payload?.version || imported?.id,
       gameSettingsSynced: settingChange?.applied === true } });
   }
@@ -1203,7 +1234,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         !/\.exe$/i.test(executable) || !fs.existsSync(executable)) {
       throw appError('ERR_BAD_REQUEST');
     }
-    const state = store.read();
+    await store.update(state => {
     const aliases = executableAliases(state, root, executable);
     const manualExecutables = state.manualExecutables.filter(row => pathKey(row.root) !== pathKey(root) &&
       !(aliases.ownsRoot(row.root) && aliases.sameExe(row.file)));
@@ -1215,22 +1246,25 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const canonical = state.gameOverrides[pathKey(root)];
     const metadata = [canonical, ...remembered].filter(row => row && (!row.apiExecutable || aliases.sameExe(row.apiExecutable)));
     const boundApi = metadata.find(row => aliases.sameExe(row.apiExecutable));
+    const boundLaunch = metadata.find(row => aliases.sameExe(row.launchExecutable));
     const name = typeof selection.name === 'string' ? selection.name.trim().slice(0, 160) : '';
     const icon = typeof selection.icon === 'string' && selection.icon.length <= 1024 * 1024 ? selection.icon : null;
     const gameOverrides = Object.fromEntries(Object.entries(state.gameOverrides).filter(([dir, row]) => !aliases.ownsMetadata(dir, row)));
     gameOverrides[pathKey(root)] = {
       name: name || metadata.find(row => row.name)?.name || '',
       icon: icon || metadata.find(row => row.icon)?.icon || null,
-      api: boundApi?.api || 'auto', apiExecutable: boundApi ? executable : null
+      api: boundApi?.api || 'auto', apiExecutable: boundApi ? executable : null,
+      ...(boundLaunch ? { launchMode: boundLaunch.launchMode, launchExecutable: executable } : {})
     };
-      await store.write({
+      return {
         manualGames: [...state.manualGames.filter(dir => !aliases.ownsRoot(dir) || aliases.sharedRoots.has(pathKey(dir))), root],
         manualExecutables,
         gameOverrides,
         excludedRoots: state.excludedRoots.filter(dir => !aliases.ownsRoot(dir) || aliases.sharedRoots.has(pathKey(dir))),
         excludedGames: state.excludedGames.filter(row => !aliases.sameExe(row.executable) &&
           !(row.dir && !row.executable && aliases.ownsRoot(row.dir) && !aliases.sharedRoots.has(pathKey(row.dir))))
-      });
+      };
+    });
     return refreshCollection(games);
   }
 
@@ -1283,6 +1317,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     if (state.api === 'dx11' && (imported.compatibility !== 'dx11' || !imported.carrierFile || !imported.bridgeFile))
       throw appError('ERR_PAYLOAD_MISSING', { file: 'DX11 配套核心与桥接器' });
     const payload = { version: imported.id, versionInfo: { compatibility: imported.compatibility } };
+    if (imported.companions) payload.companions = imported.companions;
     for (const kind of ['addon', 'bridge', 'runtime', 'carrier']) {
       const current = state.files.find(row => row.kind === kind); if (!current) continue;
       const provided = kind === 'addon' ? imported.file : kind === 'bridge' ? imported.bridgeFile : kind === 'carrier' ? imported.carrierFile : null;
@@ -1299,8 +1334,58 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     return payload;
   }
 
-  function nrConfigVersion(game) {
-    return vulkanOwned(game) || feederOwned(game) ? '' : gameLayout(game).version || readManifest(game.dir)?.payloadVersion || '';
+  const inspectNrCoreIdentity = require('./nr-core-identity').createNrCoreIdentity();
+  async function nrConfigVersion(game, options = {}) {
+    const layout = gameLayout(game);
+    const version = layout.recipe?.coreVersion || layout.coreVersion || layout.version ||
+      feeder.summary(game)?.coreVersion || vulkan.summary(game)?.coreVersion || readManifest(game.dir)?.payloadVersion || '';
+    const modules = await gameModuleManifest(game.id);
+    let cores = modules.filter(row => row.role === 'core');
+    if (!externalOwned(game) && !feederOwned(game) && !vulkanOwned(game) && reframeworkInput(game) && cores.length === 1) {
+      const directory = await settingDirectory(game), mirror = path.join(directory, path.basename(cores[0].path));
+      if (path.resolve(mirror).toLowerCase() !== path.resolve(cores[0].path).toLowerCase() && fs.existsSync(mirror))
+        cores = [{ ...cores[0], path: mirror }];
+    }
+    return inspectNrCoreIdentity({ version, files: cores, fresh: options.fresh === true });
+  }
+  async function validateWaitingComponents(id, input = {}) {
+    const request = require('./operation-plan').validateOperationRequest(input), game = findGame(id), layout = gameLayout(game);
+    const deployment = ['api', 'version', 'deployment', 'loadingMode', 'loadingBackend', 'hoyo', 'route', 'addonKeep'].some(key => Object.hasOwn(request, key)) ||
+      request.components?.bridge !== undefined || request.proxyEntry !== undefined && ['external', 'feeder'].includes(layout.mode === 'external' ? 'external' : layout.source);
+    if (!deployment) return { ready: true, deployment: false, nrContract: request.nr ? await nrConfigVersion(game, { fresh: true }) : null, runtimeVerified: false };
+    const route = await resolveInputRoute(id, request), defaults = installationDefaults(id, request);
+    if (['feeder', 'vulkan'].includes(route)) {
+      const routed = specialRouteGame(game, { ...request, route }), owner = route === 'feeder' ? feeder : vulkan;
+      if (typeof owner.verifySource !== 'function') throw Object.assign(new Error('当前固定配套未提供运行中来源核验，请退出游戏后再应用。'), { code: 'WAITING_SOURCE_UNAVAILABLE' });
+      const verified = await owner.verifySource(routed, { version: request.version, api: request.api === 'auto' ? undefined : request.api,
+        ...(request.loadingBackend ? { loadingBackend: request.loadingBackend } : {}), ...(request.proxyEntry ? { proxyEntry: request.proxyEntry } : {}) });
+      return { ...verified, ready: true, deployment: true, route, nrContract: { version: verified.coreVersion || verified.version }, runtimeVerified: false };
+    }
+    requireNoFeeder(game); requireKnownVulkanOwnership(game); if (vulkanOwned(game)) routeRestoreFirst();
+    await externalDeployment.assertReady(game);
+    const { api, routed } = deploymentApi(game, request.api || defaults.api), version = request.version || defaults.version;
+    const payload = externalOwned(game) ? await externalPayload(routed, version, request.components) : selectedPayload(routed, version, request.components);
+    const support = assess(routed.scan, { allowDx11: payload.versionInfo?.compatibility === 'dx11', supportsPresent: payload.versionInfo?.supportsPresent === true });
+    if (!support.supported) throw appError(support.code);
+    const identity = payload.addon?.actual;
+    const uniform = require('./nr-core-identity').UNIFORM_CORE_HASHES.includes(identity);
+    return { ready: true, deployment: true, route: 'native', api, version: payload.version || version, coreSha256: identity,
+      nrContract: { version: payload.version || version, ...(uniform ? { configContract: 'nr-uniform-v1', sourceCommit: require('./nr-config-contract').UNIFORM_SOURCE } : {}) },
+      identity: [payload.version || version, identity, payload.bridge?.actual, payload.runtime?.actual].filter(Boolean).join(':'), runtimeVerified: false };
+  }
+  async function changeNrSettings(game, requested, options = {}) {
+    if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
+    const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
+    // Capture the small INI before checking a potentially large Core. A game or
+    // editor update during identity verification must take precedence.
+    const before = readConfig(file);
+    if (before.status === 'error') throw Object.assign(new Error(before.error.message), { code: before.error.code });
+    const identity = await nrConfigVersion(game, { fresh: true });
+    const current = readConfig(file, identity);
+    const patch = typeof requested === 'function' ? requested(identity, current) : requested;
+    const result = await writeConfig(file, patch, identity, { expectedFingerprint: Object.hasOwn(options, 'expectedFingerprint')
+      ? options.expectedFingerprint : before.fingerprint || null });
+    return { ...result, coreIdentity: identity };
   }
   function deploymentApi(game, requested) {
     const chosen = game.scan?.chosen;
@@ -1384,6 +1469,11 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         changes.push({ path: file, name: path.basename(file), role: kind, phase: 'local-install',
           beforeSha256: before, afterSha256: row.actual, action: before === row.actual ? 'keep' : before === null ? 'create' : 'replace' });
       }
+      for (const row of payload.companions || []) {
+        const file = path.join(directory, row.name), before = await require('./launch-safety').digestFile(file);
+        changes.push({ path: file, name: row.name, role: 'core-resource', phase: 'local-install', beforeSha256: before,
+          afterSha256: row.actual, action: before === row.actual ? 'keep' : before === null ? 'create' : 'replace' });
+      }
       if (request.mode === 'external') {
         phases.push('external-migration');
         const location = externalDeployment.location(routed);
@@ -1393,6 +1483,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           changes.push({ path: file, name: path.basename(file), role: kind, phase: 'external-migration',
             beforeSha256: null, afterSha256: row.actual, action: 'create' });
         }
+        for (const row of payload.companions || []) changes.push({ path: path.join(location.runtimeDir, row.name), name: row.name,
+          role: 'core-resource', phase: 'external-migration', beforeSha256: null, afterSha256: row.actual, action: 'create' });
         if (request.loadingMode === 'helper') {
           const existingName = ['dxgi.dll', 'd3d12.dll'].find(name => fs.existsSync(path.join(directory, name)));
           const loaderName = existingName || INSTALLED_NAMES.reshade;
@@ -1487,9 +1579,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     try {
       if (plan.phases.every(phase => ['external-install', 'external-update', 'external-migration', 'restore-local'].includes(phase))) {
         settingChange = await gameApiSettings.apply(game, plan.request.api);
-        await store.write({ gameOverrides: { ...preferenceBefore.gameOverrides, [preferenceKey]: {
-          ...preferenceBefore.gameOverrides[preferenceKey], api: plan.request.api, apiExecutable: plan.exe } } });
-        preferenceWritten = true;
+        preferenceWritten = await writeApiPreference(preferenceKey, plan.request.api, plan.exe);
         result = await externalDeployment.apply(plan.migration.planId, consent);
         completed.push(...plan.phases);
       } else {
@@ -1497,8 +1587,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           result = await externalDeployment.apply(plan.migration.planId, consent); completed.push('restore-local');
         }
         result = await applyGameRoute(plan.id, { api: plan.request.api, version: plan.request.version, components: plan.request.components, addonKeep: plan.request.addonKeep, allowAntiCheat: consent.allowAntiCheat === true },
-          { addonPolicy: plan.addonPolicy, onAppliedState: applied => { settingChange = applied.settingChange; } });
-        preferenceWritten = true; completed.push(plan.hadManifest ? 'local-update' : 'local-install');
+          { addonPolicy: plan.addonPolicy, onAppliedState: applied => { settingChange = applied.settingChange; preferenceWritten = applied.preferenceWritten; } });
+        completed.push(plan.hadManifest ? 'local-update' : 'local-install');
         if (plan.request.mode === 'external') {
           game = findGame(plan.id);
           const next = await externalDeployment.preview(game, { mode: 'external', loadingMode: plan.request.loadingMode, proxyEntry: plan.request.proxyEntry, api: plan.api });
@@ -1508,7 +1598,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return refreshAfterMutation({ ...result, applied: true, completedPhases: completed,
         appliedRoute: { api: plan.api, version: plan.request.version, mode: plan.request.mode }, runtimeVerified: false });
     } catch (error) {
-      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, preferenceBefore, preferenceKey, settingChange);
+      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, preferenceBefore, preferenceKey, settingChange, preferenceWritten);
       const pending = fs.existsSync(path.join(game.dir, EXTERNAL_PENDING));
       // A newly created ordinary installation is an independently recoverable
       // stage. Revert it only after the external owner has restored its files.
@@ -1615,11 +1705,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       result = await feeder.install(routed, { version: plan.request.version, ...(fresh.planId ? { expectedPlanId: fresh.planId } : {}),
         ...(plan.request.proxyEntry ? { proxyEntry: plan.request.proxyEntry } : {}), ...(plan.request.addonKeep ? { addonKeep: plan.request.addonKeep } : {}), allowAntiCheat: consent.allowAntiCheat === true }, async () => {
         settingChange = await gameApiSettings.apply(game, plan.request.api);
-        await store.write({ gameOverrides: { ...state.gameOverrides, [key]: { ...before, api: plan.request.api, apiExecutable: plan.exe } } });
-        preferenceWritten = true;
+        preferenceWritten = await writeApiPreference(key, plan.request.api, plan.exe);
       });
     } catch (error) {
-      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange);
+      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
       throw error;
     }
     return refreshAfterMutation({ ...result, applied: true, appliedRoute: { api: classifyApi(routed.scan.chosen), version: result.coreVersion, mode: 'local' },
@@ -1880,6 +1969,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     withError,
     validateLaunch,
     boot: async () => {
+      // Hash the initial display snapshot off the main thread before component
+      // registration and game refresh ask for it synchronously.
+      await payloadInspection.prime(payloadDir, { allowMissingBundle: true, hardwareFamily: hardware.family, version: selectedVersion() }).catch(() => {});
       await storageFinalization; await seedBundledComponents();
       const providerRefresh = await refreshProviderSources({ selectDefault: true });
       if (providerRefresh.reason && providerRefresh.code && !componentSeedErrors.includes(providerRefresh.reason))
@@ -1907,6 +1999,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     assessmentSeed: id => { const game = findGame(id); return structuredClone({ ...publicGame(game), scan: game.scan }); },
     installationDefaults,
     resolveInputRoute,
+    validateWaitingComponents,
     previewProxyEntry,
     applyProxyEntry: (id, entry, consent = {}) => installer.toggleD3D12({ gameDir: findGame(id).dir, scan: findGame(id).scan, enabled: entry === 'd3d12', allowAntiCheat: consent.allowAntiCheat === true }),
     previewHoYoDeployment,
@@ -1950,12 +2043,11 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     addManualGame: async dir => {
       if (typeof dir !== 'string' || !path.isAbsolute(dir)) throw appError('ERR_BAD_REQUEST');
-      const state = store.read();
-      await store.write({
+      await store.update(state => ({
         manualGames: [...state.manualGames, dir],
         excludedRoots: state.excludedRoots.filter(root => pathKey(root) !== pathKey(dir)),
         excludedGames: removeExcludedFor(state.excludedGames, dir)
-      });
+      }));
       return refreshCollection(games);
     },
     prepareGameSelection: async (source, preferredExecutable = null) => {
@@ -1976,8 +2068,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     addScanFolder: async dir => {
       if (typeof dir !== 'string' || !path.isAbsolute(dir)) throw appError('ERR_BAD_REQUEST');
-      const state = store.read();
-      await store.write({ scanFolders: [...state.scanFolders, dir] });
+      await store.update(state => ({ scanFolders: [...state.scanFolders, dir] }));
       return refreshCollection(games);
     },
     dismissGame: async (id, options = {}) => {
@@ -2006,8 +2097,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           if (result?.removed !== true) throw appError('ERR_BACKUP_INVALID',{operation:'dismiss-uninstall',removed:false,warnings:result?.warnings||[]});
         }
       }
-      const state = store.read();
       const executable = game.scan?.chosen?.path || null;
+      await store.update(state => {
       const aliases = executableAliases(state, game.dir, executable);
       const removable = [...aliases.roots].filter(([key]) => !aliases.protectedRoots.has(key) && !aliases.sharedRoots.has(key));
       const hiddenRoots = removable.map(([, dir]) => dir);
@@ -2015,7 +2106,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       // With another receipt, use exact-directory exclusions so its recovery
       // row cannot be hidden by the shared executable or launcher identity.
       const exclusionDirs = [...new Set([game.dir, ...hiddenRoots])];
-      await store.write({
+      return {
         excludedRoots: [...state.excludedRoots, ...hiddenRoots.filter(dir => !hidesAnotherReceipt(dir))],
         excludedGames: [...state.excludedGames, ...exclusionDirs.map(dir => ({
           dir, executable: aliases.protectedRoots.size ? null : executable,
@@ -2026,6 +2117,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         manualGames: state.manualGames.filter(dir => !aliases.ownsRoot(dir) || aliases.sharedRoots.has(pathKey(dir))),
         manualExecutables: state.manualExecutables.filter(row => !(aliases.ownsRoot(row.root) && (!executable || aliases.sameExe(row.file)))),
         gameOverrides: Object.fromEntries(Object.entries(state.gameOverrides).filter(([dir, row]) => !aliases.ownsMetadata(dir, row)))
+      };
       });
       return refreshCollection(games);
     },
@@ -2034,12 +2126,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (typeof name !== 'string') throw appError('ERR_BAD_REQUEST');
       const nextName = name.trim().slice(0, 160);
       if (!nextName) throw appError('ERR_BAD_REQUEST');
-      const state = store.read();
       const key = pathKey(game.dir);
-      await store.write({ gameOverrides: {
-        ...state.gameOverrides,
-        [key]: { ...state.gameOverrides[key], name: nextName }
-      } });
+      await updateGameOverride(key, { name: nextName });
       return refreshCollection(games);
     },
     updateSettings: async patch => {
@@ -2058,6 +2146,25 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return store.write(patch);
     },
     applyGameRoute,
+    setGameApiPreference: async (id, api) => {
+      if (!['auto', 'dx9', 'dx10', 'dx11', 'dx12', 'vulkan', 'opengl'].includes(api)) throw appError('ERR_BAD_REQUEST');
+      const game = findGame(id);
+      if (!game.scan?.chosen?.path) throw appError('ERR_NO_GAME_EXE');
+      const key = pathKey(game.dir), exe = game.scan.chosen.path;
+      await updateGameOverride(key, { api, apiExecutable: exe });
+      // Changing a preference does not require discovering the library again.
+      // Keep detection evidence separate and only project the bound choice.
+      const chosen = game.scan.chosen, detected = require('./operation-api').resolveOperationApi(game, { api: 'auto' }).detectedApi;
+      const effectiveApi = api === 'auto' ? detected : api;
+      const selected = { ...chosen, detectedApi: detected,
+        apiResolution: { ...(api === 'auto' ? chosen.detectedApiResolution : chosen.apiResolution), api: effectiveApi, source: api === 'auto' ? chosen.detectedApiResolution?.source || 'detection' : 'override' },
+        apiAssessment: { ...chosen.apiAssessment, effectiveApi, source: api === 'auto' ? 'detection' : 'override' } };
+      game.apiOverride = api; game.chosen = selected;
+      game.scan = { ...game.scan, chosen: selected, componentSelection: { ...game.scan.componentSelection, dx11Carrier: effectiveApi === 'dx11' } };
+      const support = assess(game.scan, { allowDx11: true });
+      game.supported = support.supported; game.supportCode = support.code; game.supportText = support.code ? MESSAGES[support.code] : '支持安装';
+      return { saved: true, api, exe, notice: '已记住本游戏的 API；组件变更在应用时执行。' };
+    },
     setGameApi: async (id, api, options = {}) => {
       if (!['auto', 'dx9', 'dx10', 'dx11', 'dx12', 'vulkan', 'opengl'].includes(api)) throw appError('ERR_BAD_REQUEST');
       const game = findGame(id);
@@ -2067,11 +2174,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (vulkanOwned(game) && nextApi !== 'vulkan' || readManifest(game.dir) && nextApi === 'vulkan') routeRestoreFirst();
       const state = store.read();
       const key = pathKey(game.dir);
-      let settingChange;
+      let settingChange, preferenceWritten;
       try {
         settingChange = await gameApiSettings.apply(game, api);
-        await store.write({ gameOverrides: { ...state.gameOverrides,
-          [key]: { ...state.gameOverrides[key], api, apiExecutable: game.scan.chosen.path } } });
+        preferenceWritten = await writeApiPreference(key, api, game.scan.chosen.path);
         if (readManifest(game.dir)) {
           const effectiveApi = api === 'auto' ? require('./operation-api').resolveOperationApi(game, { api: 'auto' }).detectedApi : api;
           const routedScan = { ...game.scan, chosen: { ...game.scan.chosen,
@@ -2087,7 +2193,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           }
         }
       } catch (error) {
-        await rollbackApiChoice(error, state, key, settingChange);
+        await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
         throw error;
       }
       return refreshCollection(games);
@@ -2105,7 +2211,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           const core = ota.canonicalCore;
           await componentLibrary.importVerifiedCore({ ...core, catalogIdentity:true, archiveSha256:ota.archiveSha256, files:[
             { name:'nr-before-sr.zh-CN.addon64', bytes:ota.addon, sha256:ota.addonSha256 },
-            { name:'nrchain_nvngx.dll', bytes:ota.bridge, sha256:ota.bridgeSha256 }
+            { name:'nrchain_nvngx.dll', bytes:ota.bridge, sha256:ota.bridgeSha256 },
+            ...(ota.carrier ? [{ name:ota.carrierName, bytes:ota.carrier, sha256:ota.carrierSha256 }] : []),
+            ...(ota.companions || []).map(row => ({ name:row.name, bytes:row.data, sha256:row.sha256 }))
           ] });
           const source = await componentLibrary.activateCore(core.id, bundledPayloadDir);
           await selectPayloadSource(source.payloadDir);
@@ -2321,12 +2429,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           // Feeder invokes this only after package, process, anti-cheat and
           // launch preflight, immediately before its existing file transaction.
           settingChange = await gameApiSettings.apply(game, options.api);
-          await store.write({ gameOverrides: { ...state.gameOverrides,
-            [key]: { ...state.gameOverrides[key], api: options.api, apiExecutable: game.scan.chosen.path } } });
-          preferenceWritten = true;
+          preferenceWritten = await writeApiPreference(key, options.api, game.scan.chosen.path);
         });
       } catch (error) {
-        if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange);
+        if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
         throw error;
       }
       return refreshAfterMutation({ ...result, appliedRoute: { api: classifyApi(routed.scan.chosen), version: result.coreVersion,
@@ -2382,7 +2488,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       try {
         if (game.scan && game.scan.chosen && game.scan.chosen.path) {
           const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
-          if (fs.existsSync(file)) settings = readConfig(file, nrConfigVersion(game));
+          const identity = await nrConfigVersion(game);
+          settings = { ...readConfig(file, identity), coreIdentity: identity };
         }
       } catch {}
       try {
@@ -2405,14 +2512,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     readNrSettings: async id => {
       const game = findGame(id);
       const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
-      return readConfig(file, nrConfigVersion(game));
+      const identity = await nrConfigVersion(game);
+      return { ...readConfig(file, identity), coreIdentity: identity };
     },
-    writeNrSettings: async (id, patch) => {
-      const game = findGame(id);
-      if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
-      const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
-      return writeConfig(file, patch, nrConfigVersion(game));
-    },
+    writeNrSettings: async (id, patch, options = {}) => changeNrSettings(findGame(id), patch, options),
     readGameHotkeys: async id => {
       const game = findGame(id);
       const executableDir = await settingDirectory(game, 'reshade');
@@ -2429,32 +2532,16 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return writeReShadeHotkey(path.join(executableDir, 'ReShade.ini'), binding);
     },
     applyDefault: async id => {
-      const game = findGame(id);
-      if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
-      const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
-      const version = nrConfigVersion(game), patch = defaultPatch(version);
-      let current = '';
-      try { current = fs.readFileSync(file, 'utf8'); } catch {}
-      if (!/^[ \t]*WorkMode\s*=/mi.test(current)) {
-        delete patch.WorkMode;
-        delete patch.CustomWorkScale;
-        patch.ColorStrength = 0;
-      }
-      return writeConfig(file, patch, version);
+      return changeNrSettings(findGame(id), (identity, current) => {
+        if (!current.contract.known) throw appError('ERR_BAD_REQUEST', { reason: '当前 Core 身份无法确认，未写入推测的默认值。' });
+        return Object.fromEntries(Object.entries(defaultPatch(identity)).filter(([key]) => current.capabilities[key] === true));
+      });
     },
     applyRecommended: async id => {
-      const game = findGame(id);
-      if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
-      const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
-      const version = nrConfigVersion(game), patch = defaultPatch(version);
-      let current = '';
-      try { current = fs.readFileSync(file, 'utf8'); } catch {}
-      if (!/^[ \t]*WorkMode\s*=/mi.test(current)) {
-        delete patch.WorkMode;
-        delete patch.CustomWorkScale;
-        patch.ColorStrength = 0;
-      }
-      return writeConfig(file, patch, version);
+      return changeNrSettings(findGame(id), (identity, current) => {
+        if (!current.contract.known) throw appError('ERR_BAD_REQUEST', { reason: '当前 Core 身份无法确认，未写入推测的推荐值。' });
+        return Object.fromEntries(Object.entries(defaultPatch(identity)).filter(([key]) => current.capabilities[key] === true));
+      });
     }
   };
 }

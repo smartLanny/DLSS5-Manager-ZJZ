@@ -261,7 +261,7 @@ async function smoke() {
   await until(() => state().loaded.includes('installation'), 'five-second installation response'); mock.delays['fixture:installation'] = 0;
   assert(!mock.calls.some(row => row[0] === 'assess' && row[2] !== 'installation'), 'first tab does not start expensive enhancement or diagnostic work');
   assert(['Intensity', 'LocalToneStrength', 'LocalStructureStrength'].every(key => field('nr', key)?.getClientRects().length > 0), 'three primary NR sliders are visible on first tab');
-  assert(host().querySelectorAll('.gp-nr-primary input[type="range"]').length === 3 && !host().querySelector('.gp-nr-details').open && field('nr', 'WorkMode').closest('details') === host().querySelector('.gp-nr-details'), 'advanced NR starts collapsed below the three primary sliders');
+  assert(host().querySelectorAll('.gp-nr-primary input[type="number"]').length === 3 && !host().querySelector('.gp-nr-details').open && field('nr', 'WorkMode').closest('details') === host().querySelector('.gp-nr-details'), 'advanced NR starts collapsed below three precise numeric controls');
   assert(![...field('route', 'version').options].some(row => row.value.includes('bridge1411')), 'bridge comparison is absent from basic Core choices');
   for (const id of ['0.5-dline13', '0.4.7beta-corefix.8']) {
     const candidate = [...field('route', 'version').options].find(row => row.value === id);
@@ -279,7 +279,7 @@ async function smoke() {
   await until(() => state().loaded.includes('installation'), 'second game installs first');
   set('nr', 'Intensity', '.8');
   await until(() => mock.calls.some(row => row[0] === 'assess-resolved' && row[3] === diagnosticTicket), 'older first-game diagnostic response');
-  assert(state().id === 'fixture-two' && state().data.api.effectiveApi === 'dx12' && field('nr', 'Intensity').value === '0.8', 'late first-game response cannot replace the second game or its draft');
+  assert(state().id === 'fixture-two' && state().data.api.effectiveApi === 'dx12' && Number(field('nr', 'Intensity').value) === .8, 'late first-game response cannot replace the second game or its draft');
   await open('fixture');
   assert(host() === firstHost && host().__gpController === firstController && mock.mounts.get('fixture') === 1, 'same host and controller survive cross-game expansion');
   assert(field('nr', 'Intensity').value === '0.65', 'first-game draft survives returning from another game');
@@ -576,7 +576,10 @@ async function smoke() {
   mock.assessment.enhancements.current.fg.request.multiplier = 3; click('discard');
   set('fg', 'multiplier', '2');
   await host().__gpController.refresh(true);
-  assert(field('fg', 'multiplier').value === '2' && state().draft.fg.multiplier === 2, 'fresh INI readback preserves a dirty FG draft');
+  assert(field('fg', 'multiplier').value === '3' && !state().draft.fg, 'external INI wins over dirty FG settings');
+  assert(host().textContent.includes('未应用修改已保留') && host().querySelector('[data-gp-action="restore-draft-backup"]'), 'superseded draft remains recoverable');
+  click('restore-draft-backup');
+  assert(state().draft.fg.multiplier === 2, 'restored draft still requires Apply');
   await preview(); assert(mock.plan.request.fg.multiplier === 2 && !mock.plan.request.components && mock.plan.request.version === undefined, 'FG setting change preserves the installed MFG plugin version');
   click('modal-cancel'); discard();
   assert(field('fg', 'multiplier').value === '3', 'discard returns to the newest actual INI value');

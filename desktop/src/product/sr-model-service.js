@@ -7,6 +7,7 @@ const { appError } = require('./errors');
 const { detectGpu } = require('./gpu');
 const { createNvapiDrs } = require('./nvapi-drs');
 const { atomicJson } = require('./launch-safety');
+const policyWrites = require('./work-scheduler').createWorkScheduler();
 const {
   CHOICES,
   normalizeChoice,
@@ -222,7 +223,8 @@ function createSrModelService(options) {
     return { ok: true, restored: true, selection: state.selection, effective: state.effective };
   }
 
-  return { read, write, applyBeforeLaunch, prepareMigration, migrationInfo, policyFile };
+  const serialized = fn => (...args) => policyWrites.run(path.resolve(policyFile).toLowerCase(), () => fn(...args));
+  return { read, write: serialized(write), applyBeforeLaunch: serialized(applyBeforeLaunch), prepareMigration: serialized(prepareMigration), migrationInfo, policyFile };
 }
 
 module.exports = { createSrModelService, loadPolicies, savePolicies, resolveHelperPath, normalizeEntry };

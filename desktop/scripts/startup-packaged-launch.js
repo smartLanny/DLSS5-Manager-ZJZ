@@ -60,7 +60,7 @@ async function startPackagedWithIsolation({ executable, mainFile, entry, directo
   const port = await unusedLoopbackPort();
   const isolatedUserData = path.join(directory, 'user-data'); fs.mkdirSync(isolatedUserData, { recursive: true });
   const args = [`--inspect-brk=127.0.0.1:${port}`, `--user-data-dir=${isolatedUserData}`, `--startup-smoke-root=${directory}`, `--startup-smoke-main=${mainFile}`];
-  if (compatibility) args.push('--no-sandbox');
+  if (compatibility) args.push('--no-sandbox', '--sandbox-retry-once');
   const started = await broker.launch({ exe: executable, args, cwd: path.dirname(executable) });
   let inspector;
   try {

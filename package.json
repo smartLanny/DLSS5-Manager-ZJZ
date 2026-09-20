@@ -1,6 +1,6 @@
 {
   "name": "dlss5-manager-zjz",
-  "version": "0.5.0-beta.2",
+  "version": "0.5.0-beta.3",
   "description": "装机宅 DLSS5 Manager：桌面管理器、组件库与共享安装预检",
   "license": "MIT",
   "type": "module",

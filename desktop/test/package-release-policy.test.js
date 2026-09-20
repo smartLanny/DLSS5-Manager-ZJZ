@@ -7,15 +7,16 @@ const os = require('node:os');
 const { prepareCoreCatalog } = require('../scripts/prepare-core-catalog');
 const { inspectManifest, buildPayload, prepareStageRoot } = require('../scripts/stage-manager-distribution.cjs');
 const managerBuild = require('../scripts/build-manager.cjs');
+const packageVersion = require('../package.json').version;
 
 test('portable release emits a manager-only immutable update manifest', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'manager-update-manifest-'));
   t.after(() => fs.rmSync(root, { recursive:true, force:true }));
-  const bundle = { file:path.join(root, 'DLSS5-Manager-0.5.0-beta.2-Portable.zip'), bytes:123456, sha256:'a'.repeat(64) };
+  const bundle = { file:path.join(root, `DLSS5-Manager-${packageVersion}-Portable.zip`), bytes:123456, sha256:'a'.repeat(64) };
   const result = await managerBuild.createUpdateManifest(root,bundle);
   assert.equal(result.manifest.schema,'dlss5-manager-update-v1');
   assert.equal(result.manifest.channel,'preview');
-  assert.match(result.manifest.artifact.url,/releases\/download\/v0[.]5[.]0-beta[.]2\/DLSS5-Manager-0[.]5[.]0-beta[.]2-Portable[.]zip$/);
+  assert.ok(result.manifest.artifact.url.endsWith(`/releases/download/v${packageVersion}/DLSS5-Manager-${packageVersion}-Portable.zip`));
   assert.equal(result.manifest.artifact.sha256,'a'.repeat(64));
   assert.match(result.manifest.notes,/Core.*独立更新/);
   assert.equal(fs.existsSync(result.file),true);
@@ -202,7 +203,7 @@ test('large staging and delivery roots can live on another drive without permitt
   const parsed = managerBuild.parseArgs(['--work-root', workRoot, '--flavor', 'offline', '--portable']);
   const roots = managerBuild.resolveBuildRoots(parsed);
   assert.equal(roots.stageRoot, path.join(path.resolve(workRoot), 'stage', 'offline'));
-  assert.equal(roots.outputRoot, path.join(path.resolve(workRoot), 'deliveries', 'DLSS5-Manager-0.5.0-beta.2-offline'));
+  assert.equal(roots.outputRoot, path.join(path.resolve(workRoot), 'deliveries', `DLSS5-Manager-${packageVersion}-offline`));
   const config = managerBuild.buildConfig({ stageRoot, flavor:'offline', outputRoot:roots.outputRoot,
     portableOnly:true, electronDist:'D:/verified-electron-dist' });
   assert.equal(config.electronDist, path.resolve('D:/verified-electron-dist'));

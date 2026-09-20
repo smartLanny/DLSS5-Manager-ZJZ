@@ -36,6 +36,19 @@ function fixture(t, options = {}) {
     pending: path.join(gameRoot, PENDING), receipt: path.join(gameRoot, RECEIPT), request: { mode: 'external', loadingMode: 'proxy', api: 'dx12', payload } };
 }
 
+test('direct unified3 deployment owns only its seven nested resources and restore leaves game resources intact', async t => {
+  const f = fixture(t), names = require('../src/product/payload-companions').NAMES;
+  f.payload.version = '0.5-dline21-unified3';
+  f.payload.companions = names.map(name => { const file = path.join(f.root, 'resources', name), bytes = 'resource:' + name;
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes); return { name, file, actual: hash(bytes) }; });
+  const userFile = path.join(f.dir, names[0]); fs.mkdirSync(path.dirname(userFile), { recursive: true }); fs.writeFileSync(userFile, 'game original');
+  const plan = await f.service.preview(f.game, f.request); await f.service.apply(plan.planId);
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  assert.equal(JSON.parse(fs.readFileSync(f.receipt)).files.filter(row => row.kind === 'companion').length, 7);
+  await f.service.previewRemove(f.game, 'restore'); await f.service.remove(f.game, 'restore');
+  assert.equal(fs.readFileSync(userFile, 'utf8'), 'game original');
+});
+
 test('first external deployment handles Palworld missing directories without activating root HDR or owning existing runtime', async t => {
   const f = fixture(t), preset = fs.readFileSync(path.join(f.dir, 'ReShadePreset.ini'));
   const current = f.service.getLayout(f.game);

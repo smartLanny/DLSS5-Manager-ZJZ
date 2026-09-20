@@ -43,6 +43,24 @@ function fixture(t) {
   return { broad, outer, root, binary, exe, otherRoot, other, icon, service, installer, initial, receipt };
 }
 
+test('concurrent names, APIs and another game preference preserve every committed field', async t => {
+  const f = fixture(t);
+  await f.service.store.write({ manualGames: [f.root, f.otherRoot],
+    manualExecutables: [{ root: f.root, file: f.exe }, { root: f.otherRoot, file: f.other }] });
+  const games = (await f.service.boot()).games;
+  const first = games.find(row => row.dir === f.root), second = games.find(row => row.dir === f.otherRoot);
+  await Promise.all([f.service.renameGame(first.id, 'First renamed'), f.service.setGameApiPreference(second.id, 'dx11'),
+    f.service.setGameApiPreference(first.id, 'dx12')]);
+  const saved = f.service.store.read().gameOverrides;
+  assert.equal(saved[f.root.toLowerCase()].name, 'First renamed');
+  assert.equal(saved[f.root.toLowerCase()].api, 'dx12');
+  assert.equal(saved[f.otherRoot.toLowerCase()].api, 'dx11');
+  await f.service.store.update(state => ({ gameOverrides: { ...state.gameOverrides, [f.root.toLowerCase()]: {
+    ...state.gameOverrides[f.root.toLowerCase()], launchMode: 'exe', launchExecutable: f.exe } } }));
+  await f.service.addManualSelection({ root: f.root, executable: f.exe });
+  assert.equal(f.service.store.read().gameOverrides[f.root.toLowerCase()].launchMode, 'exe');
+});
+
 test('explicit selection persists one EXE alias with its old API and display metadata without unexcluding other games', async t => {
   const f = fixture(t); f.receipt(f.root);
   await f.service.store.write({ ...f.initial, excludedRoots: [f.broad, f.binary, f.outer, f.root, f.otherRoot],

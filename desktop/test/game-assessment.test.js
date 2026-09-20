@@ -86,8 +86,20 @@ test('an unreadable deployment cannot promote stale inventory into installed or 
   f.service.getLayout = () => { throw Object.assign(new Error('original transaction mismatch'), { code: 'DEPLOYMENT_RECORD' }); };
   const result = await f.assessment.assess('game', { sections: ['installation'] });
   assert.equal(result.game.installed, false); assert.equal(result.deployment.installed, false);
-  assert.equal(result.deployment.needsRecovery, true); assert.equal(result.deployment.layoutVerified, false);
+  assert.equal(result.deployment.needsRecovery, false); assert.equal(result.deployment.inspectionFailed, true); assert.equal(result.deployment.layoutVerified, false);
   assert.ok(result.failures.some(row => row.code === 'DEPLOYMENT_RECORD'));
+});
+
+test('unreadable operation state is a retryable inspection failure, not a fabricated recovery transaction', async () => {
+  const f = fixture();
+  f.options.operations.inspect = async () => { throw Object.assign(new Error('record permission denied'), { code: 'EACCES' }); };
+  const result = await f.assessment.assess('game', { sections: ['installation'] });
+  assert.equal(result.operation.pending, false);
+  assert.equal(result.operation.inspectionFailed, true);
+  assert.ok(result.failures.some(row => row.section === 'operation' && row.code === 'EACCES'));
+  f.options.operations.inspect = async () => ({ pending: false });
+  const retry = await f.assessment.assess('game', { sections: ['installation'] });
+  assert.equal(retry.operation.inspectionFailed, undefined);
 });
 
 test('slow diagnostic verification does not delay a separate installation request', { timeout: 2000 }, async () => {

@@ -147,7 +147,12 @@ for (const deployment of ['local', 'external']) test(`bundled Core update keeps 
   const expected = { config: fs.readFileSync(initialFiles.config), reshade: fs.readFileSync(initialFiles.reshade), runtime: fs.readFileSync(initialFiles.runtime) };
   const catalog = JSON.stringify(f.service.coreVersionCatalog());
   for (const [index, version] of UPDATES.entries()) {
-    const extra = index === 0 ? { nr: { TransferStrength: 0.4, CustomWorkScale: 0.25 } } : {};
+    if (index === 0) {
+      const before = walk(f.gameRoot);
+      await assert.rejects(f.plans.preview(f.id, { api: 'dx12', version, deployment, nr: { TransferStrength: 0.4, CustomWorkScale: 0.25 } }), { code: 'ERR_BAD_REQUEST' });
+      assert.deepEqual(walk(f.gameRoot), before, 'out-of-range NR values are rejected without silently changing the request or game files');
+    }
+    const extra = index === 0 ? { nr: { TransferStrength: 1, CustomWorkScale: 0.5 } } : {};
     const preview = await f.plans.preview(f.id, { api: 'dx12', version, deployment, ...extra });
     if (index === 0) {
       assert.equal(preview.request.nr.TransferStrength, 1);

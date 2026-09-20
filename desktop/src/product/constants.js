@@ -32,26 +32,9 @@ const INSTALLED_NAMES = Object.freeze({
   carrier: DX11_COMPAT_CARRIER
 });
 
-const DEFAULT_NR_CONFIG = Object.freeze({
-  Enabled: 1,
-  Mode: 2,
-  Intensity: 1.0,
-  WorkMode: 0,
-  CustomWorkScale: 1.0,
-  Style: 0,
-  AutoMask: 0,
-  ColorStrength: 0.75,
-  SkinStructureStrength: -1,
-  LocalToneStrength: 1,
-  LocalStructureStrength: 1,
-  TransferStrength: 1,
-  PostTransferStrength: 1,
-  UICorrection: 0
-});
-
-const PUBLIC_NR_KEYS = Object.freeze([
-  'Enabled', 'Intensity', 'WorkMode', 'CustomWorkScale', 'Style', 'AutoMask', 'ColorStrength', 'SkinStructureStrength', 'LocalToneStrength', 'LocalStructureStrength', 'TransferStrength', 'PostTransferStrength'
-]);
+// Historical fallback retained for older callers; reads resolve their installed
+// Core contract and report missing/unknown defaults separately.
+const { LEGACY_DEFAULTS: DEFAULT_NR_CONFIG, PUBLIC_NR_KEYS } = require('./nr-config-contract');
 
 module.exports = {
   PRODUCT,

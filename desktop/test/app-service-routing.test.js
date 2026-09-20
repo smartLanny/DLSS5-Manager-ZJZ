@@ -83,6 +83,20 @@ async function externalFixture(t) {
   return {...f,id,external,addon,bundleFile};
 }
 
+for (const deployment of ['local', 'external']) test(`waiting source validation verifies the ${deployment} package while the game runs without deploying it`, async t => {
+  const running = async () => { throw Object.assign(new Error('game running'), { code: 'errGameRunning' }); };
+  const f = makeService(t, { assertGameClosed: running, externalDeploymentOptions: { guards: { assertGameClosed: running, antiCheatPresent: () => false }, pe: { getImports: () => [] } } });
+  await f.service.addManualGame(f.gameDir); const id = (await f.service.boot()).games[0].id;
+  const request = { api: 'dx12', version: '0.3.3.5', deployment };
+  const result = await f.service.validateWaitingComponents(id, request);
+  assert.equal(result.ready, true); assert.equal(result.route, 'native'); assert.equal(result.version, request.version);
+  assert.equal(fs.existsSync(path.join(path.dirname(f.exe), PAYLOAD_FILES.addon)), false);
+  assert.equal(fs.existsSync(path.join(f.gameDir, '_DLSS5_Backup')), false);
+  fs.appendFileSync(path.join(f.payloadDir, 'versions', request.version, PAYLOAD_FILES.addon), 'changed source');
+  await assert.rejects(f.service.validateWaitingComponents(id, request), { code: 'ERR_PAYLOAD_HASH' });
+  assert.equal(fs.existsSync(path.join(f.gameDir, '_DLSS5_Backup')), false);
+});
+
 test('unified deployment performs a first external install and routes NR, hotkeys, diagnosis and uninstall to its active profile', async t => {
   const f = makeService(t, { assertGameClosed: async () => {},
     externalDeploymentOptions: { guards: { assertGameClosed: async () => {}, antiCheatPresent: () => false }, pe: { getImports: () => [] } } });

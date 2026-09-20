@@ -7,12 +7,13 @@ const journalDefault = require('../core/file-journal');
 const policy = require('./launch-settings-policy');
 const { createNvapiProfileAdapter } = require('./nvapi-profile');
 const { fail, inside, noLinks, digestFile, atomicJson } = require('./launch-safety');
-const { detectGpuAsync: detectGpu } = require('./gpu');
+const { detectGpuAsync: detectGpu, fgBackend } = require('./gpu');
 const { createInstallGuards } = require('../core/install-guards');
 const pe = require('../core/pe');
 const { assessEnhancementState, NVIDIA_FG_DRIVER } = require('./game-enhancement-capabilities');
 const { createNativeEnhancementProbe } = require('./native-enhancement-probe');
 const mfgConfig = require('./mfgunlock-config');
+const sm86Config = require('./fg-sm86-config');
 
 const DRIVER_IDS = [...policy.IDS.sr, ...policy.IDS.fg];
 const clone = value => structuredClone(value);
@@ -59,7 +60,7 @@ function createLaunchSettingsService(options = {}) {
   }
   async function assessEligibility(id, domain, input) {
     const t = target(id), evidence = await featureEvidence(id, domain), hardware = await detectHardware();
-    const request = input || { backend: domain === 'sr' ? 'native' : hardware.series?.includes('RTX40') ? 'mfgunlock' : 'nvidia' };
+    const request = input || { backend: domain === 'sr' ? 'native' : fgBackend(hardware) || 'nvidia' };
     let requiredSettingIds = domain === 'sr' ? [policy.IDS.sr[0], policy.IDS.sr[3]] : policy.IDS[domain], minimumDriverVersion = 57216;
     if (domain === 'sr' && request.quality && request.quality !== 'game') {
       const compiled = policy.nativeSr(request, hardware);
@@ -155,7 +156,7 @@ function createLaunchSettingsService(options = {}) {
         value.lastTransaction != null && (!value.lastTransaction || !/^[a-f0-9-]{36}$/.test(value.lastTransaction.id || '') || !['sr', 'fg'].includes(value.lastTransaction.domain) || typeof value.lastTransaction.restoring !== 'boolean'))
       fail('SETTINGS_RECEIPT_INVALID', '启动设置恢复记录与当前 EXE 不一致。');
     for (const [domain, row] of Object.entries(value.applied)) {
-      const allowed = domain === 'sr' ? ['native', 'optiscaler'] : ['nvidia', 'rtx40', 'mfgunlock'];
+      const allowed = domain === 'sr' ? ['native', 'optiscaler'] : ['nvidia', 'rtx40', 'mfgunlock', 'dlssg-sm86'];
       if (!row || !allowed.includes(row.backend) || !samePath(row.exe, t.exe) || !row.request || typeof row.request !== 'object') fail('SETTINGS_RECEIPT_INVALID', '启动设置域记录无效。');
       policy.validateRequest(domain, row.request);
       if (['native', 'nvidia'].includes(row.backend)) {
@@ -163,7 +164,7 @@ function createLaunchSettingsService(options = {}) {
             !row.lastValues || Object.keys(row.lastValues).length !== row.ids.length || row.ids.some(id => !validSetting(row.lastValues[id]))) fail('SETTINGS_RECEIPT_INVALID', '驱动设置恢复范围无效。');
       } else {
         if (!policy.validConfigName(row.name, row.backend) || typeof row.baselineText !== 'string' || Buffer.byteLength(row.baselineText) > 1024 * 1024 || !row.lastValues || typeof row.lastValues !== 'object') fail('SETTINGS_RECEIPT_INVALID', '配置文件恢复范围无效。');
-        if (row.baselineMissing !== undefined && (typeof row.baselineMissing !== 'boolean' || row.backend !== 'mfgunlock')) fail('SETTINGS_RECEIPT_INVALID', '配置文件初始状态无效。');
+        if (row.baselineMissing !== undefined && (typeof row.baselineMissing !== 'boolean' || !['mfgunlock','dlssg-sm86'].includes(row.backend))) fail('SETTINGS_RECEIPT_INVALID', '配置文件初始状态无效。');
         if (row.configFile !== undefined && (row.backend !== 'mfgunlock' || typeof row.configFile !== 'string' || !path.isAbsolute(row.configFile))) fail('SETTINGS_RECEIPT_INVALID', '配置文件绑定无效。');
         const allowedKeys = Object.keys(policy.values(row.baselineText, row.backend));
         if (Object.keys(row.lastValues).some(key => !allowedKeys.includes(key))) fail('SETTINGS_RECEIPT_INVALID', '配置文件恢复键无效。');
@@ -285,6 +286,11 @@ function createLaunchSettingsService(options = {}) {
     });
   }
   async function currentMfg(t, old = null) {
+    if (old?.backend === 'dlssg-sm86') {
+      try { const file = path.join(path.dirname(t.exe), sm86Config.FILE), text = await policy.readText(file);
+        return { ...sm86Config.current(text), source: 'active-ini', configFile: file, requiresRestart: true, readOnlyObserved: true }; }
+      catch (error) { return { backend: 'dlssg-sm86', valid: false, error: { code: error.code, message: error.message } }; }
+    }
     try {
       const location = configuration(t, 'mfgunlock', old?.backend === 'mfgunlock' ? old : null);
       const text = await policy.readText(location.file, true);
@@ -367,9 +373,9 @@ function createLaunchSettingsService(options = {}) {
     if (domain === 'fg' && !restoring && !compensation && options.assertComponents) {
       try { await options.assertComponents(id, request.backend); }
       catch (error) {
-        if (previewOptions.allowComponentPreparation === true && request.backend === 'mfgunlock' &&
+        if (previewOptions.allowComponentPreparation === true && ['mfgunlock','dlssg-sm86'].includes(request.backend) &&
             ['SETTINGS_COMPONENTS_NOT_READY', 'SETTINGS_FG_COMPONENTS_REQUIRED'].includes(error.code))
-          preparation = { required: true, backend: 'mfgunlock', code: error.code, message: error.message };
+          preparation = { required: true, backend: request.backend, code: error.code, message: error.message };
         else throw error;
       }
     }
@@ -411,12 +417,13 @@ function createLaunchSettingsService(options = {}) {
         plan.blockers.push('当前 NVIDIA 配置不是可确认的游戏官方配置或独立 EXE 配置，未修改参数；原样启动游戏不受影响。');
     } else {
       if (['rtx40', 'mfgunlock'].includes(plan.backend) && !restoring && !compensation && !(series.length === 1 && series[0] === 'RTX40')) plan.blockers.push('未唯一确认 RTX 40，社区 FG 请求不会写入。');
+      if (plan.backend === 'dlssg-sm86' && !restoring && fgBackend(hardware) !== 'dlssg-sm86') plan.blockers.push('未唯一确认 RTX 20/30，SM86 配置不会写入。');
       const controlRoot = path.dirname(t.exe);
       const name = old?.name || await policy.controlPath(controlRoot, plan.backend);
       const location = plan.backend === 'mfgunlock' ? configuration(t, plan.backend, old) : { file: path.join(controlRoot, name), external: false };
       const file = location.file;
       const beforeFile = await policy.readText(file, true);
-      if (beforeFile === null && (plan.backend !== 'mfgunlock' || old || restoring)) fail('SETTINGS_BACKEND_MISSING', '没有找到该后端的现有配置。');
+      if (beforeFile === null && (!['mfgunlock','dlssg-sm86'].includes(plan.backend) || old || restoring)) fail('SETTINGS_BACKEND_MISSING', '没有找到该后端的现有配置。');
       const before = beforeFile ?? '';
       const currentValues = policy.values(before, plan.backend);
       const changed = old ? Object.keys(old.lastValues).filter(key => !policy.same(currentValues[key], old.lastValues[key])) : [];
@@ -586,9 +593,9 @@ function createLaunchSettingsService(options = {}) {
           const rel = String(row.rel || '').replace(/\\/g, '/').toLowerCase();
           return rel === '_dlss5_backup/xiaofeng-feeder.json' || /(?:^|\/)_dlss5_feeder\//.test(rel) || rel.startsWith('_dlss5_backup/feeder-settings/');
         })) fail('FEEDER_RECOVERY_REQUIRED', 'Feeder 有未完成操作，请在游戏卡片中选择“恢复并卸载 Feeder”，保留外部修改检查。');
-        if (pending.owner && pending.owner.product !== 'xiaofeng-fg-components')
+        if (pending.owner && !['xiaofeng-fg-components','xiaofeng-fg-sm86'].includes(pending.owner.product))
           fail('SETTINGS_RECOVERY_OWNER', '此文件事务属于其他组件，请使用对应的专用恢复入口。');
-        if (pending.owner?.product === 'xiaofeng-fg-components' || pending.files?.some(row => {
+        if (['xiaofeng-fg-components','xiaofeng-fg-sm86'].includes(pending.owner?.product) || pending.files?.some(row => {
           const rel = String(row.rel || '').replace(/\\/g, '/').toLowerCase();
           return ['_dlss5_backup/xiaofeng-fg-components.json', '_dlss5_backup/xiaofeng-fg-migration.json'].includes(rel) ||
             rel.startsWith('_dlss5_backup/.fg-migration/') ||
@@ -686,7 +693,7 @@ function createLaunchSettingsService(options = {}) {
           baseline: plan.driver.baseline, lastValues: subset(driverAfter, plan.driver.ids), runtimeVerified: false };
         else next[plan.domain] = { exe: t.exe, exeHash: plan.exeHash, backend: plan.backend, request: plan.request, name: plan.change.name,
           ...(plan.backend === 'mfgunlock' ? { configFile: plan.change.file } : {}),
-          baselineText: plan.change.baselineText, ...(plan.backend === 'mfgunlock' ? { baselineMissing: plan.change.baselineMissing } : {}),
+          baselineText: plan.change.baselineText, ...(['mfgunlock','dlssg-sm86'].includes(plan.backend) ? { baselineMissing: plan.change.baselineMissing } : {}),
           lastValues: plan.change.lastValues, runtimeVerified: false };
         if (plan.driver && !Object.values(currentReceipt.applied).some(value => ['native', 'nvidia'].includes(value.backend)))
           currentReceipt.driverOriginalProfile = clone(plan.driver.before.profile);

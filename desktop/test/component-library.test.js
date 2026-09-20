@@ -16,6 +16,26 @@ function setup(t) {
   const catalog = { packages: [{ id:'runtime-a',kind:'nr-runtime',version:'1.0',variant:'RTX20-40',hardwareFamilies:['RTX40'],architecture:'x64',interface:'NGX-Feature18',filename:'nvngx_dlssnr.dll',bytes:bytes.length,sha256:hash(bytes) }] };
   return { root, dll, bytes, lib:createComponentLibrary({ userData:root, catalog }) };
 }
+
+test('unified3 inventory and overlay retain complete resources and the matching configuration template', async t => {
+  const f = setup(t), base = path.join(f.root, 'base'), id = '0.5-dline21-unified3';
+  const names = require('../src/product/payload-companions').NAMES;
+  for (const family of ['RTX40', 'RTX50']) for (const kind of ['reshade', 'bridge', 'runtime']) {
+    const file = path.join(base, 'fixed', family, PAYLOAD_FILES[kind]); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, f.bytes);
+  }
+  for (const version of [id, 'old-core']) for (const name of [PAYLOAD_FILES.addon, PAYLOAD_FILES.config, ...(version === id ? names : [])]) {
+    const file = path.join(base, 'versions', version, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, name === PAYLOAD_FILES.config ? version + ' configuration' : f.bytes);
+  }
+  fs.writeFileSync(path.join(base, 'bundle.json'), JSON.stringify(createCompactBundle(base, [{ id }, { id: 'old-core' }], 'old-core')));
+  const files = [PAYLOAD_FILES.addon, PAYLOAD_FILES.bridge, ...names].map(name => ({ name, bytes: f.bytes, sha256: hash(f.bytes) }));
+  const input = { id, version: '0.5 D21 unified3', architecture: 'x64', interface: 'NGX-D3D12-Feature1', inputInterfaces: ['NGX-D3D12-Feature1'], catalogIdentity: true, files };
+  await assert.rejects(f.lib.importVerifiedCore({ ...input, files: files.slice(0, -1) }));
+  await f.lib.importVerifiedCore(input); await f.lib.activateCore(id, base);
+  const payload = requirePayload(f.lib.root, 'RTX40', id);
+  assert.equal(payload.companions.length, 7); assert.equal(fs.readFileSync(payload.config.file, 'utf8'), id + ' configuration');
+  await f.lib.registerPayloadContext(f.lib.root, id, 'RTX40');
+  const inventory = await f.lib.inventory(); assert.ok(names.every(name => inventory.packages.some(row => row.files.some(file => file.name === name))));
+});
 test('known runtime import verifies PE/hash and deduplicates without changing games', async t => {
   const f = setup(t); const first = await f.lib.importComponent(f.dll); await f.lib.importComponent(f.dll);
   assert.equal(first.changedGames, false); assert.equal((await f.lib.inventory()).packages.length, 1);

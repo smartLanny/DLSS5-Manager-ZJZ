@@ -210,6 +210,7 @@ function buildConfig({ stageRoot, flavor, outputRoot, portableOnly, unpackedZip 
   config.extraResources = [
     { from: path.join(stageRoot, 'payload'), to: 'payload' },
     { from: path.join(stageRoot, 'resources', 'fg-mfgunlock'), to: 'fg-mfgunlock' },
+    { from: path.join(stageRoot, 'resources', 'fg-sm86'), to: 'fg-sm86' },
     { from: path.join(stageRoot, 'resources', 'components'), to: 'components' },
     { from: path.join(stageRoot, 'resources', 'bridge-dlc'), to: 'bridge-dlc' },
     { from: path.join(stageRoot, 'resources', 'hoyoshade'), to: 'hoyoshade' },
