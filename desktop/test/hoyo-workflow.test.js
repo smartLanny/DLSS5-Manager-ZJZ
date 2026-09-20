@@ -147,6 +147,16 @@ test('ambiguous channels and launchers stop before installation until the exact 
   const plan = await flow.preview('client-zzz'); assert.equal(plan.request.hoyo.launcher.path, f.starward.path);
 });
 
+test('HoYo installation keeps the explicit Core choice in the shared reviewed request without applying or starting', async t => {
+  const f = fixture(t), flow = f.create(); await flow.discover();
+  const plan = await flow.preview('client-zzz', 'install', { version: '0.5-dline21-unified3' });
+  assert.equal(plan.request.version, '0.5-dline21-unified3');
+  assert.equal(plan.request.loadingBackend, 'hoyoshade');
+  assert.equal(f.count('apply'), 0); assert.equal(f.count('launch'), 0);
+  await assert.rejects(flow.preview('client-zzz', 'restore', { version: '0.4.7beta' }), { code: 'HOYO_ACTION' });
+  await assert.rejects(flow.preview('client-zzz', 'install', { version: '../unreviewed' }), { code: 'HOYO_ACTION' });
+});
+
 test('unknown API requires an explicit supported API before preview and no launcher API is inferred', async t => {
   const f = fixture(t); f.state.api = 'mixed'; const flow = f.create();
   assert.equal((await flow.discover()).games[0].phase, 'api');

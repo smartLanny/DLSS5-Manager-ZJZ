@@ -20,12 +20,14 @@ test('exact Core footprint is reported separately without guessing a version', (
     assert.equal(inspectExistingInstallation({ executable: exe, managed: true }), null);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
-test('ReShade or a config alone is not mistaken for an existing Core installation', () => {
+test('ReShade and leftover config require adoption without claiming that a Core is installed', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-existing-'));
   try {
     const exe = path.join(root, 'Game.exe'); fs.writeFileSync(exe, 'exe');
     fs.writeFileSync(path.join(root, INSTALLED_NAMES.reshade), 'unrelated reshade');
     fs.writeFileSync(path.join(root, INSTALLED_NAMES.config), 'stale config');
-    assert.equal(inspectExistingInstallation({ executable: exe }), null);
+    const found = inspectExistingInstallation({ executable: exe });
+    assert.equal(found.detected, true); assert.equal(found.corePresent, false); assert.equal(found.complete, false);
+    assert.equal(found.version, null); assert.equal(found.managed, false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

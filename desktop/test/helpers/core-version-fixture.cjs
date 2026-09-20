@@ -6,8 +6,8 @@ async function smokeVersionContract() {
   const host = () => document.querySelector('.game-card.expanded .game-detail'), button = action => host().querySelector(`[data-gp-action="${action}"]`);
   const field = (group, key) => host().querySelector(`[data-gp-group="${group}"][data-gp-field="${key}"]`);
   const click = action => { const node = button(action); assert(node && !node.disabled, `action available: ${action}`); node.click(); };
-  const set = (group, key, value) => { const node = field(group, key); assert(node && !node.disabled, `field available: ${group}.${key}`); node.value = value; node.dispatchEvent(new Event(node.type === 'range' ? 'input' : 'change', { bubbles: true })); };
-  const preview = async (action = 'preview') => { click(action); await until(() => button('modal-apply'), 'preview did not open'); return mock.plan.request; };
+  const set = (group, key, value) => { const node = field(group, key); assert(node && !node.disabled, `field available: ${group}.${key}`); node.value = value; node.dispatchEvent(new Event(['range', 'number'].includes(node.type) ? 'input' : 'change', { bubbles: true })); };
+  const preview = async (action = 'preview') => { click(button(action) ? action : 'prepare'); await until(() => button('modal-apply'), 'preview did not open'); return mock.plan.request; };
   const reset = async (name, change) => {
     if (button('modal-cancel')) click('modal-cancel'); if (button('discard')) click('discard');
     mock.assessment = structuredClone(mock.baseline); mock.assessment.game.name = name; change(mock.assessment);
@@ -18,8 +18,8 @@ async function smokeVersionContract() {
   document.querySelector('.game-card[data-id="fixture"] .open-game-page-btn').click();
   await until(() => host()?.__gpController.getState().loaded.includes('installation'), 'installation assessment missing');
   for (const id of ['0.5-dline13', '0.4.7beta-corefix.8']) {
-    const candidate = [...field('route', 'version').options].find(row => row.value === id);
-    assert(candidate && !candidate.disabled, id + ' core-update candidate is visible and selectable in the ordinary settings dropdown');
+    const candidate = host().querySelector('[data-gp-detail="rollback"] option[value="' + id + '"]');
+    assert(candidate && !candidate.disabled, id + ' core-update candidate is visible and selectable in the advanced rollback selector');
   }
   const fresh = value => { value.game.installed = false; value.defaults.version = 'fixture-core-alternative'; };
   await reset('first install with a legal old global default', fresh);
@@ -27,16 +27,16 @@ async function smokeVersionContract() {
   assert((await preview('prepare')).version === '0.4.7beta', 'first Prepare submits exactly the displayed Core');
   await reset('first API selection with old global default', fresh); set('route', 'api', 'dx12');
   assert((await preview()).version === field('route', 'version').value && mock.plan.request.version === '0.4.7beta', 'first API change submits the same displayed Core');
-  await reset('first loading route with old global default', fresh); host().querySelector('[data-gp-tab="maintenance"]').click(); set('route', 'deployment', 'external');
+  await reset('first loading route with old global default', fresh); set('route', 'deployment', 'external');
   assert((await preview()).version === '0.4.7beta' && mock.plan.request.deployment === 'external', 'first loading route change also binds the displayed Core');
-  await reset('explicit user version takes priority', fresh); set('route', 'version', 'fixture-core-alternative');
+  await reset('explicit user version takes priority', fresh); const rollback = host().querySelector('[data-gp-detail="rollback"] select'); rollback.value = 'fixture-core-alternative'; rollback.dispatchEvent(new Event('change', { bubbles: true }));
   assert((await preview()).version === 'fixture-core-alternative', 'explicit user Core takes precedence over the recommendation');
   const pinned = value => { value.game.addonVersion = value.deployment.version = 'fixture-core-alternative'; value.defaults.version = '0.4.7beta'; };
   await reset('existing pinned Core', pinned); assert(field('route', 'version').value === 'fixture-core-alternative', 'installed pin remains displayed'); set('route', 'api', 'dx12');
   assert((await preview()).version === 'fixture-core-alternative', 'installation-related edits preserve an installed pin');
-  await reset('pure NR edit', pinned); set('nr', 'Intensity', '0.75');
+  await reset('pure NR edit', pinned); host().querySelector('[data-gp-tab="nr"]').click(); set('nr', 'Intensity', '0.75');
   assert(JSON.stringify(await preview()) === JSON.stringify({ nr: { Intensity: .75 } }), 'pure NR edit contains no version or install request');
-  await reset('pure hotkey edit', pinned); host().querySelector('[data-gp-tab="maintenance"]').click(); click('capture-hotkey');
+  await reset('pure hotkey edit', pinned); click('capture-hotkey');
   document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Insert', code: 'Insert', keyCode: 45, bubbles: true, cancelable: true }));
   assert(JSON.stringify(await preview()) === JSON.stringify({ hotkeys: { reshade: { key: 45, ctrl: false, shift: false, alt: false } } }), 'pure hotkey edit contains no version or install request');
   for (const route of ['feeder', 'vulkan']) {

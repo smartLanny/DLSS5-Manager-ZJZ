@@ -73,13 +73,15 @@ async function experience() {
  click('import-runtime'); await new Promise(r => setTimeout(r, 80)); check(state().data.game.apiOverride === 'dx12', 'cancel preserves API');
  const start = performance.now(); click('import-runtime'); await until(() => state()?.data.game.installed && !state().busy, 'import resumes Apply'); times.importAndApplyMs = performance.now() - start;
  check(!host().querySelector('.gp-modal'), 'one Apply must not demand another confirmation');
+ check(!host().querySelector('[data-gp-action="import-runtime"]'), 'complete installed runtime hides import prompt');
  const imported = await window.__flow('evidence', id); check(imported.ok && imported.value.preferences === 1, 'real preference saved once'); check(!imported.value.pending.pending, 'no transaction left behind');
- set('route', 'version', '0.4.2'); click('preview'); await until(() => !state().busy && state().data.game.addonVersion === '0.4.2', 'replace Core');
+ host().querySelector('[data-gp-detail="rollback"]').open = true;
+ const historical = host().querySelector('[data-gp-detail="rollback"] select'); historical.value = '0.4.2'; historical.dispatchEvent(new Event('change', { bubbles: true })); click('preview'); await until(() => !state().busy && state().data.game.addonVersion === '0.4.2', 'replace Core');
  set('route', 'version', '0.4.7beta'); click('preview'); await until(() => !state().busy && state().data.game.addonVersion === '0.4.7beta', 'rollback Core');
- await window.__flow('running', true); set('nr', 'Intensity', '1.3456789'); click('preview'); await until(() => !state().busy && state().data.waiting?.pending, 'queued'); check(!state().data.operation.pending, 'queued is not recovery');
+ await window.__flow('running', true); host().querySelector('[data-gp-tab="nr"]').click(); set('nr', 'Intensity', '1.3456789'); click('preview'); await until(() => !state().busy && state().data.waiting?.pending, 'queued'); check(!state().data.operation.pending, 'queued is not recovery');
  click('cancel-waiting'); await until(() => !state().busy && !state().data.waiting?.pending, 'cancel wait');
  await window.__flow('running', false);
- for (const next of ['enhance', 'overview', 'maintenance', 'overview']) { host().querySelector('[data-gp-tab="' + next + '"]').click(); await until(() => state().loaded.includes(({ enhance: 'enhancements', maintenance: 'diagnostics', overview: 'installation' })[next]), 'load tab'); }
+ for (const next of ['enhance', 'overview', 'nr', 'overview']) { host().querySelector('[data-gp-tab="' + next + '"]').click(); await until(() => state().loaded.includes(({ enhance: 'enhancements', nr: 'installation', overview: 'installation' })[next]), 'load tab'); }
  for (let i = 0; i < 25; i++) { const at = performance.now(); host().querySelector('[data-gp-tab="' + (i % 2 ? 'overview' : 'enhance') + '"]').click(); times.cachedPage.push(performance.now() - at); }
  const p95 = rows => [...rows].sort((a, b) => a - b)[Math.ceil(rows.length * .95) - 1];
  times.interactionP95 = p95(times.interaction); times.cachedPageP95 = p95(times.cachedPage);

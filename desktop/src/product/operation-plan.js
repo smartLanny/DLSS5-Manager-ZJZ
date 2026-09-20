@@ -13,7 +13,7 @@ const policy = require('./launch-settings-policy');
 const fail = (code, message, details) => { throw Object.assign(new Error(message), { code: `OPERATION_${code}`, details }); };
 const clone = value => structuredClone(value);
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const fingerprint = ({ request, before, changes, blockers, resolved }) => hash({ request, before, resolved,
+const fingerprint = ({ request, before, changes, blockers, resolved, adoption }) => hash({ request, before, resolved, ...(adoption ? { adoption } : {}),
   changes: changes.map(row => ['receipt', 'manifest', 'history-receipt'].includes(row.role) && row.afterSha256 !== null ? { ...row, afterSha256: 'generated-manager-record' } : row), blockers });
 const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 function blockerMessages(owner) {
@@ -22,8 +22,9 @@ function blockerMessages(owner) {
 }
 
 function validateRequest(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['route', 'api', 'version', 'deployment', 'loadingMode', 'loadingBackend', 'proxyEntry', 'components', 'hoyo', 'addonKeep', 'nr', 'sr', 'fg', 'hotkeys', 'launchMode', 'uninstall', 'repair', 'reapplyExternalChanges'].includes(key))) fail('INPUT', '应用请求含未知选项。');
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['route', 'api', 'version', 'deployment', 'loadingMode', 'loadingBackend', 'proxyEntry', 'components', 'hoyo', 'addonKeep', 'adoption', 'nr', 'sr', 'fg', 'hotkeys', 'launchMode', 'uninstall', 'repair', 'reapplyExternalChanges'].includes(key))) fail('INPUT', '应用请求含未知选项。');
   const request = clone(value);
+  require('./installation-adoption').validateAdoptionChoice(request.adoption);
   if (request.api !== undefined && !['auto', 'dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].includes(request.api)) fail('INPUT', 'API 选择无效。');
   if (request.version !== undefined && (typeof request.version !== 'string' || !/^[a-zA-Z0-9._-]{1,100}$/.test(request.version))) fail('INPUT', 'Core 版本无效。');
   if (request.deployment !== undefined && !['local', 'external'].includes(request.deployment)) fail('INPUT', '部署模式无效。');
@@ -105,7 +106,10 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
       blockers.push(...blockerMessages(checked));
     }
     if (request.launchMode === 'steam' && !(await inspectLaunchMode(id)).steamAvailable) blockers.push('没有可验证的 Steam 安装身份。');
-    return { request, ready: !blockers.length, blockers: [...new Set(blockers)], source, identity: hash({ request, source }),
+    const adoption = await service.inspectInstallationAdoption?.(id, request) || null;
+    blockers.push(...blockerMessages(adoption));
+    return { request, ready: !blockers.length, blockers: [...new Set(blockers)], source, adoption,
+      requiresAdoptionConfirmation: adoption?.required === true, identity: hash({ request, source, adoption }),
       changes: [], preparationOnly: true, runtimeVerified: false, gameId: t.id };
   }
   async function nrIdentity(t) {
@@ -127,7 +131,7 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
     return { exe: t.exe, exeSha256: await digestFile(t.exe), layout: { mode: layout.mode, source: layout.source, loadingMode: layout.loadingMode, loadingBackend: layout.loadingBackend, inputRoute: layout.inputRoute, bindingId: layout.bindingId, generation: layout.generation, runtimeDir: layout.runtimeDir, activeConfigPath: layout.activeConfigPath },
       identities, nr, override: store.gameOverrides[key] || null };
   }
-  async function preview(id, input) {
+  async function preview(id, input, internal = {}) {
     const request = validateRequest(input), t = target(id); await assertReady(id);
     const current = typeof service.assessmentSeed === 'function' ? await service.assessmentSeed(id) :
       (await service.listGames()).find(game => game.id === id);
@@ -184,10 +188,10 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
         if (special && loadingMode === 'helper' && loadingBackend !== 'hoyoshade') fail('ROUTE', 'Vulkan 与 Feeder 使用各自的固定加载配套。');
         // Only an actual version in the request is explicit. The deployment
         // owner resolves implicit installed/global defaults and supersession.
-        deployment = loadingBackend === 'hoyoshade' ? await service.previewHoYoDeployment(id, { ...request, route, api }, { plannedFgRestore: changingMode }) :
+        deployment = loadingBackend === 'hoyoshade' ? await service.previewHoYoDeployment(id, { ...request, route, api }, { plannedFgRestore: changingMode, readOnlyWhileRunning: internal.readOnlyWhileRunning === true }) :
           special ? await service.previewSpecialDeployment(id, { route, api, ...(request.version ? { version: request.version } : {}), ...(request.proxyEntry ? { proxyEntry: request.proxyEntry } : {}), ...(request.addonKeep ? { addonKeep: request.addonKeep } : {}) }) :
           await service.previewDeployment(id, { mode: targetMode, ...(request.version ? { version: request.version } : {}), api,
-            loadingMode, ...(request.proxyEntry ? { proxyEntry: request.proxyEntry } : {}), ...(request.components ? { components: request.components } : {}), ...(request.addonKeep ? { addonKeep: request.addonKeep } : {}) }, { plannedFgRestore: changingMode });
+            loadingMode, ...(request.proxyEntry ? { proxyEntry: request.proxyEntry } : {}), ...(request.components ? { components: request.components } : {}), ...(request.addonKeep ? { addonKeep: request.addonKeep } : {}), ...(request.adoption ? { adoption: request.adoption } : {}) }, { plannedFgRestore: changingMode, readOnlyWhileRunning: internal.readOnlyWhileRunning === true });
         changes.push(...(deployment.changes || [])); blockers.push(...blockerMessages(deployment));
         steps.push({ kind: 'deployment', route, routeChange, api, version: request.version,
           resolvedVersion: deployment.version || deployment.packageId || defaults?.version || null, mode: targetMode, loadingMode, loadingBackend });
@@ -239,7 +243,10 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
           launcherSha256: deployment.launcher?.sha256 } : {}) } : {}) } : null;
     if (deployment?.loadingBackend === 'hoyoshade') resolved = { ...resolved, loadingBackend: 'hoyoshade',
       bindingId: deployment.layout?.helper?.bindingId || deployment.layout?.bindingId, launcherSha256: deployment.launcher?.sha256 };
+    const adoption = deployment?.adoption || (deploy ? await service.inspectInstallationAdoption?.(id, request) : null) || null;
+    blockers.push(...blockerMessages(adoption));
     const value = { version: 1, planId: crypto.randomUUID(), gameId: id, exe: t.exe, game: t.game, request, before, resolved,
+      adoption, requiresAdoptionConfirmation: adoption?.required === true,
       createdAt: Date.now(), expiresAt: Date.now() + 10 * 60000, changes, blockers: [...new Set(blockers.filter(Boolean))],
       steps, deployment, runtimeVerified: false, requiresConfirmation: true };
     value.fingerprint = fingerprint(value); plans.set(value.planId, value);

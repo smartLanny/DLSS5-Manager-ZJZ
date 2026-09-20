@@ -63,7 +63,7 @@ function interact() {
   const click = action => { const button = document.querySelector(`[data-gp-action="${action}"]`); check(button && !button.disabled, action + ' is available'); button.click(); };
   return (async () => {
     const controller = GamePageUi.mount(document.getElementById('fixture'), nrFixture); window.nrController = controller;
-    await controller.open('nr-fixture');
+    await controller.open('nr-fixture', 'nr');
     check(input('Intensity')?.value === '1.23456789', 'precise saved intensity appears without rounding');
     check(input('Layer2Intensity')?.value === '0.87654321', 'layer 2 keeps its independent value');
     check(input('SkinStructureStrength')?.value === '0.4', 'new default skin strength is .4');

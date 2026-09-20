@@ -144,6 +144,12 @@ function mountInlineDetail(card, game) {
   const controller = window.GamePageUi.mount(placeholder, window.manager, {
     onBack: () => { state.expanded = null; renderGames(); },
     onRename: gameId => confirmRenameGame(gameId),
+    runtimeRequired: version => {
+      const payload = state.payload, variant = payload?.versions?.[version]?.variants?.[state.hardware?.family];
+      if (variant?.ready === true) return false;
+      const missing = [...(variant?.missing || []), ...(variant?.invalid || [])];
+      return missing.some(file => /(?:^|[\\/])nvngx_dlssnr\.dll$/i.test(String(file))) || !variant && payload?.source?.runtimeDlcRequired === true;
+    },
     onChanged: async () => {
       state.games = mergeGameVisuals(state.games, unwrap(await window.manager.listGames()));
       renderGames({ preserveExpanded: true });
@@ -501,7 +507,11 @@ function visibleGames() {
 }
 
 function cardAction(game) {
-  if (typeof window === 'object' && typeof window.manager?.assessGame === 'function') return `<button class="button primary unified-launch-btn" type="button">启动游戏</button><button class="button open-game-page-btn" type="button">${game.installed ? '设置' : game.existingInstallation?.detected === true ? '检查已有安装' : '安装与设置'}</button>`;
+  if (typeof window === 'object' && typeof window.manager?.assessGame === 'function') {
+    const current = inlineGameDetails.get(game.id)?.controller.getState().action;
+    const waiting = current?.waiting || game.waiting?.pending;
+    return `<button class="button primary unified-launch-btn" type="button"${waiting || current?.pending || current?.disabled ? ' disabled' : ''}${state.expanded === game.id ? ' hidden' : ''}>${waiting ? '等待游戏退出' : escapeHtml(current?.label || (game.installed ? '启动' : '应用'))}</button><button class="button open-game-page-btn" type="button">${game.installed ? '设置' : game.existingInstallation?.detected === true ? '检查已有安装' : '安装与设置'}</button>`;
+  }
   const installBusy = Boolean(state.installing && state.installing.has(game.id));
   const installButton = `<button class="button primary install-btn${installBusy ? ' is-busy' : ''}" aria-live="polite" aria-busy="${installBusy}"${installBusy ? ' disabled' : ''}>${installBusy ? '<span class="button-spinner" aria-hidden="true"></span><span>正在安装…</span>' : game.existingInstallation?.detected === true ? '预览已有安装' : '一键安装'}</button>`;
   const rename = '<button class="button subtle rename-game-btn" type="button" title="修改游戏名称">改名</button>';
@@ -988,7 +998,7 @@ function bindGameCards() {
         if (state.expanded === id) { state.expanded = null; renderGames(); } else openGamePage(id);
       };
       const launch = card.querySelector('.unified-launch-btn');
-      if (launch) launch.onclick = event => { event.stopPropagation(); void openGamePage(id)?.launchGame(); };
+      if (launch) launch.onclick = event => { event.stopPropagation(); void openGamePage(id)?.runPrimary(); };
       return;
     }
     const detail = card.querySelector('.game-detail');
@@ -1593,10 +1603,10 @@ function switchView(view) {
   document.querySelectorAll('.nav').forEach(el => el.classList.toggle('active', el.dataset.view === view));
   const titles = {
     games: ['我的游戏', '选择游戏，确认兼容性后安装'],
-    hoyo: ['米哈游游戏', '选择游戏，确认启动器后安装与设置'],
+    hoyo: ['米哈游', '选择游戏，确认启动器后安装与设置'],
     repair: ['问题修复', '检查组件完整性，并安全恢复缺失文件'],
     settings: ['设置', '只保留真正会影响使用的选项'],
-    addons: ['组件管理', '准备安装来源，按游戏应用与回退核心']
+    addons: ['组件与更新', '查看内置组件并更新配套'],
   };
   $('pageTitle').textContent = titles[view][0];
   $('pageSubtitle').textContent = titles[view][1];

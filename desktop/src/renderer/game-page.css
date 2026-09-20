@@ -2,6 +2,13 @@
 .nav-icon-hoyo { --nav-icon: url('icons/phosphor/crown-simple.svg'); --nav-icon-fill: url('icons/phosphor/crown-simple-fill.svg'); }
 .hoyo-poster .nav-icon { width: 30px; height: 30px; background: currentColor; mask: var(--nav-icon) center / contain no-repeat; }
 .hoyo-header-action { display: flex; }
+.game-card .unified-launch-btn[hidden], .hoyo-header-action[hidden] { display: none; }
+.gp-main-actions { flex-shrink: 0; }
+.gp-adoption { padding: 16px; margin: 16px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.gp-adoption p { line-height: 1.7; }
+.gp-adoption small { display: block; color: var(--muted); overflow-wrap: anywhere; }
+.gp-section[data-gp-detail] > summary { cursor: pointer; font-weight: 600; }
+.gp-section[data-gp-detail][open] > summary { margin-bottom: 18px; }
 .hoyo-game-card .game-title { flex-wrap: wrap; }
 .hoyo-game-card .game-title h3 { max-width: 100%; }
 .hoyo-game-card .badge { max-width: 100%; white-space: normal; line-height: 1.4; }

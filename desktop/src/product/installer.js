@@ -557,7 +557,7 @@ function createInstaller(overrides = {}) {
     return { changed, text: lines.join('\n') };
   }
 
-  async function install({ gameDir, payload, scan: suppliedScan, allowAntiCheat = false, addonPolicy = null }) {
+  async function install({ gameDir, payload, scan: suppliedScan, allowAntiCheat = false, addonPolicy = null, adoption = null }) {
     const timing = createDeploymentTiming('install');
     timing.begin('identityPreflight');
     try {
@@ -573,20 +573,26 @@ function createInstaller(overrides = {}) {
         throw appError('ERR_ANTI_CHEAT_CONFIRM', { operation: 'install' });
       }
       await guards.assertGameClosed(gameDir, exePath);
+      await require('./installation-adoption').assertAdoption(adoption);
 
       const result = await journal.transaction(gameDir, async () => {
+      await require('./installation-adoption').assertAdoption(adoption);
       if (addonPolicy) await require('./native-addon-policy').assertNativeAddonPolicy(gameDir, addonPolicy);
       let manifest = readManifest(gameDir) || newManifest(gameDir, exePath, scan.chosen.api);
       assertManifestExecutable(gameDir, manifest, exePath);
       if (manifest.addonConfigOriginal) await captureAddonConfigOriginal(gameDir, manifest, path.join(exeDir, 'ReShade.ini'));
       try {
         const reshade = scanModule.inspectReShade(exeDir);
-        if (existingProxyConflict(exeDir, reshade)) throw appError('ERR_RESHADER_CONFLICT');
-        if (reshade.installed && !reshade.addonSupport) throw appError('ERR_RESHADER_NO_ADDON');
+        const replacement = adoption?.replaceProxy;
+        if (replacement && (!['dxgi.dll', 'd3d12.dll'].includes(replacement.name) ||
+            path.resolve(replacement.path).toLowerCase() !== path.join(exeDir, replacement.name).toLowerCase())) throw appError('ERR_RESHADER_CONFLICT');
+        if (existingProxyConflict(exeDir, reshade) && !replacement) throw appError('ERR_RESHADER_CONFLICT');
+        if (reshade.installed && !reshade.addonSupport && !replacement) throw appError('ERR_RESHADER_NO_ADDON');
+        if (replacement?.name === 'd3d12.dll') manifest.reshadeRoute = 'd3d12';
         if (!addonPolicy) requireAddonLayout(exeDir);
         const coreTarget = installedFile(exeDir, 'addon');
         const loaderTarget = path.join(exeDir, manifest.reshadeRoute === 'd3d12' ? 'd3d12.dll' : INSTALLED_NAMES.reshade);
-        const writes = ['addon', 'bridge', 'runtime', ...(!reshade.installed ? ['reshade'] : []), ...(carrierRequired ? ['carrier'] : [])]
+        const writes = ['addon', 'bridge', 'runtime', ...(!reshade.installed || replacement ? ['reshade'] : []), ...(carrierRequired ? ['carrier'] : [])]
           .map(kind => ({ kind, source: payload[kind].file, target: kind === 'reshade' ? loaderTarget : installedFile(exeDir, kind), expected: payload[kind].actual }));
         writes.push(...companionWrites(payload.companions, payload.version, exeDir));
         const adoptions = await preflightWrites(gameDir, manifest, writes, payload.version, payload.versionInfo);
@@ -624,7 +630,7 @@ function createInstaller(overrides = {}) {
         if (payload.components) manifest.components = payload.components;
         manifest.carrierDisabledByUser = carrierRequired ? false : manifest.carrierDisabledByUser === true;
 
-        if (!reshade.installed) {
+        if (!reshade.installed || replacement) {
           await writeManaged(gameDir, manifest, payload.reshade.file,
             loaderTarget, 'reshade', payload.reshade.actual);
         }

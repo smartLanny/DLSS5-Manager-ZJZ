@@ -21,9 +21,9 @@
       </div>
       <nav>
         <button class="nav active" data-view="games"><span class="nav-icon nav-icon-games" aria-hidden="true"></span>游戏</button>
-        <button class="nav" data-view="hoyo"><span class="nav-icon nav-icon-hoyo" aria-hidden="true"></span>米哈游游戏</button>
+        <button class="nav" data-view="hoyo"><span class="nav-icon nav-icon-hoyo" aria-hidden="true"></span>米哈游</button>
         <button class="nav" data-view="repair"><span class="nav-icon nav-icon-repair" aria-hidden="true"></span>维护</button>
-        <button class="nav" data-view="addons"><span class="nav-icon nav-icon-addons" aria-hidden="true"></span>组件管理</button>
+        <button class="nav" data-view="addons"><span class="nav-icon nav-icon-addons" aria-hidden="true"></span>组件与更新</button>
         <button class="nav" data-view="settings"><span class="nav-icon nav-icon-settings" aria-hidden="true"></span>设置</button>
       </nav>
       <div class="sidebar-foot">
@@ -65,7 +65,7 @@
 
       <section class="view" id="view-game-detail" aria-label="游戏详情"></section>
 
-      <section class="view" id="view-hoyo" aria-label="米哈游游戏">
+      <section class="view" id="view-hoyo" aria-label="米哈游">
         <div id="hoyoWorkspace"></div>
       </section>
 
@@ -95,41 +95,39 @@
       <section class="view" id="view-addons">
         <div class="panel" id="componentLibraryPanel">
           <div class="component-library-hero">
-            <div class="component-library-heading"><span class="component-kicker">组件管理</span><h3>按游戏 API 自动搭配</h3><p>管理器会在 AI Core、DLSS5 Bridge、DLSS5 Feeder 和显卡运行库之间选择一套不冲突的组合。</p></div>
-            <div class="component-primary-actions"><button class="button primary" id="importRuntimeDlcBtn">导入运行库 DLC</button><button class="button" id="importComponentBtn">导入 Add-on / 组件</button></div>
+            <div class="component-library-heading"><h3>组件与更新</h3><p>常用组件随包提供，在游戏页面自动搭配。</p></div>
+            <div class="component-primary-actions"><button class="button" id="importRuntimeDlcBtn">导入运行库 DLC</button><button class="button" id="checkComponentUpdatesBtn">检查更新</button></div>
           </div>
           <div class="component-runtime-guide hidden" id="componentRuntimeGuide" role="status">
             <div class="component-runtime-guide-icon" aria-hidden="true">DLC</div>
             <div class="component-runtime-guide-copy"><strong id="componentRuntimeGuideTitle">还差显卡运行库</strong><span id="componentRuntimeGuideText"></span></div>
             <span class="badge warn" id="componentRuntimeGuideBadge"></span>
           </div>
-          <section class="component-route-overview" aria-labelledby="componentRouteTitle">
-            <div class="component-route-head"><div><h4 id="componentRouteTitle">这个游戏会使用哪些组件？</h4><p>选择游戏即可查看自动匹配结果；这里只解释组合，不会修改游戏。</p></div><select id="componentRouteGameSelect" aria-label="查看游戏的组件搭配"></select></div>
-            <div id="componentRouteSummary" class="component-route-summary" role="status" aria-live="polite"><p class="component-route-empty">正在读取游戏与 API…</p></div>
-          </section>
           <div class="component-library-toolbar">
             <p id="componentLibraryMessage" class="config-note component-library-message" role="status"></p>
-            <div class="component-tool-actions"><button class="button subtle" id="importComponentDirBtn">选择组件目录</button><button class="button subtle" id="moveComponentStorageBtn">移动仓库</button><button class="button subtle" id="refreshComponentsBtn">刷新</button><button class="button subtle" id="checkComponentUpdatesBtn">检查更新</button><button class="button subtle" id="componentRuntimeHelpBtn">下载说明</button></div>
           </div>
           <section class="component-section" aria-labelledby="componentInstalledTitle">
-            <div class="component-section-head"><div><h4 id="componentInstalledTitle">已经准备好的组件</h4><p>这里只表示管理器可以使用；是否装入游戏由上方自动搭配和每个游戏的预览决定。</p></div></div>
+            <div class="component-section-head"><h4 id="componentInstalledTitle">随包组件</h4></div>
             <div id="componentLibraryRows" class="component-package-list"></div>
           </section>
-          <details class="component-repository">
-            <summary><span><strong>可选更新</strong><small>下载并校验到组件库，不会自动改动游戏</small></span><span id="componentDownloadCount" class="component-summary-count">正在检查</span></summary>
+          <section class="component-repository">
+            <div class="component-section-head"><h4>可选更新</h4><span id="componentDownloadCount" class="component-summary-count">尚未检查</span></div>
             <div id="componentUpdateRows" class="component-download-list"></div>
-          </details>
+          </section>
           <details class="component-advanced">
-            <summary><span><strong>高级设置与存储位置</strong><small>自动搭配不合适或需要移动大文件时再打开</small></span></summary>
+            <summary><strong>组件详情、手动导入与存储</strong></summary>
+            <div id="componentInventoryDetails" class="component-package-list"></div>
             <p id="componentStorageLocation" class="config-note component-storage-location" role="status"></p>
-            <div class="component-advanced-grid">
-              <section class="component-setting-card"><h4>DLSS5 Feeder 默认配套</h4><p>仅用于没有可用原生 DLSS 输入的兼容路线；普通 DX12 游戏不需要调整。</p><div class="component-setting-controls"><select id="componentProviderSelect" aria-label="DLSS5 Feeder 组件包"></select><button class="button" id="selectComponentProviderBtn">保存配套</button></div><p id="componentProviderStatus" class="config-note"></p></section>
-              <section class="component-setting-card"><h4>DLSS5 Bridge 手动覆盖</h4><p>仅用于 DX11 游戏的版本回退；默认由所选 Core 自动匹配。</p><div class="component-setting-controls component-setting-controls-wide"><select id="componentGameSelect" aria-label="选择 DX11 游戏"></select><select id="componentBridgeSelect" aria-label="选择 DLSS5 Bridge 版本"></select><button class="button" id="applyBridgeComponentBtn">应用</button></div><p id="componentBridgeStatus" class="config-note"></p></section>
-            </div>
+            <div class="component-tool-actions"><button class="button" id="importComponentBtn">导入 Add-on / 组件</button><button class="button subtle" id="importComponentDirBtn">选择组件目录</button><button class="button subtle" id="moveComponentStorageBtn">移动仓库</button><button class="button subtle" id="refreshComponentsBtn">重新检查</button><button class="button subtle" id="componentRuntimeHelpBtn">运行库下载说明</button></div>
+            <details class="component-route-overview" id="componentRouteDetails">
+              <summary>查看游戏的实际配套</summary>
+              <div class="component-route-head"><select id="componentRouteGameSelect" aria-label="查看游戏的组件搭配"></select></div>
+              <div id="componentRouteSummary" class="component-route-summary" role="status" aria-live="polite"></div>
+            </details>
           </details>
         </div>
         <details class="panel component-expert-panel">
-          <summary><span><strong>Core 版本、完整组件目录与导入记录</strong><small>默认保持收起；只有导入旧包、切换全局 Core 或排查来源时使用</small></span></summary>
+          <summary><strong>Core 更新与历史版本</strong></summary>
           <div class="component-expert-body">
         <div class="component-sources-layout">
         <div class="panel payload-source-panel">
@@ -156,17 +154,7 @@
         </div>
         <details class="panel addon-guide">
           <summary>版本选择与兼容说明</summary>
-          <div class="addon-guide-head">
-            <div><h3>0.3 稳定基线，0.4 Beta</h3><p>核心版本与管理器版本分别记录。实验分支的构建结果不能代替具体游戏验证，实际可用版本以上方组件目录为准。</p></div>
-            <span class="addon-guide-tip">按游戏选择与回退</span>
-          </div>
-          <div class="addon-guide-grid">
-            <article class="addon-guide-card"><span class="addon-guide-version">0.1</span><h4>先增强，再交给游戏超分</h4><p>游戏以 1440p 渲染 → NR 增强 → 游戏自己的 DLSS SR → 4K。</p><small>NR 处理 1440p；放大到 4K 仍由游戏原生 DLSS SR 负责。</small><b>第一次证明“先 AI 增强，再超分”可以跑。</b></article>
-            <article class="addon-guide-card"><span class="addon-guide-version">0.2</span><h4>把增强结果合回原图</h4><p>NR 处理后，把变化合回原始画面，再交给游戏原生 SR。</p><small>仍以 1440p 做 NR，重点解决 HDR、颜色和合成问题。</small><b>开始处理画面合成和 HDR 兼容。</b></article>
-            <article class="addon-guide-card"><span class="addon-guide-version">0.3</span><h4>让 NR→SR 更稳定</h4><p>仍是“NR → 游戏原生 SR”，但迁移 NR 效果的过程更稳。</p><small>NR 处理 1440p；最终放大到 4K 由游戏原生 SR 负责。</small><b>NR→SR 开始真正工程化、稳定化。</b></article>
-            <article class="addon-guide-card featured"><span class="addon-guide-version">Beta0.4</span><h4>NR 可以单独用更低分辨率</h4><p>游戏保留 1440p → 额外缩一份 1080p 给 NR → AI 修改贴回 1440p → 游戏原生 SR → 4K。</p><small>NR 实际处理 1080p，和游戏自己的渲染分辨率解耦。</small><b>核心飞跃：降低 NR 成本，同时保留游戏原生超分。</b></article>
-          </div>
-          <p class="addon-guide-footer">当前 NR 安装路线要求 64 位及已有普通 DLSS；DX11 需要配套桥接，DX12 直接使用核心。Vulkan、DX9/DX10/OpenGL 等仍需后续兼容实现，界面可选不代表已经支持。</p>
+          <p class="config-note">新安装默认使用标准版 0.4.7beta；0.5 为可选候选。游戏页面会按实际配套检查兼容性，历史版本可在回退入口选择。</p>
         </details>
           </div>
         </details>

@@ -109,7 +109,7 @@ async function createRuntimeDlcPackages(options) {
     fs.writeFileSync(path.join(temp, '使用说明.txt'), [
       'DLSS 5 Manager NR Runtime DLC',
       '',
-      '此合并包可直接在“组件管理 → 导入组件包”中导入，会同时加入 RTX40 与 RTX50 两套运行库。',
+      '此合并包可直接在“组件与更新 → 导入运行库 DLC”中导入，会同时加入 RTX40 与 RTX50 两套运行库。',
       '管理器只会按目标显卡选择对应版本，不会同时把两套 DLL 写入同一个游戏。',
       '单独的 RTX40/RTX50 ZIP 也可直接导入，无需手动解压。',
       ''

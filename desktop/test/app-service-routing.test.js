@@ -186,7 +186,10 @@ test('planned FG restoration can be previewed but must finish before external de
 test('historical hotfix Add-on restored by uninstall stays visible and can be reversibly isolated', async t => {
   const f = await externalFixture(t), name = 'DLSS5-AI渲染超分版-beta0.4.6-hotfix.1-@野生的装机宅-Bilibili.addon64';
   const old = path.join(path.dirname(f.exe), name); fs.writeFileSync(old, 'original hotfix core');
-  await f.service.install(f.id, { version: '0.3.3.5' });
+  await assert.rejects(f.service.install(f.id, { version: '0.3.3.5' }), { code: 'ADOPTION_CONFIRM_REQUIRED' });
+  const adoption = await f.service.previewDeployment(f.id, { mode: 'local', api: 'dx12', version: '0.3.3.5' });
+  assert.equal(adoption.requiresAdoptionConfirmation, true); assert.equal(fs.readFileSync(old, 'utf8'), 'original hotfix core');
+  await f.service.applyDeployment(adoption.planId, { confirm: true });
   assert.equal(fs.existsSync(old), false, 'installation quarantines the conflicting old Add-on');
   const result = await f.service.uninstall(f.id);
   assert.equal(result.removed, true); assert.equal(fs.readFileSync(old, 'utf8'), 'original hotfix core');

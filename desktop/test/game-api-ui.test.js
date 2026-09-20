@@ -19,22 +19,22 @@ test('DXGI awaiting confirmation is never labeled temporarily unsupported', () =
 });
 
 test('an unmanaged existing Core is visible before opening its required preview', () => {
-  const context = { window: { manager: { assessGame() {} } } }; vm.createContext(context);
+  const context = { state: { expanded: null }, escapeHtml: String, inlineGameDetails: new Map(), window: { manager: { assessGame() {} } } }; vm.createContext(context);
   runRouteHelpers(context, 'function hardwareLabel(');
   vm.runInContext(source.slice(source.indexOf('function cardAction('), source.indexOf('const API_LABELS')), context);
   context.game = { supported: true, installed: false, existingInstallation: { detected: true } };
   assert.match(vm.runInContext('supportBadge(game)', context), /已有插件待确认/);
   const action = vm.runInContext('cardAction(game)', context);
   assert.match(action, /检查已有安装/); assert.doesNotMatch(action, /安装与设置/);
-  assert.match(action, /unified-launch-btn[^>]*>启动游戏/);
+  assert.match(action, /unified-launch-btn[^>]*>应用/);
   assert.doesNotMatch(action, /rename-game-btn|>改名</);
 });
 
-test('modern cards place launch beside settings and keep rename inside expanded advanced controls', () => {
-  const context = { window: { manager: { assessGame() {} } } }; vm.createContext(context);
+test('modern cards offer Apply before installation and keep rename inside expanded advanced controls', () => {
+  const context = { state: { expanded: null }, escapeHtml: String, inlineGameDetails: new Map(), window: { manager: { assessGame() {} } } }; vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('function cardAction('), source.indexOf('const API_LABELS')), context);
   const html = vm.runInContext("cardAction({ installed:false, existingInstallation:{detected:false} })", context);
-  assert.match(html, /^<button[^>]*unified-launch-btn[^>]*>启动游戏<\/button><button[^>]*open-game-page-btn[^>]*>安装与设置<\/button>$/);
+  assert.match(html, /^<button[^>]*unified-launch-btn[^>]*>应用<\/button><button[^>]*open-game-page-btn[^>]*>安装与设置<\/button>$/);
   assert.match(gamePageSource, /act\('rename-game', '修改游戏名称'/);
   assert.match(source, /onRename: gameId => confirmRenameGame\(gameId\)/);
 });

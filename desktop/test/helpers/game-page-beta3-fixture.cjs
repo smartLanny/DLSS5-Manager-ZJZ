@@ -216,22 +216,23 @@ async function smoke() {
     const closed = []; for (let parent = item.parentElement; parent && parent !== host(); parent = parent.parentElement) if (parent.tagName === 'DETAILS' && !parent.open) closed.push(parent);
     for (const details of closed.reverse()) details.querySelector(':scope > summary').click();
     assert(item.getClientRects().length > 0, 'action is visible after opening its details: ' + action); item.click(); };
-  const set = (group, key, value) => { const input = field(group, key); assert(input && !input.disabled, 'field unavailable: ' + group + '.' + key);
+  const set = (group, key, value) => { if (group === 'nr' && !field(group, key)) host().__gpController.selectTab('nr');
+    let input = field(group, key); if (group === 'route' && key === 'version' && ![...input.options].some(row => row.value === value)) input = host().querySelector('[data-gp-detail="rollback"] select'); assert(input && !input.disabled, 'field unavailable: ' + group + '.' + key);
     const closed = []; for (let parent = input.parentElement; parent && parent !== host(); parent = parent.parentElement) if (parent.tagName === 'DETAILS' && !parent.open) closed.push(parent);
     for (const details of closed.reverse()) details.querySelector(':scope > summary').click();
     assert(input.getClientRects().length > 0, 'field is visible: ' + group + '.' + key);
     if (input.type === 'checkbox') input.checked = Boolean(value); else input.value = value;
     input.dispatchEvent(new Event(input.type === 'range' || input.type === 'number' ? 'input' : 'change', { bubbles: true })); };
-  const tab = async key => { const item = host()?.querySelector(`[data-gp-tab="${key}"]`); assert(item, 'tab exists: ' + key); item.click();
+  const tab = async key => { if (key === 'maintenance') { host().__gpController.selectTab('maintenance'); return; } const item = host()?.querySelector(`[data-gp-tab="${key}"]`); assert(item, 'tab exists: ' + key); item.click();
     await until(() => host()?.querySelector(`[data-gp-tab="${key}"]`)?.getAttribute('aria-selected') === 'true', 'tab ' + key); };
   const open = async id => { const item = card(id)?.querySelector('.open-game-page-btn'); assert(item, 'card can open: ' + id); item.click();
     await until(() => host()?.dataset.gameDetail === id, 'inline card ' + id, 1000); };
   const fold = async selector => { await until(() => host()?.querySelector(selector), 'details ' + selector); const details = host().querySelector(selector);
     if (!details.open) details.querySelector('summary').click(); assert(details.open, 'details can open: ' + selector); };
   const maintenance = async () => { await tab('maintenance'); await until(() => state().loaded.includes('diagnostics') && state().loaded.includes('enhancements'), 'advanced sections'); await fold('.gp-maintenance-details'); };
-  const diagnostics = async () => { await tab('maintenance'); await until(() => state().loaded.includes('diagnostics') && state().loaded.includes('enhancements'), 'diagnostic sections'); await fold('.gp-diagnostics-details'); };
+  const diagnostics = async () => { await tab('maintenance'); await until(() => state().loaded.includes('diagnostics') && state().loaded.includes('enhancements'), 'diagnostic sections'); await fold('.gp-maintenance-details'); };
   const settled = async () => until(() => !state()?.busy && !host()?.querySelector('.gp-modal'), 'operation settled');
-  const preview = async (action = 'preview') => { click(action); await until(() => host()?.querySelector('.gp-modal [data-gp-action="modal-apply"]'), 'preview dialog'); };
+  const preview = async (action = 'preview') => { click(button(action) ? action : 'prepare'); await until(() => host()?.querySelector('.gp-modal [data-gp-action="modal-apply"]'), 'preview dialog'); };
   const discard = () => { if (button('discard')) click('discard'); };
   const scenario = async (label, change) => {
     discard(); mock.policyEnabled = false; mock.assessment = structuredClone(mock.baseline); mock.assessment.game.name = label; change?.(mock.assessment);
@@ -241,8 +242,8 @@ async function smoke() {
   assert(card('fixture-unmanaged').textContent.includes('已有插件待确认') && card('fixture-unmanaged').textContent.includes('检查已有安装'), 'unmanaged Core is disclosed on the collapsed card');
   await open('fixture-unmanaged'); await until(() => state().loaded.includes('installation'), 'unmanaged installation assessment');
   assert(field('route', 'version').value === '', 'unmanaged Core does not inherit the new-install default');
-  assert(host().textContent.includes('检测到已有未受管安装') && host().textContent.includes('不会把它冒充成“已安装”'), 'existing files and ownership boundary are explained');
-  assert(button('prepare')?.disabled && button('prepare')?.textContent.includes('预览已有安装处理'), 'preview waits for an explicit replacement target');
+  assert(host().textContent.includes('检测到已有未受管安装') && host().textContent.includes('确认备份与接管后应用'), 'existing files and ownership boundary are explained');
+  assert(button('prepare')?.disabled && button('prepare')?.textContent === '应用', 'preview waits for an explicit replacement target');
   set('route', 'version', '0.4.7beta'); await preview();
   assert(mock.plan.request.version === '0.4.7beta', 'explicit replacement target reaches the operation preview');
   click('modal-cancel'); discard(); click('back');
@@ -260,11 +261,12 @@ async function smoke() {
   assert(!state().loaded.includes('installation'), 'seed appears while installation is unresolved');
   await until(() => state().loaded.includes('installation'), 'five-second installation response'); mock.delays['fixture:installation'] = 0;
   assert(!mock.calls.some(row => row[0] === 'assess' && row[2] !== 'installation'), 'first tab does not start expensive enhancement or diagnostic work');
-  assert(['Intensity', 'LocalToneStrength', 'LocalStructureStrength'].every(key => field('nr', key)?.getClientRects().length > 0), 'three primary NR sliders are visible on first tab');
+  assert(!field('nr', 'Intensity'), 'installation page keeps NR controls on their own page'); await tab('nr');
+  assert(['Intensity', 'LocalToneStrength', 'LocalStructureStrength'].every(key => field('nr', key)?.getClientRects().length > 0), 'three primary NR controls are visible on the NR page');
   assert(host().querySelectorAll('.gp-nr-primary input[type="number"]').length === 3 && !host().querySelector('.gp-nr-details').open && field('nr', 'WorkMode').closest('details') === host().querySelector('.gp-nr-details'), 'advanced NR starts collapsed below three precise numeric controls');
-  assert(![...field('route', 'version').options].some(row => row.value.includes('bridge1411')), 'bridge comparison is absent from basic Core choices');
+  await tab('overview'); assert(![...field('route', 'version').options].some(row => row.value.includes('bridge1411')), 'bridge comparison is absent from basic Core choices');
   for (const id of ['0.5-dline13', '0.4.7beta-corefix.8']) {
-    const candidate = [...field('route', 'version').options].find(row => row.value === id);
+    const candidate = host().querySelector('[data-gp-detail="rollback"] option[value="' + id + '"]');
     assert(candidate && !candidate.disabled, id + ' core-update candidate is visible and selectable');
   }
   set('route', 'version', '0.5-dline13'); assert(state().draft.version === '0.5-dline13', 'ordinary Core dropdown accepts the D13 candidate'); discard();
@@ -273,7 +275,7 @@ async function smoke() {
   await tab('maintenance');
   await until(() => mock.calls.some(row => row[0] === 'assess' && row[2] === 'diagnostics'), 'diagnostic request started');
   const diagnosticTicket = mock.calls.filter(row => row[0] === 'assess' && row[2] === 'diagnostics').at(-1)[3];
-  const backAt = performance.now(); await tab('overview');
+  const backAt = performance.now(); await tab('nr');
   assert(performance.now() - backAt < 500 && field('nr', 'Intensity').value === '0.65', 'slow diagnostics never block the basic tab or erase its draft');
   mock.delays['fixture-two:installation'] = 30; await open('fixture-two');
   await until(() => state().loaded.includes('installation'), 'second game installs first');
@@ -372,7 +374,7 @@ async function smoke() {
   mock.assessment.launch.readiness = { state: 'blocked', known: true, source: 'metadata', blockers: [{ domain: 'fg', code: 'SETTINGS_FG_FILE_RECOVERY_REQUIRED', message: '补帧组件文件操作尚未完成，请先恢复。', action: { kind: 'recover' }, recovery: true }], pending: [], requests: {} };
   await tab('overview'); click('refresh'); await until(() => state().data.game.name === 'FG 文件恢复 · metadata 阶段' && !state().busy, 'FG metadata readiness');
   assert(!state().loaded.includes('enhancements') && button('resolve-readiness')?.textContent === '前往补帧恢复', 'metadata FG recovery points to the owner flow before enhancement details load');
-  click('resolve-readiness'); await until(() => state().tab === 'maintenance' && state().loaded.includes('enhancements'), 'FG recovery owner section'); await fold('.gp-maintenance-details');
+  click('resolve-readiness'); await until(() => state().tab === 'overview' && state().loaded.includes('enhancements'), 'FG recovery owner section'); await fold('.gp-maintenance-details');
   assert(button('recover-fg-components') && !button('recover-operation'), 'FG file recovery exposes its dedicated component owner action');
   click('recover-fg-components'); await settled();
   assert(mock.calls.some(row => row[0] === 'recover-fg-components') && !button('recover-fg-components') && state().readiness?.state === 'ready', 'FG component recovery reaches the owner API and clears the launch blocker');
@@ -519,7 +521,7 @@ async function smoke() {
   assert(field('route', 'api').value === 'auto' && state().data.api.effectiveApi === 'dx12', 'explicit recheck does not convert automatic API back to manual');
   await scenario('游戏目录默认安装 · UI fixture', value => { value.game.installed = false; }); await tab('overview'); await preview('prepare');
   assert(mock.plan.request.api === 'auto' && mock.plan.request.version === '0.4.7beta' && mock.plan.request.deployment === 'local' && mock.plan.request.loadingMode === undefined, 'prepare preserves automatic API and local layout while binding the displayed Core'); click('modal-cancel'); discard();
-  await tab('maintenance'); set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview');
+  await scenario('已安装游戏 · 独立桥接更新'); await tab('maintenance'); set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview');
   assert(field('route', 'version').value === '0.4.7beta', 'advanced bridge choice does not appear as a second Core'); await preview();
   assert(JSON.stringify(mock.plan.request) === JSON.stringify({ components: { bridge: 'nigos-1.4.11-nr' } }), 'bridge version is an independent component request and leaves Core identity implicit'); click('modal-cancel'); discard();
   for (const route of ['vulkan', 'feeder']) {
@@ -529,10 +531,10 @@ async function smoke() {
       value.layout.source = route; value.layout.mode = value.deployment.mode = route === 'vulkan' ? 'external' : 'local'; });
     await tab('overview'); assert(field('route', 'version').disabled && field('route', 'version').value === packageId && field('route', 'version').options.length === 1, 'fixed route exposes only its package');
     await preview('prepare'); assert(mock.plan.request.route === route && mock.plan.request.api === 'auto' && mock.plan.request.version === packageId && mock.plan.request.loadingMode === undefined, 'fixed route follows automatic detection and sends its fixed package without a native Core or helper choice'); click('modal-cancel'); discard();
-    await tab('maintenance'); assert(field('route', 'deployment').disabled && field('route', 'loadingMode').disabled, 'fixed route blocks unrelated layout and helper choices');
+    await tab('maintenance'); assert(field('route', 'deployment').disabled && (!field('route', 'loadingMode') || field('route', 'loadingMode').disabled), 'fixed route blocks unrelated layout and helper choices');
   }
 
-  await scenario('三滑块与人脸强度 · UI fixture'); await tab('overview');
+  await scenario('三滑块与人脸强度 · UI fixture'); await tab('nr');
   const nrPassiveWrites = count('apply');
   set('nr', 'Intensity', '1.15'); set('nr', 'LocalToneStrength', '.75'); set('nr', 'LocalStructureStrength', '1.25');
   assert(!field('nr', 'SkinStructureStrength') && !field('face', 'enabled').checked, 'disabled AutoMask hides the face strength control');
@@ -550,7 +552,7 @@ async function smoke() {
   await scenario('旧 Core 缺少新参数 · UI fixture', value => {
     value.nr.capabilities.LocalToneStrength = value.nr.capabilities.LocalStructureStrength = value.nr.capabilities.SkinStructureStrength = false;
     delete value.nr.LocalToneStrength; delete value.nr.LocalStructureStrength;
-  }); await tab('overview');
+  }); await tab('nr');
   assert(field('nr', 'LocalToneStrength').disabled && field('nr', 'LocalStructureStrength').disabled && field('face', 'enabled').disabled, 'absent Core capabilities stay disabled instead of fabricated by fixture defaults');
   await scenario('能力结果缺失 · UI fixture', value => { delete value.enhancements.featureStates.sr; }); await tab('enhance');
   assert(field('sr', 'preset').disabled && button('preview-sr').disabled && !button('confirm-sr'), 'missing automatic feature evidence cannot inherit old boolean support flags');

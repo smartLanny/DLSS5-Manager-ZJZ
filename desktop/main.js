@@ -29,6 +29,9 @@ let operationPlans = null;
 let deferredOperations = null;
 const workScheduler = require('./src/product/work-scheduler').createWorkScheduler();
 const gameWorkKey = id => 'game:' + path.resolve(service.gameDirectory(id)).toLowerCase();
+async function assertNoWaitingOperation(id) {
+  await deferredOperations?.assertNoWaiting(id);
+}
 function coordinateDriver(adapter) {
   return Object.fromEntries(Object.entries(adapter).map(([name, value]) => [name, typeof value === 'function'
     ? (...args) => workScheduler.run('driver:nvidia-drs', () => value.apply(adapter, args)) : value]));
@@ -314,9 +317,11 @@ function registerIpc() {
   serializedActions.add('components-provider-select');
   serializedActions.add('manager-update-prepare');
   serializedActions.add('manager-update-apply');
+  // Deferred operations own the directory queue, including confirmation.
+  serializedActions.delete('game-operation-apply');
   loggedGameActions.add('game-component-apply');
-  for (const name of ['hoyo-discover', 'hoyo-pick-game', 'hoyo-pick-launcher', 'hoyo-bind', 'hoyo-preview', 'hoyo-apply', 'hoyo-recover']) serializedActions.add(name);
-  const hoyoGameActions = new Set(['hoyo-pick-launcher', 'hoyo-bind', 'hoyo-preview', 'hoyo-apply', 'hoyo-recover']);
+  for (const name of ['hoyo-discover', 'hoyo-bind', 'hoyo-preview', 'hoyo-apply', 'hoyo-recover', 'hoyo-start']) serializedActions.add(name);
+  const hoyoGameActions = new Set(['hoyo-bind', 'hoyo-preview', 'hoyo-apply', 'hoyo-recover', 'hoyo-start']);
   const hoyoBindingActions = new Set(['hoyo-discover', 'hoyo-pick-game', 'hoyo-pick-launcher', 'hoyo-bind']);
   const settingsPlanGames = new Map();
   const call = (name, fn) => ipcMain.handle(name, async (_event, ...args) => withPermissionRecovery(await service.withError(
@@ -362,25 +367,33 @@ function registerIpc() {
   call('hoyo-inspect', (id, options) => hoyoWorkflow.inspect(id, { retry: options?.retry === true }));
   call('hoyo-pick-game', async () => {
     const result = await dialog.showOpenDialog(win, { properties: ['openFile'], title: '选择正式米哈游游戏程序', filters: [{ name: '游戏程序', extensions: ['exe'] }] });
-    return hoyoWorkflow.pickGame(result.canceled ? null : result.filePaths[0]);
+    return workScheduler.run('hoyo-bindings', async () => {
+      await operationElevation.assertAvailable();
+      return hoyoWorkflow.pickGame(result.canceled ? null : result.filePaths[0]);
+    });
   });
   call('hoyo-pick-launcher', async id => {
     const result = await dialog.showOpenDialog(win, { properties: ['openFile'], title: '选择这个客户端的 HoYoPlay 或 Starward 启动器', filters: [{ name: '启动器', extensions: ['exe'] }] });
-    return hoyoWorkflow.pickLauncher(id, result.canceled ? null : result.filePaths[0]);
+    const flow = await hoyoWorkflow.inspect(id);
+    return workScheduler.run(gameWorkKey(flow.gameId), () => workScheduler.run('hoyo-bindings', async () => {
+      await operationElevation.assertAvailable();
+      return hoyoWorkflow.pickLauncher(id, result.canceled ? null : result.filePaths[0]);
+    }));
   });
   call('hoyo-bind', (id, input) => hoyoWorkflow.bind(id, input));
-  call('hoyo-preview', (id, action) => hoyoWorkflow.preview(id, action));
+  call('hoyo-preview', (id, action, options) => hoyoWorkflow.preview(id, action, options));
   call('hoyo-apply', (id, planId, consent) => hoyoWorkflow.apply(id, planId, consent));
   call('hoyo-recover', id => hoyoWorkflow.recover(id));
-  call('hoyo-start', async id => { await operationElevation.assertAvailable(); return hoyoWorkflow.start(id); });
+  call('hoyo-start', async id => {
+    await operationElevation.assertAvailable();
+    const flow = await hoyoWorkflow.inspect(id);
+    await assertNoWaitingOperation(flow.gameId);
+    return hoyoWorkflow.start(id);
+  });
   call('hoyo-cancel', id => hoyoWorkflow.cancel(id));
   call('game-visual-record', (id, input) => verificationRecords.record(id, input));
   call('game-operation-preview', (id, request) => operationPlans.preview(id, request));
-  call('game-operation-apply', async (id, planId, consent) => {
-    const plan = await operationPlans.loadPlan(planId, consent?.fingerprint);
-    if (plan.gameId !== id) throw Object.assign(new Error('应用预览属于另一游戏。'), { code: 'OPERATION_TARGET' });
-    return operationPlans.apply(planId, consent);
-  });
+  call('game-operation-apply', (id, planId, consent) => deferredOperations.apply(id, planId, consent));
   call('game-operation-apply-elevated', async (id, planId, consent) => {
     const result = await operationElevation.apply(id, planId, consent);
     await service.refresh(); return result;
@@ -452,6 +465,7 @@ function registerIpc() {
     } catch (error) { return { ...result, remainingCheckFailed: true, notice: `安装已恢复，但残留检查未完成：${error.message}。请在维护入口重新检查。` }; }
   });
   call('game-launch', async id => {
+    await assertNoWaitingOperation(id);
     let result;
     try { result = await launchCoordinator.launch(id); }
     catch (error) {
@@ -864,6 +878,7 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       operations: operationPlans, launches: launchSessions, verification: runtimeVerification,
       launch: (id, controls) => workScheduler.run(gameWorkKey(id), async () => {
         await operationElevation.assertAvailable();
+        await assertNoWaitingOperation(id);
         return launchCoordinator.launch(id, controls);
       }),
       inspectLaunchReadiness: id => launchCoordinator.inspectLaunchReadiness(id),

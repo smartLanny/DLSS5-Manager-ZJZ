@@ -575,11 +575,23 @@ details[open] > :not(summary) { animation: disclosure-enter var(--motion-normal)
 .component-package-copy span { color: #6f7680; font-size: 12px; }
 .component-package-copy small { grid-column: 1 / -1; color: #9298a0; font-size: 11px; }
 .component-package-row .button { min-height: 36px; padding: 7px 12px; flex: 0 0 auto; font-size: 12px; }
+.component-primary-actions, .component-tool-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#componentLibraryRows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.component-package-summary { min-width: 0; gap: 10px; }
+.component-package-summary .component-package-copy { min-width: 0; }
+.component-package-summary .badge { flex: 0 0 auto; }
+.component-advanced { margin-top: 20px; }
+.component-advanced > summary { cursor: pointer; padding: 12px 0; }
+.component-storage-location { overflow-wrap: anywhere; }
+@media (max-width: 1000px) { #componentLibraryRows { grid-template-columns: 1fr; } }
 .component-empty { display: grid; place-items: center; gap: 5px; min-height: 104px; padding: 20px; border: 1px dashed #d8dcdf; border-radius: 11px; background: #fafbfa; text-align: center; }
 .component-empty strong { color: #4d545d; font-size: 13px; }
 .component-empty span { color: #9298a0; font-size: 12px; }
 .component-repository, .component-advanced { margin: 0 30px 14px; border: 1px solid #e1e4e6; border-radius: 12px; background: #fff; overflow: hidden; }
-.component-repository:not([open]) > :not(summary), .component-advanced:not([open]) > :not(summary), .component-expert-panel:not([open]) > :not(summary) { display: none; }
+details.component-repository:not([open]) > :not(summary), .component-advanced:not([open]) > :not(summary), .component-expert-panel:not([open]) > :not(summary) { display: none; }
+section.component-repository > .component-section-head { padding: 16px 18px 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#componentInventoryDetails { padding: 0 18px; }
+.component-tool-actions, .component-storage-location, #componentRouteDetails { margin: 12px 18px; }
 .component-repository > summary, .component-advanced > summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 18px; cursor: pointer; list-style: none; }
 .component-repository > summary::-webkit-details-marker, .component-advanced > summary::-webkit-details-marker { display: none; }
 .component-repository > summary::after, .component-advanced > summary::after { content: ''; flex: 0 0 auto; font-size: 0; }

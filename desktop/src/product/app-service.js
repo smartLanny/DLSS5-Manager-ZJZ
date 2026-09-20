@@ -28,6 +28,7 @@ const { createReframeworkPreparation } = require('./reframework-preparation');
 const { REFRAMEWORK_ADAPTERS } = require('./reframework-compatibility');
 const { createRdr2ApiSettings } = require('./rdr2-api-settings');
 const { createGameApiSettings } = require('./game-api-settings');
+const adoptionPolicy = require('./installation-adoption');
 
 const QUIET_READ_ACTIONS = new Set(['boot', 'games-refresh', 'games-list', 'game-diagnose', 'game-hotkeys-read',
   'nr-read', 'sr-model-read', 'launch-settings-inspect', 'addon-list', 'game-art', 'game-icon', 'game-feeder-inspect',
@@ -63,6 +64,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   const repairPlans = new Map();
   const specialDeploymentPlans = new Map();
   const hoyoDeploymentPlans = new Map();
+  const adoptionProposals = new Map();
   const apiSettingsReader = overrides.apiSettingsReader || createRdr2ApiSettings({ documentsDir });
   const gameApiSettings = overrides.gameApiSettings || createGameApiSettings({ userData, settings: apiSettingsReader,
     assertGameClosed: overrides.assertGameClosed || require('../core/install-guards').assertGameClosed });
@@ -75,6 +77,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   const bundledPayloadDir = payloadRoot(fs.existsSync(path.join(resourcesPath || '', 'payload')) ? resourcesPath : appDir);
   const componentLibrary = require('./component-library').createComponentLibrary({ userData,
     root:overrides.componentLibraryRoot || componentStorage.root });
+  const componentOverview = require('./component-overview').createComponentOverview({ appDir, resourcesPath, libraryRoot: componentLibrary.root });
   const userAddons = require('./user-addon-manager').createUserAddonManager({
     componentRoot: componentLibrary.root,
     assertGameClosed: overrides.assertGameClosed || require('../core/install-guards').assertGameClosed
@@ -636,6 +639,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const game = findGame(id), inputRoute = request.route || await resolveInputRoute(id, request);
     if (!['native', 'feeder'].includes(inputRoute)) throw Object.assign(new Error('米哈游模式尚未提供当前 API 的输入配套。'), { code: 'HOYO_INPUT_ROUTE' });
     const { api, routed } = deploymentApi(game, request.api || 'auto');
+    const adoption = await inspectInstallationAdoption(id, request);
+    if (adoption?.blockers.length) return { gameId: id, mode: 'external', route: inputRoute, loadingBackend: 'hoyoshade',
+      changes: [], blockers: adoption.blockers, adoption, requiresAdoptionConfirmation: true, runtimeVerified: false };
     if (inputRoute === 'native') requireNoFeeder(game);
     requireKnownVulkanOwnership(game);
     const version = inputRoute === 'native'
@@ -646,11 +652,12 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       : selectedPayload(routed, inputRoute === 'native' ? version : null, request.components);
     const payload = inputRoute === 'native' ? nativePayload : { reshade: nativePayload.reshade };
     const profile = await hoyo.preview(routed, { hoyo: request.hoyo, inputRoute, api, version: inputRoute === 'native' ? version : undefined,
-      payload, addonKeep: request.addonKeep, ...internal });
+      payload, addonKeep: request.addonKeep, adoption, ...internal });
     const legacy = inputRoute === 'feeder' ? await feeder.previewInstall(routed, { version: request.version, api, loadingBackend: 'hoyoshade', layout: profile.layout }) : null;
     const planId = crypto.randomUUID();
-    hoyoDeploymentPlans.set(planId, { id, routed, request, api, profile, legacy, expires: Date.now() + 5 * 60000 });
+    hoyoDeploymentPlans.set(planId, { id, routed, request, api, profile, legacy, adoption, expires: Date.now() + 5 * 60000 });
     return { ...profile, planId, route: inputRoute, mode: 'external', version: legacy?.packageId || profile.version,
+      adoption, requiresAdoptionConfirmation: adoption?.required === true,
       changes: [...profile.changes, ...(legacy?.changes || [])], blockers: [...(profile.blockers || []), ...(legacy?.blockers || [])],
       phases: ['hoyoshade-profile', ...(legacy ? ['feeder-install'] : [])], runtimeVerified: false };
   }
@@ -658,6 +665,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const plan = hoyoDeploymentPlans.get(planId); hoyoDeploymentPlans.delete(planId);
     if (!plan || plan.expires < Date.now()) throw Object.assign(new Error('米哈游预览已过期，请重新检查。'), { code: 'DEPLOYMENT_PLAN_EXPIRED' });
     const game = findGame(plan.id), state = store.read(), key = pathKey(game.dir);
+    await adoptionPolicy.assertAdoption(plan.adoption);
     let settingChange, preferenceWritten = false;
     try {
       settingChange = await gameApiSettings.apply(game, plan.request.api || 'auto');
@@ -1105,6 +1113,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         typeof options.version !== 'string' || !options.version || options.version.length > 100) throw appError('ERR_BAD_REQUEST');
     const game = findGame(id), chosen = game.scan?.chosen;
     if (!chosen) throw appError('ERR_NO_GAME_EXE');
+    if (!internal.adoption && await inspectInstallationAdoption(id)) throw Object.assign(new Error('已有未受管安装，请先预览并确认具体备份接管清单。'), { code: 'ADOPTION_CONFIRM_REQUIRED' });
     requireNoFeeder(game);
     requireKnownVulkanOwnership(game);
     let detected = { ...(chosen.detectedApiResolution || {}), api: require('./operation-api').resolveOperationApi(game, { api: 'auto' }).detectedApi };
@@ -1152,7 +1161,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       else {
         await prepareExistingReframework(routed, options);
         const operation = manifest ? installer.repair : installer.install;
-        result = await operation({ gameDir: game.dir, payload, scan: routed.scan, addonPolicy: internal.addonPolicy || await nativeAddonPolicy(routed, payload, options.addonKeep), allowAntiCheat: options.allowAntiCheat === true });
+        result = await operation({ gameDir: game.dir, payload, scan: routed.scan, adoption: internal.adoption,
+          addonPolicy: internal.addonPolicy || await nativeAddonPolicy(routed, payload, options.addonKeep), allowAntiCheat: options.allowAntiCheat === true });
         result = await prepareDetectedReframework(routed, result);
       }
     } catch (error) {
@@ -1348,6 +1358,16 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     }
     return inspectNrCoreIdentity({ version, files: cores, fresh: options.fresh === true });
   }
+  async function inspectInstallationAdoption(id, request = {}) {
+    const game = findGame(id);
+    const adoption = await adoptionPolicy.inspectAdoption({ executable: game.scan?.chosen?.path,
+      managed: Boolean(readManifest(game.dir) || externalOwned(game) || feederOwned(game) || vulkanOwned(game)),
+      choice: request.adoption, pe: overrides.adoptionPe || overrides.externalDeploymentOptions?.pe,
+      inspectReShade: overrides.inspectReShade || require('../core/scan').inspectReShade });
+    if (request.version || request.adoption) adoptionProposals.set(id, { targetVersion: request.version || null,
+      proposedAt: new Date().toISOString(), adoption });
+    return adoption;
+  }
   async function validateWaitingComponents(id, input = {}) {
     const request = require('./operation-plan').validateOperationRequest(input), game = findGame(id), layout = gameLayout(game);
     const deployment = ['api', 'version', 'deployment', 'loadingMode', 'loadingBackend', 'hoyo', 'route', 'addonKeep'].some(key => Object.hasOwn(request, key)) ||
@@ -1403,7 +1423,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   }
   async function previewDeployment(id, request = {}, internal = {}) {
     if (!request || typeof request !== 'object' || Array.isArray(request) ||
-        Object.keys(request).some(key => !['mode', 'version', 'api', 'loadingMode', 'components', 'addonKeep', 'proxyEntry'].includes(key)) ||
+        Object.keys(request).some(key => !['mode', 'version', 'api', 'loadingMode', 'components', 'addonKeep', 'proxyEntry', 'adoption'].includes(key)) ||
         !['local', 'external'].includes(request.mode) || request.api !== undefined && !['auto', 'dx11', 'dx12', 'vulkan'].includes(request.api) ||
         request.loadingMode !== undefined && !['proxy', 'helper'].includes(request.loadingMode))
       throw appError('ERR_BAD_REQUEST');
@@ -1421,6 +1441,11 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const { api, routed } = deploymentApi(game, preference);
     const current = await externalDeployment.inspect(game), manifest = readManifest(game.dir);
     const targetVersion = request.version || current.version || manifest?.payloadVersion || selectedVersionForGame(routed);
+    const adoption = await inspectInstallationAdoption(id, request);
+    if (adoption?.replaceProxy?.name === 'd3d11.dll') adoption.blockers.push({ code: 'ADOPTION_ALTERNATE_HOST',
+      message: '当前普通 ReShade 使用 d3d11.dll；请先将入口切回其安装器支持的 DXGI 方式，再确认接管，未自动改名。' });
+    if (adoption?.blockers.length) return { gameId: id, fromMode: current.mode, toMode: request.mode, mode: request.mode,
+      version: targetVersion, api, changes: [], blockers: adoption.blockers, adoption, requiresAdoptionConfirmation: true, runtimeVerified: false };
     const fromApi = current.mode === 'external' ? current.api : manifest?.deploymentApi || classifyApi(game.scan?.chosen);
     const sameApi = fromApi === api;
     if (current.mode !== 'external' && manifest?.reshadeRoute === 'd3d12' && api !== 'dx12' && request.proxyEntry !== 'dxgi')
@@ -1430,7 +1455,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       payload = selectedPayload(routed, targetVersion, request.components);
       const support = assess(routed.scan, { allowDx11: payload.versionInfo?.compatibility === 'dx11', supportsPresent: payload.versionInfo?.supportsPresent === true });
       if (!support.supported) throw appError(support.code);
-      migrationRequest = { mode: 'external', loadingMode: request.loadingMode || 'proxy', api, version: payload.version, payload, addonKeep: request.addonKeep, proxyEntry: request.proxyEntry };
+      migrationRequest = { mode: 'external', loadingMode: request.loadingMode || 'proxy', api, version: payload.version, payload, addonKeep: request.addonKeep, proxyEntry: request.proxyEntry, adoption };
       migration = await externalDeployment.preview(routed, migrationRequest, internal);
       phases = ['external-install']; changes = migration.changes.map(row => ({ ...row, phase: 'external-install' }));
     } else if (current.mode === 'external' && sameApi) {
@@ -1461,13 +1486,14 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (current.mode !== 'external') { addonPolicy = await nativeAddonPolicy(routed, payload, request.addonKeep); changes.push(...addonPolicy.changes); }
       phases.push(manifest ? 'local-update' : 'local-install');
       const directory = path.dirname(game.scan.chosen.path);
-      const loaderName = manifest?.reshadeRoute === 'd3d12' ? 'd3d12.dll' : INSTALLED_NAMES.reshade;
-      for (const kind of ['addon', 'bridge', 'runtime', ...(!fs.existsSync(path.join(directory, loaderName)) ? ['reshade'] : []), ...(!manifest ? ['config'] : []), ...(api === 'dx11' ? ['carrier'] : [])]) {
+      const loaderName = adoption?.replaceProxy?.name || (manifest?.reshadeRoute === 'd3d12' ? 'd3d12.dll' : INSTALLED_NAMES.reshade);
+      for (const kind of ['addon', 'bridge', 'runtime', ...(!fs.existsSync(path.join(directory, loaderName)) || adoption?.replaceProxy ? ['reshade'] : []), ...(!manifest ? ['config'] : []), ...(api === 'dx11' ? ['carrier'] : [])]) {
         const row = payload[kind]; if (!row) continue;
         const file = path.join(directory, kind === 'reshade' ? loaderName : INSTALLED_NAMES[kind]);
         const before = fs.existsSync(file) && fs.statSync(file).isFile() ? sha256(file) : null;
         changes.push({ path: file, name: path.basename(file), role: kind, phase: 'local-install',
-          beforeSha256: before, afterSha256: row.actual, action: before === row.actual ? 'keep' : before === null ? 'create' : 'replace' });
+          beforeSha256: before, afterSha256: kind === 'config' && before !== null ? before : row.actual,
+          action: kind === 'config' && before !== null || before === row.actual ? 'keep' : before === null ? 'create' : 'replace' });
       }
       for (const row of payload.companions || []) {
         const file = path.join(directory, row.name), before = await require('./launch-safety').digestFile(file);
@@ -1501,7 +1527,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const planId = crypto.randomUUID();
     deploymentPlans.set(planId, { id, request: { ...request, api: preference, version: targetVersion }, api, routed,
       fromMode: current.mode, fromApi, fromVersion: current.version, hadManifest: Boolean(manifest),
-      migration, migrationRequest, addonPolicy, phases, expires: Date.now() + 5 * 60 * 1000,
+      migration, migrationRequest, addonPolicy, adoption, phases, expires: Date.now() + 5 * 60 * 1000,
       exe: game.scan.chosen.path, exeHash: await require('./external-runtime').digest(game.scan.chosen.path), preferenceBefore: state });
     const proposedLayout = request.mode === 'external' ? externalDeployment.location(routed) : gameLayout(game);
     const loadingMode = request.mode === 'external' ? request.loadingMode || current.loadingMode || 'proxy' : 'proxy';
@@ -1511,6 +1537,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       configured: migration?.configured || current.configured, sourceLayout: migration?.sourceLayout || current.sourceLayout,
       desired: migration?.desired || proposedLayout.desired, blockers: [...(migration?.blockers || []), ...(addonPolicy?.plan.blockers || [])], warnings: migration?.warnings || current.warnings || [],
       addonCompatibility: addonPolicy?.plan || migration?.addonCompatibility || null,
+      adoption, requiresAdoptionConfirmation: adoption?.required === true,
       retainedAddons: migration?.retainedAddons || [], inactiveAddons: migration?.inactiveAddons || [], requiresFgRestore: migration?.requiresFgRestore === true,
       requiresAntiCheat: Boolean(require('../core/install-guards').antiCheatPresent(game.dir)), requiresConfirmation: true, runtimeVerified: false };
   }
@@ -1567,6 +1594,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     if (game.scan?.chosen?.path !== plan.exe || await require('./external-runtime').digest(plan.exe) !== plan.exeHash)
       throw Object.assign(new Error('预览后游戏 EXE 已变化。'), { code: 'DEPLOYMENT_PLAN_CHANGED' });
     await externalDeployment.assertReady(game);
+    await adoptionPolicy.assertAdoption(plan.adoption);
     const preferenceKey = pathKey(game.dir);
     const preferenceBefore = store.read();
     for (const key of ['api', 'apiExecutable']) if ((preferenceBefore.gameOverrides[preferenceKey]?.[key] || null) !==
@@ -1587,7 +1615,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           result = await externalDeployment.apply(plan.migration.planId, consent); completed.push('restore-local');
         }
         result = await applyGameRoute(plan.id, { api: plan.request.api, version: plan.request.version, components: plan.request.components, addonKeep: plan.request.addonKeep, allowAntiCheat: consent.allowAntiCheat === true },
-          { addonPolicy: plan.addonPolicy, onAppliedState: applied => { settingChange = applied.settingChange; preferenceWritten = applied.preferenceWritten; } });
+          { addonPolicy: plan.addonPolicy, adoption: plan.adoption, onAppliedState: applied => { settingChange = applied.settingChange; preferenceWritten = applied.preferenceWritten; } });
         completed.push(plan.hadManifest ? 'local-update' : 'local-install');
         if (plan.request.mode === 'external') {
           game = findGame(plan.id);
@@ -1681,25 +1709,29 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         request.api !== undefined && !['auto', 'dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].includes(request.api) ||
         request.version !== undefined && (typeof request.version !== 'string' || !request.version || request.version.length > 100)) throw appError('ERR_BAD_REQUEST');
     const game = findGame(id), routed = specialRouteGame(game, request), owner = request.route === 'feeder' ? feeder : vulkan;
+    const adoption = await inspectInstallationAdoption(id);
     const preview = await specialPreviewWithSettings(game, routed, request, owner);
     const planId = crypto.randomUUID(), normalized = { ...request, api: request.api || preview.api, version: preview.packageId || preview.version };
-    specialDeploymentPlans.set(planId, { id, request: normalized, expires: Date.now() + 5 * 60 * 1000,
+    specialDeploymentPlans.set(planId, { id, request: normalized, adoption, expires: Date.now() + 5 * 60 * 1000,
       exe: game.scan.chosen.path, exeHash: await require('./external-runtime').digest(game.scan.chosen.path),
       preferenceBefore: store.read().gameOverrides[pathKey(game.dir)] || {}, fingerprint: specialFingerprint(preview) });
     return { ...preview, planId, gameId: id, fromMode: gameLayout(game).mode, toMode: preview.mode,
+      adoption, requiresAdoptionConfirmation: adoption?.required === true,
+      blockers: [...(preview.blockers || []), ...(adoption?.blockers || [])],
       loadingMode: 'proxy', phases: [`${request.route}-install`], changes: preview.changes.map(row => ({ ...row, phase: `${request.route}-install` })) };
   }
   async function applySpecialDeployment(planId, consent = {}) {
     const plan = specialDeploymentPlans.get(planId); specialDeploymentPlans.delete(planId);
     if (!plan || plan.expires < Date.now()) throw Object.assign(new Error('部署预览已过期，请重新检查。'), { code: 'DEPLOYMENT_PLAN_EXPIRED' });
     const game = findGame(plan.id), state = store.read(), key = pathKey(game.dir), before = state.gameOverrides[key] || {};
+    await adoptionPolicy.assertAdoption(plan.adoption);
     if (game.scan?.chosen?.path !== plan.exe || await require('./external-runtime').digest(plan.exe) !== plan.exeHash ||
         ['api', 'apiExecutable'].some(field => (before[field] || null) !== (plan.preferenceBefore[field] || null)))
       throw Object.assign(new Error('预览后游戏 EXE 或 API 选择已变化。'), { code: 'DEPLOYMENT_PLAN_CHANGED' });
     const routed = specialRouteGame(game, plan.request), owner = plan.request.route === 'feeder' ? feeder : vulkan;
     const fresh = await specialPreviewWithSettings(game, routed, plan.request, owner);
     if (specialFingerprint(fresh) !== plan.fingerprint) throw Object.assign(new Error('预览后配套文件或加载状态已变化，请重新检查。'), { code: 'DEPLOYMENT_PLAN_CHANGED' });
-    if (plan.request.route === 'vulkan') return applyGameRoute(plan.id, { api: plan.request.api, version: fresh.packageId, allowAntiCheat: consent.allowAntiCheat === true });
+    if (plan.request.route === 'vulkan') return applyGameRoute(plan.id, { api: plan.request.api, version: fresh.packageId, allowAntiCheat: consent.allowAntiCheat === true }, { adoption: plan.adoption });
     let settingChange, preferenceWritten = false, result;
     try {
       result = await feeder.install(routed, { version: plan.request.version, ...(fresh.planId ? { expectedPlanId: fresh.planId } : {}),
@@ -1916,7 +1948,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     listComponents: async () => { await storageFinalization; await seedBundledComponents(); await refreshProviderSources({ selectDefault: true });
       const inventory = await componentLibrary.inventory();
       const currentPayload = inspectCurrentPayload({ allowMissingBundle: true, hardwareFamily: hardware.family, version: selectedVersion() });
-      return { ...inventory, catalog: componentLibrary.catalog(),
+      const catalog = componentLibrary.catalog();
+      return { ...inventory, catalog, componentOverview: await componentOverview.read({ inventory, catalog, currentCore: providerContext().currentCore }),
         runtimeSetup: { hardwareFamily: hardware.family || null, ready: currentPayload.ready === true,
           runtimeDlcRequired: currentPayload.source?.runtimeDlcRequired === true,
           selectedRuntimeId: inventory.selected?.[hardware.family] || null },
@@ -2000,6 +2033,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     installationDefaults,
     resolveInputRoute,
     validateWaitingComponents,
+    inspectInstallationAdoption,
     previewProxyEntry,
     applyProxyEntry: (id, entry, consent = {}) => installer.toggleD3D12({ gameDir: findGame(id).dir, scan: findGame(id).scan, enabled: entry === 'd3d12', allowAntiCheat: consent.allowAntiCheat === true }),
     previewHoYoDeployment,
@@ -2304,6 +2338,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     install: async (id, options = {}) => {
       const game = findGame(id);
+      if (await inspectInstallationAdoption(id)) throw Object.assign(new Error('已有未受管安装，请先预览并确认具体备份接管清单。'), { code: 'ADOPTION_CONFIRM_REQUIRED' });
       if (externalOwned(game)) return refreshAfterMutation(await repairGame(game, options));
       if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
       if (feederOwned(game)) return refreshAfterMutation(await feeder.install(game, options));
@@ -2498,6 +2533,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         else if (reframeworkInput(game)) managedLogDirs = [await settingDirectory(game)];
       }
       catch { /* A broken binding must still allow exporting its diagnosis. */ }
+      let installationAdoption;
+      try { installationAdoption = { current: await inspectInstallationAdoption(id), lastProposal: adoptionProposals.get(id) || null }; }
+      catch (error) { installationAdoption = { error: { code: error.code, message: error.message }, lastProposal: adoptionProposals.get(id) || null }; }
       return feedback.buildReport({
         game,
         diagnostic,
@@ -2506,7 +2544,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         settings,
         gameId: id,
         includePaths,
-        managedLogDirs
+        managedLogDirs,
+        installationAdoption
       });
     },
     readNrSettings: async id => {

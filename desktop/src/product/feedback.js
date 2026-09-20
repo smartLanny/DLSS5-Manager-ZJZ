@@ -145,7 +145,7 @@ function createFeedbackCollector({ userData, productVersion = '0.0.0', resolveFe
     return ready ? '已部署 API：vulkan' : '部署状态：Vulkan 准备未完成';
   }
 
-  async function buildReport({ game, diagnostic = null, hardware = null, payload = null, settings = null, gameId = null, includePaths = false, managedLogDirs = [] }) {
+  async function buildReport({ game, diagnostic = null, hardware = null, payload = null, settings = null, gameId = null, includePaths = false, managedLogDirs = [], installationAdoption = null }) {
     const chosen = game && game.chosen ? game.chosen : null;
     const executable = chosen && chosen.path ? chosen.path : null;
     const gameDir = game && game.dir ? game.dir : null;
@@ -185,6 +185,7 @@ function createFeedbackCollector({ userData, productVersion = '0.0.0', resolveFe
       `显卡匹配：${hardware ? JSON.stringify(safeJson(hardware, includePaths)) : '未知'}`,
       `组件版本：${payloadSummary ? JSON.stringify(payloadSummary) : '未知'}`,
       `游戏设置：${settings ? JSON.stringify(safeJson(settings, includePaths)) : '未读取'}`,
+      `旧安装接管：${installationAdoption ? JSON.stringify(safeJson(installationAdoption, includePaths)) : '未检查'}`,
       '',
       '[当前诊断]',
       diagnostic ? `完整：${diagnostic.complete ? '是' : '否'}\n${(diagnostic.components || []).map(row => `${row.label}：${row.detail || (row.ok ? '完整' : '异常')}`).join('\n')}` : '诊断未生成。',

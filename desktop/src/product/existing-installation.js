@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { INSTALLED_NAMES } = require('./constants');
 
-const PRIMARY_KINDS = new Set(['addon', 'bridge', 'runtime', 'carrier']);
+const PRIMARY_KINDS = new Set(['addon', 'bridge', 'runtime', 'carrier', 'reshade', 'config', 'unverified-addon']);
 const LABELS = Object.freeze({
   reshade: 'ReShade 入口',
   addon: 'NR Core',
@@ -20,7 +20,11 @@ const LABELS = Object.freeze({
 function inspectExistingInstallation({ executable, managed = false } = {}) {
   if (managed || typeof executable !== 'string' || !path.isAbsolute(executable)) return null;
   const directory = path.dirname(executable), files = [];
-  for (const [kind, name] of Object.entries(INSTALLED_NAMES)) {
+  let names = [];
+  try { names = fs.readdirSync(directory).filter(name => /\.addon(?:32|64)$/i.test(name)); } catch {}
+  const candidates = [...Object.entries(INSTALLED_NAMES), ['reshade', 'd3d12.dll'], ['reshade', 'd3d11.dll'],
+    ['config', 'ReShade.ini'], ...names.filter(name => !Object.values(INSTALLED_NAMES).includes(name)).map(name => ['unverified-addon', name])];
+  for (const [kind, name] of candidates) {
     const file = path.join(directory, name);
     let stat;
     try { stat = fs.lstatSync(file); } catch { continue; }

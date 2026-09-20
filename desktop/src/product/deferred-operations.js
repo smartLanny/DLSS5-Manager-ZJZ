@@ -13,6 +13,7 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
   const root = path.join(userData, 'waiting-operations');
   let timer = null, polling = false;
   const inFlight = new Set();
+  const waitingPlans = new Map();
   const checking = new Set();
   const target = id => {
     const game = path.resolve(service.gameDirectory(id)), exe = path.resolve(service.gameExecutable(id));
@@ -88,7 +89,8 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
   function attention(plan, request, consent) {
     const choices = (plan.deployment?.addonCompatibility?.decisions || []).some(row =>
       row.moduleMayLoad && !row.mandatory && !['core', 'native-carrier'].includes(row.classification) && row.action === 'isolate' && !request.addonKeep);
-    return Boolean(plan.blockers?.length || choices || plan.deployment?.requiresAntiCheat && !consent.allowAntiCheat);
+    return Boolean(plan.blockers?.length || choices || plan.deployment?.requiresAntiCheat && !consent.allowAntiCheat ||
+      plan.requiresAdoptionConfirmation && consent.adoptionFingerprint !== plan.adoption?.fingerprint);
   }
   async function execute(id, request, consent) {
     await beforeApply(id);
@@ -114,6 +116,12 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
         if (request.uninstall || request.repair) throw e;
         const before = await snapshot(id, t);
         const preparation = await (operations.prepareForWaiting ? operations.prepareForWaiting(id, request) : operations.preview(id, request));
+        if (preparation.requiresAdoptionConfirmation) {
+          const plan = await operations.preview(id, request, { readOnlyWhileRunning: true });
+          plan.waitingConfirmation = true;
+          waitingPlans.set(plan.planId, { id, plan, before, expires: Date.now() + 10 * 60000 });
+          return { needsAttention: true, plan, notice: '请先核对旧安装接管；确认后等待游戏退出再应用，完成后不会自动启动。' };
+        }
         if (attention(preparation, request, consent)) return { needsAttention: true, plan: preparation, notice: '所需组件或确认项尚未准备完成，未加入等待队列。' };
         const changed = hash(before) !== hash(await snapshot(id, t));
         const row = { schema: 2, gameId: id, target: t, request, consent: { allowAntiCheat: consent.allowAntiCheat === true },
@@ -125,6 +133,47 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
         return { waiting: !changed, ...publicState(row), notice: row.message };
       }
       return execute(id, request, consent);
+    });
+  }
+  async function assertNoWaiting(id) {
+    // Launch callers may already own the directory queue. This read-only gate
+    // never enters it recursively or rewrites an interrupted operation.
+    const row = await read(target(id));
+    if (row && (ACTIVE.has(row.status) || row.status === 'applying'))
+      fail('WAITING_OPERATION_PENDING', '当前游戏还有待应用操作，请先取消等待或等应用完成，再单独启动。');
+    if (row?.status === 'recovery-required') fail('WAITING_RECOVERY_REQUIRED', '请先恢复未完成的操作，再启动游戏。');
+    return publicState(row);
+  }
+  async function apply(id, planId, consent = {}) {
+    const saved = waitingPlans.get(planId);
+    if (!saved) return run(target(id).game, async () => {
+      const plan = await operations.loadPlan(planId, consent.fingerprint);
+      if (plan.gameId !== id) fail('WAITING_TARGET', '该操作预览属于另一个游戏。');
+      await beforeApply(id);
+      return operations.apply(plan.planId, consent);
+    });
+    if (saved.id !== id || saved.expires < Date.now() || consent.confirm !== true || consent.fingerprint !== saved.plan.fingerprint)
+      fail('WAITING_CONFIRM', '待应用接管确认已过期或身份不符，请重新预览。');
+    const t = target(id);
+    return run(t.game, async () => {
+      const old = await interrupted(t, await read(t));
+      if (old && (ACTIVE.has(old.status) || old.status === 'applying' || old.status === 'recovery-required'))
+        fail('WAITING_PENDING', '已有待执行或待恢复操作，请先处理后重新确认。');
+      const before = await snapshot(id, t);
+      if (hash(before) !== hash(saved.before)) fail('WAITING_CHANGED', '游戏或配置已在确认前改变，请重新预览。');
+      const fresh = await operations.preview(id, saved.plan.request, { readOnlyWhileRunning: true });
+      const confirmed = { allowAntiCheat: consent.allowAntiCheat === true, adoptionFingerprint: saved.plan.adoption?.fingerprint };
+      if (fresh.fingerprint !== saved.plan.fingerprint || attention(fresh, fresh.request, confirmed))
+        fail('WAITING_CHANGED', '旧安装、来源或确认项已经改变，请重新预览。');
+      let running = false;
+      try { await assertClosed(id); } catch (error) { if (error.code !== 'errGameRunning') throw error; running = true; }
+      waitingPlans.delete(planId);
+      if (!running) { await beforeApply(id); return operations.apply(fresh.planId, { ...consent, fingerprint: fresh.fingerprint }); }
+      const row = { schema: 2, gameId: id, target: t, request: fresh.request, consent: confirmed, before,
+        preparation: { verifiedAt: new Date().toISOString(), identity: fresh.fingerprint }, status: 'waiting-game',
+        acceptedAt: new Date().toISOString(), message: '已确认备份接管，等待游戏退出后重新检查并应用；不会自动启动。' };
+      await save(t, row);
+      return { waiting: true, ...publicState(row), notice: row.message };
     });
   }
   async function cancel(id) {
@@ -183,7 +232,7 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
     // the queue while it runs. Each game still has one checking/applying task.
     await Promise.allSettled(tasks);
   }
-  return { submit, inspect, cancel, tick,
+  return { submit, apply, inspect, assertNoWaiting, cancel, tick,
     start() { if (!timer) { timer = setInterval(() => { void tick().catch(() => {}); }, 3000); timer.unref?.(); } },
     stop() { clearInterval(timer); timer = null; } };
 }

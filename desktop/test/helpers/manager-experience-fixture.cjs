@@ -10,7 +10,7 @@ const { createDeferredOperations } = require('../../src/product/deferred-operati
 const { createWorkScheduler } = require('../../src/product/work-scheduler');
 const { PAYLOAD_FILES } = require('../../src/product/constants');
 
-async function createExperienceFixture(root) {
+async function createExperienceFixture(root, options = {}) {
   const gameDir = path.join(root, 'NTE-fixture'), exeDir = path.join(gameDir, 'Binaries', 'Win64'), exe = path.join(exeDir, 'Game.exe');
   fs.mkdirSync(exeDir, { recursive: true }); fs.writeFileSync(exe, 'synthetic selected EXE; never executed');
   const payload = path.join(root, 'resources/payload/nr-before-sr');
@@ -36,10 +36,23 @@ async function createExperienceFixture(root) {
   const native = { path: path.join(exeDir, 'nvngx_dlss.dll'), name: 'nvngx_dlss.dll', bitness: 64 };
   const scan = { gameDir, gameName: '异环反馈 · 混合 API 回归', chosen, exeCandidates: [chosen], dlssFiles: [native], primaryDlss: native, emulator: null, reshade: { installed: false } };
   const scanner = { scanGame: async () => structuredClone(scan), selectPrimaryDlss: files => files[0], inspectReShade: dir => ({ installed: fs.existsSync(path.join(dir, 'dxgi.dll')), file: 'dxgi.dll', addonSupport: true }) };
+  if (options.existingInstallation) {
+    if (!['reshade-standard', 'unknown-proxy'].includes(options.existingInstallation)) throw new Error('unknown synthetic installation scenario');
+    fs.writeFileSync(path.join(exeDir, 'dxgi.dll'), options.existingInstallation === 'reshade-standard' ? 'ReShade ordinary synthetic build without Add-on support' : 'unidentified synthetic user proxy; never executed');
+    fs.writeFileSync(path.join(exeDir, 'nrchain_nvngx.dll'), 'prior synthetic chain');
+    fs.writeFileSync(path.join(exeDir, 'nr_before_sr.ini'), '[NRBeforeSR]\r\nEnabled=1\r\nIntensity=0.87654321\r\nWorkMode=0\r\n; original personal configuration\r\n');
+    fs.writeFileSync(path.join(exeDir, 'ReShade.ini'), '[ADDON]\r\nAddonPath=.\r\n[STYLE]\r\nFont=Original personal font\r\n');
+    scanner.inspectReShade = dir => {
+      const file = path.join(dir, 'dxgi.dll'), bytes = fs.existsSync(file) ? fs.readFileSync(file) : Buffer.alloc(0);
+      return { installed: bytes.includes('ReShade'), file: bytes.includes('ReShade') ? 'dxgi.dll' : null, addonSupport: bytes.includes('Searching for add-ons') };
+    };
+  }
   const hardware = { family: 'RTX40', series: ['RTX30'], names: ['Synthetic RTX 3070'], source: 'fixture' }, guards = { antiCheatPresent: () => false, assertGameClosed: async () => {} };
   const library = createLibraryService({ scan: scanner, library: { discover: () => ({ games: [], roots: [] }), dedupe: rows => rows } });
   const userData = path.join(root, 'user-data');
   const service = createAppService({ userData, resourcesPath: path.join(root, 'resources'), appDir: root, version: '0.5.0-beta.3', overrides: { library, detectGpu: () => hardware, assertGameClosed: guards.assertGameClosed,
+    ...(options.existingInstallation ? { inspectReShade: scanner.inspectReShade,
+      adoptionPe: { getBitness: () => 64, versionMentions: file => fs.readFileSync(file).includes('ReShade') } } : {}),
     installer: createInstaller({ scan: scanner, guards, pe: { getBitness: () => 64 } }), externalDeploymentOptions: { guards, pe: { getImports: () => [] } } } });
   const settings = { assertReady: async () => {}, inspect: async () => ({ applied: {}, requests: {}, pending: [] }), pending: async () => [] };
   const environment = { assertReady: async () => {}, inspect: async () => ({ files: [], remainingFiles: [] }), recoverPending: async () => {} };

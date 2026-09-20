@@ -117,7 +117,9 @@ test('an active REFramework Core mirror cannot borrow the root Core identity aft
 });
 
 test('one-click install prepares detected REFramework automatically and existing upgrades prepare ownership first', async t => {
-  const fresh = fixture(t); fs.unlinkSync(manifestPath(fresh.gameDir)); await fresh.service.boot();
+  const fresh = fixture(t);
+  for (const file of [manifestPath(fresh.gameDir), ...['nr-before-sr.zh-CN.addon64', 'nr_before_sr.ini', 'ReShade.ini'].map(name => path.join(fresh.gameDir, name))]) fs.unlinkSync(file);
+  await fresh.service.boot();
   const result = await fresh.service.install('ref-game', { version: '0.4.7beta' });
   assert.equal(result.installed, true); assert.equal(result.reframework.ready, true);
   assert.deepEqual(fresh.order, ['native-install', 'prepare']);
@@ -130,7 +132,9 @@ test('one-click install prepares detected REFramework automatically and existing
 });
 
 test('automatic compatibility failure preserves the completed native result and exposes the exact error', async t => {
-  const f = fixture(t); fs.unlinkSync(manifestPath(f.gameDir)); await f.service.boot();
+  const f = fixture(t);
+  for (const file of [manifestPath(f.gameDir), ...['nr-before-sr.zh-CN.addon64', 'nr_before_sr.ini', 'ReShade.ini'].map(name => path.join(f.gameDir, name))]) fs.unlinkSync(file);
+  await f.service.boot();
   f.failPreparation(Object.assign(new Error('兼容文件被占用'), { code: 'REF_TARGET_BUSY' }));
   const result = await f.service.install('ref-game', { version: '0.4.7beta' });
   assert.equal(result.installed, true); assert.equal(result.reframework.ready, false);

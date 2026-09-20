@@ -660,6 +660,7 @@ function createExternalRuntime(options) {
     return { ...t, profileId: saved.generation, runtimeDir: path.join(t.ownerRoot, 'active-' + saved.generation) };
   }
   async function previewInitial(t, game, request) {
+    await require('./installation-adoption').assertAdoption(request.adoption);
     const hoyo = request.deploymentBackend === 'hoyoshade';
     if (hoyo && (!validHoYoProfile(request.hoyoProfile, t.exe) || request.loadingMode !== 'helper')) fail('HOYO_PROFILE', '米哈游首装需要固定正式客户端与启动器绑定。');
     if (!hoyo && request.loadingMode && request.loadingMode !== 'proxy') fail('INITIAL_LOADING_MODE', '首次外置部署请先使用代理加载，再按独立预览切换助手加载。');
@@ -697,7 +698,9 @@ function createExternalRuntime(options) {
     const proxies = [];
     for (const name of hoyo ? HOYO_PROXIES : ['dxgi.dll', 'd3d12.dll']) {
       const file = path.join(t.dir, name), actual = await digest(file); if (!actual) continue;
-      if (!marker(file) || typeof pe.getBitness === 'function' && pe.getBitness(file) !== 64)
+      const replacement = request.adoption?.replaceProxy;
+      const authorized = replacement && key(replacement.path) === key(file) && replacement.sha256 === actual;
+      if ((!marker(file) && !authorized) || typeof pe.getBitness === 'function' && pe.getBitness(file) !== 64)
         fail('PROXY_CONFLICT', '游戏目录含无法确认的代理，未替换。', { file });
       proxies.push({ name, actual });
     }
@@ -866,7 +869,7 @@ function createExternalRuntime(options) {
     return { ...result, projectedManifest: manifest };
   }
   async function preview(game, request = {}, internal = {}) {
-    const t = target(game); await closed(t); await assertReady(game);
+    const t = target(game); if (internal.readOnlyWhileRunning !== true) await closed(t); await assertReady(game);
     if (!['local', 'external'].includes(request.mode) || request.loadingMode !== undefined && !['proxy', 'helper'].includes(request.loadingMode) ||
         request.proxyEntry !== undefined && !['auto', 'dxgi', 'd3d12'].includes(request.proxyEntry))
       fail('INPUT', '请选择普通或外置部署及加载方式。');

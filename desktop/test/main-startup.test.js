@@ -80,7 +80,7 @@ function harness(options = {}) {
       return { run: (key, work) => scheduler.run(key, () => options.serialize ? options.serialize(work) : work()) };
     } },
     './src/product/deferred-operations': { createDeferredOperations: input => {
-      options.deferredFactory?.(input); return { start() {}, dispose() {}, ...options.deferredService };
+      options.deferredFactory?.(input); return { start() {}, dispose() {}, assertNoWaiting: async () => {}, ...options.deferredService };
     } },
     './src/product/launch-coordinator': { createLaunchCoordinator: () => ({ serialize: options.serialize || (fn => fn()),
       assertMutationReady: options.assertMutationReady || (async () => {}), restoreForUninstall: options.restoreForUninstall || (async () => {}),
@@ -160,6 +160,29 @@ function saw(h, stage) { return h.logs.some(row => row.stage === stage); }
 function dialogTitle(h, text) { return h.dialogs.some(row => String(row.message || row.title).includes(text)); }
 
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
+
+test('ordinary and HoYo launch endpoints refuse pending applications before launching', async () => {
+  let launches = 0, starts = 0;
+  const h = harness({ deferredService: { assertNoWaiting: async () => { throw Object.assign(new Error('waiting'), { code: 'WAITING_OPERATION_PENDING' }); } },
+    launch: async () => { launches++; }, hoyoWorkflow: { inspect: async () => ({ gameId: 'game' }), start: async () => { starts++; } } });
+  await settle();
+  try {
+    await assert.rejects(h.handles.get('game-launch')({}, 'game'), { code: 'WAITING_OPERATION_PENDING' });
+    await assert.rejects(h.handles.get('hoyo-start')({}, 'client'), { code: 'WAITING_OPERATION_PENDING' });
+    assert.equal(launches, 0); assert.equal(starts, 0);
+  } finally { h.window?.emit('closed'); }
+});
+
+test('operation confirmation delegates to the deferred owner without nesting its game lock', async () => {
+  let input, applications = 0;
+  const h = harness({ deferredFactory: value => { input = value; }, deferredService: { apply: async (id, planId, consent) =>
+    input.run('C:\\game', async () => { applications++; return { id, planId, confirm: consent.confirm }; }) } });
+  await settle();
+  try {
+    assert.deepEqual(await h.handles.get('game-operation-apply')({}, 'game', 'plan', { confirm: true }), { id: 'game', planId: 'plan', confirm: true });
+    assert.equal(applications, 1);
+  } finally { h.window?.emit('closed'); }
+});
 
 test('launch mode saves merge current game fields and preserve another simultaneous game save', async t => {
   const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'launch-mode-merge-'));
@@ -734,7 +757,7 @@ test('HoYo IPC serializes workflow actions, rejects foreign senders and forwards
   try {
     assert.equal(saw(h, 'startup-failure'), false);
     const binding = { channel: 'official', launcher: 'fixture-launcher' }, consent = { fingerprint: 'bound-plan' };
-    const args = { discover: [], bind: ['game', binding], preview: ['game', 'install'], apply: ['game', 'plan', consent], recover: ['game'] };
+    const args = { discover: [], bind: ['game', binding], preview: ['game', 'install', { version: '0.4.7beta' }], apply: ['game', 'plan', consent], recover: ['game'] };
     for (const name of methods) {
       const invoke = h.handles.get('hoyo-' + name); assert.equal(typeof invoke, 'function');
       const before = calls.length;
