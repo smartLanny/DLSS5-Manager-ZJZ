@@ -49,6 +49,24 @@ function fixture(t, alter = value => value) {
     packages: createExternalProviderPackages({ root, currentCore, currentRuntime }) };
 }
 
+test('verified bundled Providers are usable and per-operation selection leaves global choices intact', t => {
+  const f = fixture(t), row = f.inventory.packages[0];
+  Object.assign(row, { source: 'bundled', verifiedSource: true, immutable: true });
+  fs.writeFileSync(path.join(f.root, 'inventory.json'), JSON.stringify(f.inventory));
+  const before = fs.readFileSync(path.join(f.root, 'inventory.json'), 'utf8');
+  let chosen = row.id;
+  const packages = createExternalProviderPackages({ root: f.root, currentCore: f.currentCore, currentRuntime: f.currentRuntime,
+    selectCandidate: () => chosen });
+  const selection = { api: 'dx11', architecture: 'x64', hardwareFamily: 'RTX50', loadingBackend: 'local' };
+  assert.equal(packages.load({ selection }).recipe.coreVersion, 'D15');
+  assert.equal(fs.readFileSync(path.join(f.root, 'inventory.json'), 'utf8'), before);
+  chosen = undefined;
+  assert.equal(packages.selectedId(selection), null);
+  row.verifiedSource = false;
+  fs.writeFileSync(path.join(f.root, 'inventory.json'), JSON.stringify(f.inventory));
+  assert.equal(packages.inspect().packages[0].selectable, false);
+});
+
 test('an explicitly ABI-compatible Core carries only complete whitelisted resources; Feature1-only unified3 remains refused', async t => {
   const f = fixture(t), names = require('../src/product/payload-companions').NAMES;
   for (const name of names) {

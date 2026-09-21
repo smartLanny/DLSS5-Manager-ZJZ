@@ -110,7 +110,8 @@ async function smoke() {
   check([...hoyoHost().querySelectorAll('.button.primary')].filter(visible).length === 1, 'installed HoYo uses one shared primary action');
   check(!hoyo.calls.some(row => row[0] === 'start'), 'HoYo install never starts automatically');
   const corePicker = () => hoyoHost().querySelector('[data-gp-group="route"][data-gp-field="version"]');
-  check(Boolean(corePicker()) && [...corePicker().options].filter(row => ['0.4.7beta', '0.5-dline21-unified5'].includes(row.value)).every(row => row.disabled), 'HoYo Feeder shows Core choices with honest compatibility limits');
+  check(Boolean(corePicker()) && [...corePicker().options].some(row => row.value === '0.5-dline21-unified5' && !row.disabled), 'latest Core is selectable for explicit compatibility preview');
+  check([...corePicker().options].some(row => row.value === '0.4.7beta' && row.disabled), 'Feature1-only historical Core remains unavailable for external Provider pairing');
   const hoAssessment = mock.assessments['fixture-hoyo'];
   hoAssessment.layout.inputRoute = 'native'; hoAssessment.game.nativeDlssAvailable = true; hoAssessment.game.feeder = null;
   await hoyoHost().querySelector('.hoyo-settings-host').__gpController.refresh();

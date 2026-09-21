@@ -133,7 +133,8 @@
     }
     function versionRows() {
       const special = specialRoute(), info = special ? specialInfo(special) : null;
-      return special ? [{ id: info.packageId || '', label: `${special === 'vulkan' ? 'Vulkan' : `${apiLabel(info.api || effectiveApi())} Feeder`} · ${info.coreVersion || '固定配套'}`, ready: info.selectionAvailable ?? info.available }] : data.coreVersions || [];
+      return special ? [{ id: info.packageId || '', label: `${special === 'vulkan' ? 'Vulkan' : `${apiLabel(info.api || effectiveApi())} Feeder`} · ${info.coreVersion || '固定配套'}`, ready: info.selectionAvailable ?? info.available },
+        ...(data.coreVersions || []).filter(row => row.id === '0.5-dline21-unified5')] : data.coreVersions || [];
     }
     function mainVersions() {
       const installed = data.deployment?.version || data.game.addonVersion;
@@ -145,9 +146,9 @@
       return `<details class="gp-section gp-rollback" data-gp-detail="rollback"><summary>历史版本与回退</summary><p class="gp-caption">仅在需要回退时选择；个人画面设置会保留。</p>${selectField('route', 'version', '回退到指定 Core', option('', '选择历史版本', '') + rows.map(row => option(row.id, coreLabel(row.label || row.id), currentVersion(), row.ready === false)).join(''), busy)}</details>`;
     }
     function currentVersion() {
+      if (Object.hasOwn(draft, 'version')) return draft.version || '';
       const special = specialRoute();
       if (special) return specialInfo(special).packageId || '';
-      if (Object.hasOwn(draft, 'version')) return draft.version || '';
       if (data.game.installed) return data.deployment?.version || data.game.addonVersion || data.defaults?.version || '';
       if (data.game.existingInstallation?.detected === true) return '';
       const available = (data.coreVersions || []).filter(row => row.ready !== false);
@@ -304,7 +305,9 @@
       if (!changed) return `<div class="gp-component-stack ${saved.status === 'ready' ? 'is-ready' : 'needs-attention'}"><div><small>自动组件搭配</small><strong>${esc(saved.title)}</strong><span>${esc(saved.summary)}</span></div><div class="gp-component-stack-items">${(saved.items || []).filter(row => row.key !== 'api').map(row => `<span class="is-${esc(row.status || 'pending')}"><b>${esc(row.label)}</b>${esc(row.value)}</span>`).join('')}</div><p>${esc(saved.reason || '')}</p></div>`;
       const api = effectiveApi(), route = selected('route', saved.route || 'auto'), version = currentVersion();
       const input = route === 'feeder' || ['dx9','dx10'].includes(api) ? 'DLSS5 Feeder' : api === 'dx11' ? 'DLSS5 Bridge' : api === 'vulkan' ? 'Vulkan 专用配套' : '游戏原生 DLSS 输入';
-      const combination = input === 'DLSS5 Feeder' ? `${input} + 专用 Core / 运行库` : input === 'Vulkan 专用配套' ? input : `${coreLabel(version || '待选 Core')} + ${input} + 显卡运行库`;
+      const combination = version === '0.5-dline21-unified5'
+        ? `${coreLabel(version)} + ${input} + 显卡运行库（兼容路线为实验支持）`
+        : input === 'DLSS5 Feeder' ? `${input} + 专用 Core / 运行库` : input === 'Vulkan 专用配套' ? input : `${coreLabel(version || '待选 Core')} + ${input} + 显卡运行库`;
       return `<div class="gp-component-stack needs-attention"><div><small>修改后的预期搭配</small><strong>${esc(apiLabel(api))} · ${esc(input)}</strong><span>${esc(combination)}</span></div><p>预览时会重新校验 Core、接口与组件摘要；不匹配时不会写入游戏。</p></div>`;
     }
     function installation() {
@@ -315,11 +318,11 @@
       const pending = data.operation?.pending || data.deployment?.needsRecovery;
       if (options.hoyoSettingsOnly) {
         const current = data.deployment?.version || game.addonVersion || game.feeder?.coreVersion || '待确认';
-        const pickerRows = special ? [...versions, ...(data.coreVersions || []).filter(row => STANDARD_CORES.includes(row.id)).map(row => ({ ...row, ready: false }))] : versions;
+        const pickerRows = special ? [...versions, ...(data.coreVersions || []).filter(row => STANDARD_CORES.includes(row.id) && !versions.some(item => item.id === row.id)).map(row => ({ ...row, ready: false }))] : versions;
         const picker = `<section class="gp-section"><div class="gp-controls">${selectField('route', 'version', 'AI 增强组件',
           (pickerRows.some(row => row.id === version) ? '' : option(version, `${coreLabel(version)} · 来源待检查`, version, true)) +
           pickerRows.map(row => option(row.id, coreLabel(row.label || row.id), version, row.ready === false)).join(''), busy || pending,
-          special ? '当前专用输入配套不支持列表中的通用 Core；保留专用版本，切换输入路线前需先恢复原配套。' : versions.find(row => row.id === version)?.notes || '切换前会预览本次文件变更；保留此客户端的绑定和个人配置。')}</div></section>`;
+          special ? '选择最新 0.5 后自动匹配输入组件（实验）；已有固定配套切换前先恢复，避免混装。' : versions.find(row => row.id === version)?.notes || '切换前会预览本次文件变更；保留此客户端的绑定和个人配置。')}</div></section>`;
         return `<p class="gp-caption">当前 Core：${esc(coreLabel(current))} · 此客户端独立配置</p>${picker}${hotkeySection()}${rollbackVersions()}${options.maintenanceContent?.() || ''}`;
       }
       const attention = readinessNeedsAction(), readinessNotice = readinessNeedsNotice();
@@ -337,7 +340,8 @@
       const existingNames = existing?.files?.map(row => row.name).slice(0, 6) || [];
       return `<section class="gp-section gp-install-section"><div class="gp-controls">
         ${selectField('route', 'api', '游戏 API', option('auto', automaticLabel, api) + ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].map(key => option(key, API[key] || key.toUpperCase(), api)).join(''), busy)}
-        ${selectField('route', 'version', 'AI 增强组件', (!visibleVersion ? option('', '请选择 AI 增强组件', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy || Boolean(special))}</div>
+        ${selectField('route', 'version', 'AI 增强组件', (!visibleVersion ? option('', '请选择 AI 增强组件', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy)}</div>
+        ${visibleVersion === '0.5-dline21-unified5' ? '<p class="gp-caption">兼容输入自动匹配：原生可用时不加桥；需要时补齐接口匹配的 Bridge / Feeder。兼容路线属于实验支持，应用前会显示实际文件，不影响其他游戏。</p>' : ''}
         ${manager.pickRuntimeDlc && (options.runtimeRequired?.(currentVersion()) || resumeAfterImport && error && /运行库|DLC|nvngx_dlssnr/i.test(message)) ? `<div class="gp-small-actions">${act('import-runtime', '导入运行库 DLC', busy, 'subtle')}<small>保留当前选择；导入成功后继续上次应用。</small></div>` : ''}
         ${(data.failures || []).filter(row => ['operation', 'layout', 'defaults'].includes(row.section)).map(row => `<p class="gp-message error">检查未完成：${esc(row.message)}。处理后点击“重新检查”。</p>`).join('')}
         <div class="gp-compatibility ${pending || readinessNotice || !apiReady() ? 'needs-attention' : ''}" role="status"><strong>兼容性</strong><span>${esc(status)}</span>${pending ? act('recover-operation', '恢复操作', busy, 'subtle') : attention && readinessActionName() !== 'resolve-readiness' ? act(readinessActionName(), readinessActionLabel(), busy, 'subtle') : ''}</div>

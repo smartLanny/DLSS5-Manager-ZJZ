@@ -118,7 +118,8 @@ function createExternalProviderPackages(options = {}) {
   function packageFiles(data, row) {
     if (!ID.test(row?.id || '') || typeof row.version !== 'string' || !row.version || row.version.length > 100 ||
         !['x86', 'x64', 'mixed'].includes(row.architecture) || row.interface !== CONTRACT.interface ||
-        !['catalog', 'user-imported'].includes(row.source) || !['candidate', 'blocked'].includes(row.validation) ||
+        !['catalog', 'user-imported', 'bundled'].includes(row.source) || !['candidate', 'blocked'].includes(row.validation) ||
+        row.source === 'bundled' && (row.verifiedSource !== true || row.immutable !== true) ||
         !Array.isArray(row.files) || !row.files.length || row.files.length > 128)
       fail('EXTERNAL_PROVIDER_PACKAGE', '外部 Provider 库存条目不完整。');
     const byName = new Map();
@@ -344,7 +345,7 @@ function createExternalProviderPackages(options = {}) {
   function load(input = {}) {
     const data = inventory(), selection = input.selection || input;
     const selected = input.id || input.providerId || (selection.api || input.gameApi
-      ? selectedFor(data, { ...selection, api: selection.api || input.gameApi }) : data.selected.externalProvider);
+      ? selectedId({ ...selection, api: selection.api || input.gameApi }) : selectedId());
     if (!selected) fail('EXTERNAL_PROVIDER_NOT_SELECTED', '尚未选择外部 Provider 配套。');
     const row = providerRows(data).find(value => value.id === selected);
     if (!row) fail('EXTERNAL_PROVIDER_SELECTION_INVALID', '已选 Provider 不在组件库存中，未回退到旧 Core。');
@@ -460,6 +461,8 @@ function createExternalProviderPackages(options = {}) {
     return task;
   }
   function selectedId(selection) {
+    const candidate = options.selectCandidate?.(selection);
+    if (candidate !== undefined) return candidate;
     const data = inventory();
     if (selection && typeof selection === 'object') return selectedFor(data, selection);
     return selection ? selectedByApi(data)[selection] || null : data.selected.externalProvider || Object.values(selectedByApi(data))[0] || null;

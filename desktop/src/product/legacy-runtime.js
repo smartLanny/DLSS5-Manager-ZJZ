@@ -23,7 +23,8 @@ function createLegacyRuntime(options = {}) {
   const externalProviders = options.externalProviders || require('./external-provider-package').createExternalProviderPackages({
     root: options.componentLibraryRoot || path.join(options.userData || options.appDir || root, 'component-library'),
     currentCore: options.currentCore || options.getCurrentCore,
-    currentRuntime: options.currentRuntime || options.getCurrentRuntime
+    currentRuntime: options.currentRuntime || options.getCurrentRuntime,
+    selectCandidate: options.selectCandidate
   });
   function pool() {
     const manifest = regularJson(path.join(root, 'manifest.json'), 512 * 1024);

@@ -122,3 +122,16 @@ test('imported official Bridge exposes a Vulkan candidate through the same inter
   assert.deepEqual(rows[0].gameApis, ['dx11', 'vulkan']);
   assert.equal(rows[0].contract.state, 'candidate');
 });
+
+test('choosing exact Unified5 opts into the bundled official candidate without changing legacy defaults', t => {
+  const f = fixture(t), core = require('../src/product/unified5-core');
+  Object.assign(f.candidate, { source: 'bundled', sourceType: 'official-release', verifiedSource: true, immutable: true, defaultEligible: false });
+  fs.writeFileSync(path.join(f.componentRoot, 'inventory.json'), JSON.stringify({ schemaVersion: 1, packages: [f.candidate] }));
+  const trustedComponents = new Map([[f.candidate.id, { ...f.candidate, sha256: f.addonSha }]]);
+  const selected = { version: core.ID, versionInfo: { id: core.ID, inputInterfaces: ['NGX-D3D12-Feature1'] }, addon: { actual: core.HASHES['zh-CN'] } };
+  const options = { api: 'dx11', componentRoot: f.componentRoot, trustedComponents };
+  assert.equal(registry.selectNativeComponents(f.payloadDir, selected, options).components.bridge, f.candidate.id);
+  assert.equal(registry.selectNativeComponents(f.payloadDir, payload(f.versionInfo), options).components, undefined);
+  assert.equal(registry.selectNativeComponents(f.payloadDir, selected, { ...options, api: 'dx12' }).components.bridge, null);
+  assert.equal(registry.selectNativeComponents(f.payloadDir, selected, { ...options, trustedComponents: null }).components, undefined);
+});

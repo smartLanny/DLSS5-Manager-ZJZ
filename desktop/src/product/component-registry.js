@@ -79,7 +79,8 @@ function selectNativeComponents(payloadDir, payload, { api, bridgeId, installedH
   const parts = value => String(value).match(/\d+/g)?.map(Number) || [0];
   const newer = (left, right) => { const a=parts(left.version), b=parts(right.version); for(let i=0;i<Math.max(a.length,b.length);i+=1) {
     if ((a[i] || 0) !== (b[i] || 0)) return (b[i] || 0) - (a[i] || 0); } return String(right.version).localeCompare(String(left.version)); };
-  const automatic = imports.filter(row => row.defaultEligible && row.verifiedSource && row.immutable && row.compatible && row.ready && row.gameApis.includes('dx11')).sort(newer)[0];
+  const experimentalCore = require('./experimental-core-routing').isUnified5(payload.version, payload.addon?.actual);
+  const automatic = imports.filter(row => (row.defaultEligible || experimentalCore) && row.verifiedSource && row.immutable && row.compatible && row.ready && row.gameApis.includes('dx11')).sort(newer)[0];
   const imported = bridgeId ? imports.find(row => row.id === bridgeId) :
     (installedHash ? imports.find(row => row.installed) : automatic);
   if (imported) {

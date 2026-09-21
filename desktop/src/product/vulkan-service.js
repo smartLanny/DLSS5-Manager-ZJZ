@@ -143,7 +143,7 @@ function createVulkanService(options = {}) {
     const runtimeFile = recipeFile('vulkan-runtime'), layerFile = recipeFile('vulkan-reshade');
     let external = null;
     if (!row || row.sourceKind === 'external-provider')
-      external = options.getExternalProviderPackage?.(game, row ? { providerId: row.providerPackageId, providerRouteId: row.providerRouteId } : {}) || null;
+      external = options.getExternalProviderPackage?.(game, row ? { providerId: row.providerPackageId, providerRouteId: row.providerRouteId, coreVersion: row.coreVersion } : {}) || null;
     if (row?.sourceKind === 'external-provider' && !external)
       fail('VULKAN_PACKAGE_MISSING', '原外部 Provider Vulkan 配套当前不完整；已安装 profile 仍可恢复。');
     const recipe = external?.recipe || readJson(runtimeFile), layer = readJson(layerFile);
