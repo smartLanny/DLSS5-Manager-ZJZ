@@ -62,6 +62,22 @@ test('a plain ReShade at the existing D3D12 entry is replaced and restored at it
   unchanged(f); assert.equal(fs.existsSync(path.join(f.exeDir, 'dxgi.dll')), false);
 });
 
+test('adopted D3D12 baseline can switch both ways, update and repair, then restore at its original entry', async t => {
+  const f = await setup(t), d3d12 = path.join(f.exeDir, 'd3d12.dll'), dxgi = path.join(f.exeDir, 'dxgi.dll');
+  fs.renameSync(dxgi, d3d12);
+  const original = f.originals.get('dxgi.dll'); f.originals.delete('dxgi.dll'); f.originals.set('d3d12.dll', original);
+  const proposal = await f.queue.submit(f.id, request);
+  await f.queue.apply(f.id, proposal.plan.planId, consent(proposal.plan));
+  await f.apply({ proxyEntry: 'dxgi' }); assert.equal(fs.existsSync(d3d12), false);
+  const receipt = readManifest(f.gameRoot); assert.equal(receipt.files.filter(row => row.kind === 'reshade').length, 1);
+  assert.equal(path.basename(receipt.files.find(row => row.kind === 'reshade').rel), 'd3d12.dll', 'baseline stays bound to its original path');
+  await f.apply({ version: 'fixture-core-1' });
+  const before = hashFile(dxgi); fs.unlinkSync(dxgi);
+  await f.apply({ repair: true }); assert.equal(hashFile(dxgi), before);
+  await f.apply({ proxyEntry: 'd3d12' }); await f.apply({ proxyEntry: 'dxgi' });
+  await f.apply({ uninstall: 'restore' }); unchanged(f); assert.equal(fs.existsSync(dxgi), false);
+});
+
 test('missing Core and missing host can be adopted without treating a leftover chain as an installed version', async t => {
   const f = await setup(t, null), result = await f.queue.submit(f.id, request);
   assert.equal(result.needsAttention, true); assert.equal(result.plan.adoption.hostState, 'missing');

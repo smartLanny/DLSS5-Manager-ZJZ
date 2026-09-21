@@ -32,6 +32,16 @@ const gameWorkKey = id => 'game:' + path.resolve(service.gameDirectory(id)).toLo
 async function assertNoWaitingOperation(id) {
   await deferredOperations?.assertNoWaiting(id);
 }
+async function assertEnvironmentRestorable(id) {
+  const deployment = await service.inspectDeployment(id), settings = await launchCoordinator.inspect(id), legacy = await srModel.migrationInfo(id);
+  const fg = settings.fgComponents || {};
+  // An interrupted cleanup owns the same generic file WAL as installation.
+  // Let that owner recover its own rollback when no managed installation remains.
+  const cleanupPending = (deployment.needsRecovery || deployment.pending) && (await environment.inspect(id)).pending;
+  if (deployment.installed || (deployment.needsRecovery || deployment.pending) && !cleanupPending || await launchSettings.hasOwnedState(id) || legacy?.baselineCaptured ||
+      ['installed', 'managed', 'receipt', 'needsRecovery', 'needsCleanup', 'fileRecoveryPending', 'fileOperationActive', 'migrationPending'].some(key => fg[key]))
+    throw Object.assign(new Error('请先卸载当前配套，再恢复隔离文件。'), { code: 'ENVIRONMENT_RESTORE_FIRST' });
+}
 function coordinateDriver(adapter) {
   return Object.fromEntries(Object.entries(adapter).map(([name, value]) => [name, typeof value === 'function'
     ? (...args) => workScheduler.run('driver:nvidia-drs', () => value.apply(adapter, args)) : value]));
@@ -453,10 +463,9 @@ function registerIpc() {
   });
   call('game-environment-apply', async (id, planId, names) => service.refreshAfterMutation(await environment.apply(id, planId, names)));
   call('game-environment-restore', async id => {
+    await assertEnvironmentRestorable(id);
     const recovered = await environment.recoverPending(id);
     await preparation.assertReady(id);
-    await launchCoordinator.restoreForUninstall(id);
-    await service.restoreManagedForCleanup(id);
     return service.refreshAfterMutation({ ...await environment.restore(id), interruptedFilesRecovered: recovered.recovered });
   });
   call('game-feeder-inspect', id => service.inspectFeeder(id));
@@ -788,7 +797,7 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
     launchCoordinator = createLaunchCoordinator({ service, settings: launchSettings, legacySrModel: srModel, guards: installGuards,
       components: fgComponents, explicitApply: true, launchGame: (id, controls) => launchSessions.start(id, controls) });
     environment = require('./src/product/game-environment').createGameEnvironment({ gameDirectory: id => service.gameDirectory(id),
-      gameExecutable: id => service.gameExecutable(id), guards: installGuards });
+      gameExecutable: id => service.gameExecutable(id), guards: installGuards, assertRestorable: assertEnvironmentRestorable });
     const processes = require('./src/product/game-processes').createGameProcesses();
     const nativeRuntimeVerification = require('./src/product/runtime-verification').createRuntimeVerification({ layout: id => service.getLayout(id), processes, modules: id => service.gameModuleManifest(id) });
     const legacyRuntimeVerification = require('./src/product/legacy-runtime-verification').createLegacyRuntimeVerification({ appDir: __dirname, resourcesPath: process.resourcesPath,

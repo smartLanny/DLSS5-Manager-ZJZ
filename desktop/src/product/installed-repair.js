@@ -44,8 +44,7 @@ async function inspectInstalledRepair({ gameDir, exePath, sourceRoots = [] }) {
   for (const row of manifest.files.filter(row => KINDS.has(row.kind))) {
     if (typeof row.rel !== 'string' || path.isAbsolute(row.rel) || !HASH.test(row.installedSha256 || ''))
       fail('ERR_BACKUP_INVALID', '安装记录缺少可核对的组件身份。');
-    const targetRel = row.kind === 'reshade' && manifest.reshadeRoute === 'd3d12' && path.basename(row.rel).toLowerCase() === 'dxgi.dll'
-      ? path.join(path.dirname(row.rel), 'd3d12.dll') : row.rel;
+    const targetRel = require('./native-loader-target').nativeTargetRel(manifest, row);
     const target = path.resolve(gameDir, targetRel);
     if (!inside(gameDir, target) || path.dirname(target).toLowerCase() !== path.dirname(exePath).toLowerCase())
       fail('ERR_BACKUP_INVALID', '安装记录中的组件不属于当前游戏程序目录。');

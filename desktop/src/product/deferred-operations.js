@@ -89,8 +89,20 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
   function attention(plan, request, consent) {
     const choices = (plan.deployment?.addonCompatibility?.decisions || []).some(row =>
       row.moduleMayLoad && !row.mandatory && !['core', 'native-carrier'].includes(row.classification) && row.action === 'isolate' && !request.addonKeep);
-    return Boolean(plan.blockers?.length || choices || plan.deployment?.requiresAntiCheat && !consent.allowAntiCheat ||
-      plan.requiresAdoptionConfirmation && consent.adoptionFingerprint !== plan.adoption?.fingerprint);
+    return Boolean(plan.blockers?.length || choices && !plan.nrConflicts?.required || plan.deployment?.requiresAntiCheat && !consent.allowAntiCheat ||
+      plan.requiresAdoptionConfirmation && consent.adoptionFingerprint !== plan.adoption?.fingerprint ||
+      plan.nrConflicts?.required && consent.nrConflictFingerprint !== nrConflictFingerprint(plan));
+  }
+  function nrConflictFingerprint(plan) {
+    if (!plan.nrConflicts?.required) return null;
+    // A queued consent covers the reviewed identities, never just a filename.
+    // Operation IDs may change when re-previewed after exit, so bind the actual
+    // conflict files and their before/after hashes instead of the transient ID.
+    const paths = new Set(plan.nrConflicts.files.map(row => path.resolve(row.path).toLowerCase()));
+    const compatibility = plan.deployment?.addonCompatibility;
+    return hash({ conflicts: plan.nrConflicts,
+      changes: (plan.changes || []).filter(row => row.path && paths.has(path.resolve(row.path).toLowerCase())),
+      sourceFingerprint: compatibility?.sourceFingerprint || null, configFingerprint: compatibility?.configFingerprint || null });
   }
   async function execute(id, request, consent) {
     await beforeApply(id);
@@ -116,11 +128,11 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
         if (request.uninstall || request.repair) throw e;
         const before = await snapshot(id, t);
         const preparation = await (operations.prepareForWaiting ? operations.prepareForWaiting(id, request) : operations.preview(id, request));
-        if (preparation.requiresAdoptionConfirmation) {
+        if (preparation.requiresAdoptionConfirmation || preparation.nrConflicts?.required) {
           const plan = await operations.preview(id, request, { readOnlyWhileRunning: true });
           plan.waitingConfirmation = true;
           waitingPlans.set(plan.planId, { id, plan, before, expires: Date.now() + 10 * 60000 });
-          return { needsAttention: true, plan, notice: '请先核对旧安装接管；确认后等待游戏退出再应用，完成后不会自动启动。' };
+          return { needsAttention: true, plan, notice: '请先核对旧安装及插件隔离；确认后等待游戏退出再应用，完成后不会自动启动。' };
         }
         if (attention(preparation, request, consent)) return { needsAttention: true, plan: preparation, notice: '所需组件或确认项尚未准备完成，未加入等待队列。' };
         const changed = hash(before) !== hash(await snapshot(id, t));
@@ -162,7 +174,8 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
       const before = await snapshot(id, t);
       if (hash(before) !== hash(saved.before)) fail('WAITING_CHANGED', '游戏或配置已在确认前改变，请重新预览。');
       const fresh = await operations.preview(id, saved.plan.request, { readOnlyWhileRunning: true });
-      const confirmed = { allowAntiCheat: consent.allowAntiCheat === true, adoptionFingerprint: saved.plan.adoption?.fingerprint };
+      const confirmed = { allowAntiCheat: consent.allowAntiCheat === true, adoptionFingerprint: saved.plan.adoption?.fingerprint,
+        nrConflictFingerprint: nrConflictFingerprint(saved.plan) };
       if (fresh.fingerprint !== saved.plan.fingerprint || attention(fresh, fresh.request, confirmed))
         fail('WAITING_CHANGED', '旧安装、来源或确认项已经改变，请重新预览。');
       let running = false;

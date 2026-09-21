@@ -26,7 +26,7 @@ function declaration(text) {
   if (/\b(?:NRBeforeSR|NR[-_ ]before[-_ ]SR)\b/i.test(text)) return 'core';
   if (/\b(?:dlss5-native-carrier|r3-nr-native-neutral)\b/i.test(text)) return 'native-carrier';
   if (/\b(?:renodx-dlss5|DLSS5 Tool)\b/i.test(text)) return 'renodx-dlss5';
-  if (/\b(?:RenoDX[-_ ]Generic(?:[-_ ]NR)?|Generic[-_ ]NR)\b/i.test(text)) return 'renodx-generic-nr';
+  if (/\b(?:RenoDX[-_ ]Generic(?:[-_ ]NR)?|Generic[-_ ]NR|RenoDX[-_ ]NR|renodx[-_ ]dlssnr)\b/i.test(text)) return 'renodx-generic-nr';
   if (/\b(?:MFG[-_ ]?Unlock|MFGAdaUnlock|RTX40MFG)\b/i.test(text)) return 'mfgunlock';
   if (/\bRenoDX\b/i.test(text)) return /\b(?:HDR(?:10)?|tone[-_ ]?mapping|color[-_ ]grading)\b/i.test(text) ? 'renodx-hdr' : 'renodx-other';
   if (/\b(?:OptiScaler|REFramework|Special K|RTSS|RivaTuner|Display Depth|Frame Monitor)\b/i.test(text)) return 'other-mod';
@@ -41,7 +41,7 @@ function filenameClue(name) {
   if (/(?:overlay|hud|reframework|rtss|special[-_ ]?k|frame[-_ ]?monitor)/i.test(name)) return 'other-mod';
   return null;
 }
-const METADATA_MARKERS = ['NRBeforeSR', 'NR-before-SR', 'dlss5-native-carrier', 'renodx-dlss5', 'DLSS5 Tool', 'RenoDX', 'Generic NR',
+const METADATA_MARKERS = ['NRBeforeSR', 'NR-before-SR', 'dlss5-native-carrier', 'renodx-dlss5', 'DLSS5 Tool', 'RenoDX NR', 'renodx-dlssnr', 'RenoDX', 'Generic NR',
   'MFG Unlock', 'MFGUnlock', 'RTX40MFG', 'HDR', 'Color Grading', 'OptiScaler', 'REFramework', 'Special K', 'RTSS', 'ReShade'];
 function clues(name, probe, metadata) {
   const evidence = [], metadataClass = declaration(metadata.join(' '));

@@ -593,10 +593,10 @@ async function smoke() {
 
   await scenario('DX12 入口独立选择 · UI fixture', value => {
     value.game.chosen.apiResolution.api = value.api.effectiveApi = 'dx12'; value.api.capabilities = ['dx12'];
-  }); await tab('maintenance'); set('route', 'proxyEntry', 'd3d12');
+  }); await tab('overview'); click('switch-proxy');
   await preview(); assert(JSON.stringify(mock.plan.request) === JSON.stringify({ proxyEntry: 'd3d12' }) && state().data.api.effectiveApi === 'dx12', 'proxy filename is independent from graphics API and Core version'); click('modal-cancel'); discard();
   await scenario('DX11 入口不伪造 API · UI fixture'); await tab('maintenance');
-  assert(field('route', 'proxyEntry').querySelector('option[value="d3d12"]').disabled, 'DX11 cannot choose the DX12-only proxy entry');
+  assert(!button('switch-proxy') && !field('route', 'proxyEntry'), 'DX11 has no DX12-only proxy control');
   set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview'); set('route', 'api', 'dx12');
   assert(!state().draft.components?.bridge && state().draft.api === 'dx12', 'moving from DX11 to DX12 clears only the inapplicable bridge draft'); discard();
 

@@ -99,6 +99,13 @@ function createExternalRuntime(options) {
     if (role === 'source-addon') return sourceAllows(t.sourceBinding, absolute, t.dir);
     if (role === 'receipt') return key(absolute) === key(t.receipt);
     if (role === 'manifest') return key(absolute) === key(manifestPath(t.gameRoot));
+    if (role === 'conflict-backup') {
+      const match = path.relative(t.gameRoot, absolute).match(/^_DLSS5_Backup[\\/]conflicts[\\/]([a-f0-9-]{36})[\\/](.+)$/i);
+      if (!match || !UUID.test(match[1])) return false;
+      const original = path.resolve(t.gameRoot, match[2]);
+      return inside(t.gameRoot, original) && key(path.dirname(original)) === key(t.dir) &&
+        (allowed(t, original, 'user-addon') || allowed(t, original, 'user-dependency'));
+    }
     if (role === 'original-backup') {
       const rel = path.relative(t.gameRoot, absolute), match = rel.match(/^_DLSS5_Backup[\\/]xiaofeng-originals[\\/]([a-f0-9-]{36})[\\/](.+)$/i);
       if (!match || !UUID.test(match[1])) return false;
@@ -173,6 +180,23 @@ function createExternalRuntime(options) {
             !proof || proof.before !== row.sha256 || proof.after !== null || proof.snapshot !== row.snapshot)
           fail('RECORD', '插件隔离恢复映射与原事务不一致。');
         isolated.add(key(row.path));
+      }
+    }
+    if (value.runtimeIsolatedAddons !== undefined) {
+      if (!Array.isArray(value.runtimeIsolatedAddons) || value.runtimeIsolatedAddons.length > 128) fail('RECORD', '外置插件隔离记录无效。');
+      const seen = new Set();
+      for (const row of value.runtimeIsolatedAddons) {
+        if (!row || !path.isAbsolute(row.path || '') || key(path.dirname(row.path)) !== key(t.runtimeDir) ||
+            !['user-addon', 'user-dependency'].includes(row.role) || !allowed(t, row.path, row.role) || !HASH.test(row.sha256 || '') ||
+            !UUID.test(row.operation || '') || !/^before\/[0-9]+\.bin$/.test(row.snapshot || '') || seen.has(key(row.path) + row.sha256))
+          fail('RECORD', '外置隔离文件没有绑定当前运行目录。');
+        const original = readJson(path.join(t.ownerRoot, 'history', row.operation, 'operation.json'));
+        const proof = original?.files?.find(item => item.role === row.role && key(item.file) === key(row.path));
+        if (!original || original.product !== PRODUCT || original.id !== t.id || key(original.exe || '.') !== key(t.exe) ||
+            key(original.gameRoot || '.') !== key(t.gameRoot) || (original.profileId || null) !== (t.profileId || null) ||
+            !proof || proof.before !== row.sha256 || proof.after !== null || proof.snapshot !== row.snapshot)
+          fail('RECORD', '外置插件隔离映射与原事务不一致。');
+        seen.add(key(row.path) + row.sha256);
       }
     }
     if (value.origin === 'direct' && (!UUID.test(value.initialOperation || '') || !value.initialProxy ||
@@ -420,7 +444,7 @@ function createExternalRuntime(options) {
         const row = wal.files[i];
         if (row.role === 'source-addon') await plan.beforeSourceIsolation?.();
         if (plan.sourceGuard && (row.role === 'game-proxy' || row.role === 'reshade-config' && key(row.file) === key(path.join(t.dir, 'ReShade.ini'))))
-          await plan.sourceGuard();
+          await plan.sourceGuard({ published: wal.files.slice(0, i) });
         const current = await digest(row.file);
         if (current !== row.before) fail('FILE_CHANGED', '部署开始后目标被外部修改，未覆盖。', { file: row.file });
         if (row.after !== row.before) {
@@ -567,6 +591,85 @@ function createExternalRuntime(options) {
     await guard();
     return { rows, directNames, guard, snapshot, compatibility, isolated, binding };
   }
+  async function runtimeAddonPolicy(t, game, saved, request) {
+    const snapshot = await snapshotAddonLoadingLayout({ exeDir: t.dir, gameId: game.id, architecture: 64, environment: options.environment || process.env });
+    const recorded = saved.files.filter(row => !row.mutable).map(row => {
+      const file = path.join(t.runtimeDir, row.name);
+      const prior = saved.runtimeCompatibility?.decisions?.find(item => key(item.path) === key(file) && item.sha256 === row.sha256) ||
+        saved.compatibility?.decisions?.find(item => row.originPath && key(item.path) === key(row.originPath) && item.sha256 === row.originHash);
+      // Older receipts already record the user's accepted retained file set.
+      // Continue that exact identity; declarations of a second NR path still
+      // take precedence over a keep identity in planAddonCompatibility.
+      const legacyKeep = !prior && ['user-addon', 'user-dependency'].includes(row.role);
+      return { path: file, sha256: row.sha256, role: row.role === 'managed' ? row.kind : row.role, owned: true, owner: PRODUCT,
+        ...(prior?.action === 'keep' || legacyKeep ? { compatibility: 'compatible', compatibilitySource: legacyKeep || prior.explicitKeep ? 'user-choice' : 'verified-profile' } : {}) };
+    });
+    const knownComponents = [...recorded, ...(request.knownComponents || []), ...(typeof options.knownComponents === 'function'
+      ? await options.knownComponents(game) : options.knownComponents || [])];
+    const compatibility = planAddonCompatibility(snapshot, { knownComponents, keep: request.addonKeep || request.keepAddons || [],
+      selectedComponents: knownComponents.filter(row => row.owned && row.path &&
+        ['addon', 'core', 'carrier', 'native-carrier', 'provider', 'feeder-provider'].includes(row.role || row.kind))
+        .map(row => ({ path: row.path, sha256: row.sha256 })) });
+    if (compatibility.blockers.length) fail('SOURCE_POLICY', '插件隔离或保留选择需要重新核对。', { compatibility });
+    const isolated = [...compatibility.isolate, ...compatibility.retire];
+    for (const row of isolated) if (key(path.dirname(row.path)) !== key(t.runtimeDir) ||
+        !allowed(t, row.path, ADDON.test(row.path) ? 'user-addon' : 'user-dependency'))
+      fail('SOURCE_LAYOUT', '新增外置插件未绑定当前运行目录，未扩大管理范围。');
+    const guard = async ({ published = [] } = {}) => {
+      if (!published.length) return assertAddonSnapshot(snapshot, { environment: options.environment || process.env });
+      const changed = file => published.find(row => key(row.file) === key(file));
+      for (const row of [...snapshot.profile.identities.map(row => ({ path: row.file, sha256: row.sha256 })), ...snapshot.files])
+        if (await digest(row.path) !== (changed(row.path) ? changed(row.path).after : row.sha256))
+          fail('PLAN_CHANGED', '外置插件或加载配置在部署期间变化，未继续。', { file: row.path });
+      const inventory = new Map(snapshot.inventory.map(row => [row.name, row.kind]));
+      for (const row of published) if (key(path.dirname(row.file)) === key(snapshot.profile.addonDir) && ADDON.test(row.file)) {
+        if (row.after === null) inventory.delete(path.basename(row.file)); else inventory.set(path.basename(row.file), 'file');
+      }
+      const actual = (await fsp.readdir(snapshot.profile.addonDir, { withFileTypes: true })).filter(row => ADDON.test(row.name));
+      if (actual.length !== inventory.size || actual.some(row => inventory.get(row.name) !== (row.isFile() ? 'file' : 'other')))
+        fail('PLAN_CHANGED', '外置插件目录在部署期间变化，未继续。');
+    };
+    return { compatibility, isolated, guard, snapshot };
+  }
+  async function isolateRuntimeAddons(t, policy, saved, operation, operations, change) {
+    const records = [...(saved.runtimeIsolatedAddons || [])];
+    for (const row of policy.isolated) {
+      const role = ADDON.test(row.path) ? 'user-addon' : 'user-dependency', index = operations.length;
+      await change(row.path, role, null, undefined, null);
+      if (!records.some(item => key(item.path) === key(row.path) && item.sha256 === row.sha256))
+        records.push({ path: row.path, role, sha256: row.sha256, operation, snapshot: 'before/' + index + '.bin',
+          reason: row.reason, classification: row.classification, mandatory: row.mandatory, originalOwned: row.owned });
+    }
+    return records;
+  }
+  function isolatedRuntimeConfig(t, config, policy) {
+    if (!policy?.isolated.some(row => row.explicit)) return config;
+    const isolated = new Set(policy.isolated.map(row => key(row.path)));
+    return externalConfig(config, t.runtimeDir, options.environment || process.env, {
+      directLoads: policy.snapshot.profile.directLoads.filter(row => !isolated.has(key(row.path))).map(row => path.basename(row.path)) });
+  }
+  async function transferIsolation(t, records, manifest, operations, change) {
+    const transfers = [];
+    for (const row of records) {
+      const restorePath = path.join(t.dir, path.basename(row.path)), sourceRel = path.relative(t.gameRoot, restorePath);
+      const role = ADDON.test(restorePath) ? 'user-addon' : 'user-dependency';
+      if (!allowed(t, restorePath, role) || await digest(restorePath) !== null || operations.some(item => key(item.file) === key(restorePath) && item.after !== null))
+        fail('DIRECT_LOCAL_CONFLICT', '隔离插件的新恢复位置已被占用，未覆盖。', { file: restorePath });
+      const duplicate = manifest.conflicts.find(item => key(path.join(t.gameRoot, item.sourceRel)) === key(restorePath));
+      if (duplicate) fail('DIRECT_LOCAL_CONFLICT', '多个隔离插件映射到同一恢复位置，保留原备份。', { file: restorePath });
+      const backup = path.join(t.gameRoot, '_DLSS5_Backup', 'conflicts', manifest.installId, sourceRel);
+      if (await digest(backup) !== null) fail('BACKUP_CONFLICT', '插件隔离备份位置已被占用，未覆盖。', { file: backup });
+      const current = operations.find(item => key(item.file) === key(row.path) && item.before === row.sha256 && item.after === null);
+      const source = current ? row.path : historyFile(t, row.operation, row.snapshot);
+      if (await digest(source) !== row.sha256) fail('BACKUP_CHANGED', '插件隔离快照缺失或被修改。');
+      await change(backup, 'conflict-backup', source, undefined, row.sha256);
+      if (!operations.some(item => key(item.file) === key(restorePath))) await change(restorePath, role, null, undefined, null);
+      manifest.conflicts.push({ sourceRel, backupRel: path.relative(t.gameRoot, backup), originPath: row.path,
+        name: path.basename(row.path), sha256: row.sha256, category: 'external-addon-isolation', reason: row.reason, originalOwned: row.originalOwned === true });
+      transfers.push({ originPath: row.path, restorePath, backupPath: backup, sha256: row.sha256 });
+    }
+    return transfers;
+  }
   async function directPlan(t, game, next, operations, extras = {}) {
     if (operations.length > 256) fail('LAYOUT', '外置变更范围过大。');
     for (const row of operations) {
@@ -585,6 +688,8 @@ function createExternalRuntime(options) {
       requiresFgRestore: extras.requiresFgRestore === true, requiresConfirmation: true,
       requiresAntiCheat: Boolean(guards.antiCheatPresent?.(t.gameRoot)), blockers: [], warnings: extras.warnings || [],
       compatibility: extras.compatibility || next.compatibility || null,
+      addonCompatibility: extras.compatibility || next.compatibility || null,
+      isolatedAddonTransfers: extras.isolatedAddonTransfers || [],
       configured: extras.configured || next.sourceLayout, sourceLayout: next.sourceLayout, desired,
       layout: { mode: next.mode, source: PRODUCT, runtimeDir: desired.baseDir, addonDir: desired.addonDir, addonDirectory: desired.addonDir,
         activeConfigPath: desired.activeConfigPath, configured: desired, sourceLayout: next.sourceLayout, desired,
@@ -801,6 +906,13 @@ function createExternalRuntime(options) {
     if (key(saved.sourceLayout?.baseDir || '.') !== key(t.dir) || key(saved.sourceLayout?.addonDir || '.') !== key(t.dir))
       fail('DIRECT_LOCAL_UNSUPPORTED', '原配置使用自定义插件目录，普通目录路线尚不能接入。可继续外置部署，或使用独立卸载恢复原配置。');
     getLayout(game);
+    const policy = await runtimeAddonPolicy(t, game, saved, request), isolatedPaths = new Set(policy.isolated.map(row => key(row.path)));
+    const activeFiles = saved.files.filter(row => !isolatedPaths.has(key(path.join(t.runtimeDir, row.name))));
+    for (const row of policy.snapshot.files) if (!isolatedPaths.has(key(row.path)) && !activeFiles.some(item => item.name === row.name) &&
+        key(path.dirname(row.path)) === key(t.runtimeDir) && !request.knownComponents?.some(item => item.path && key(item.path) === key(row.path) && item.owned)) {
+      const role = ADDON.test(row.path) ? 'user-addon' : 'user-dependency';
+      activeFiles.push({ name: row.name, role, kind: role, sha256: row.sha256, originHash: row.sha256, mutable: false, localOwned: false, originAbsent: true });
+    }
     const requiresFgRestore = ['xiaofeng-fg-components.json', 'xiaofeng-fg-migration.json'].some(name => fs.existsSync(path.join(t.runtimeDir, '_DLSS5_Backup', name)));
     if (requiresFgRestore && internal.plannedFgRestore !== true) fail('FG_RESTORE_FIRST', '请先恢复外置补帧组件。');
     const operation = crypto.randomUUID(), operations = [], manifest = newManifest(t.gameRoot, t.exe, saved.api);
@@ -811,7 +923,9 @@ function createExternalRuntime(options) {
       if (role === 'original-backup' && before !== null) fail('BACKUP_CONFLICT', '新普通安装的备份位置已有文件，未覆盖。', { file });
       operations.push({ file, role, source, ...(value === undefined ? {} : { bytes: value }), before, after: value === undefined ? after : hash(value) });
     }
-    for (const row of saved.files) {
+    const runtimeIsolatedAddons = await isolateRuntimeAddons(t, policy, saved, operation, operations, change);
+    const isolatedAddonTransfers = await transferIsolation(t, [...(saved.isolatedAddons || []), ...runtimeIsolatedAddons], manifest, operations, change);
+    for (const row of activeFiles) {
       const source = path.join(t.runtimeDir, row.name), actual = await digest(source);
       if (!actual || !row.mutable && actual !== row.sha256) fail('FILE_CHANGED', '外置组件已变动，未迁移到普通目录。', { file: source });
       if (row.role === 'profile-loader') continue;
@@ -863,19 +977,23 @@ function createExternalRuntime(options) {
       }
       manifest.files.push(entry); manifest.reshadeRoute = path.basename(proxyFile, '.dll');
     }
-    const currentConfig = await fsp.readFile(path.join(t.runtimeDir, 'ReShade.ini'), 'utf8');
+    const currentConfig = isolatedRuntimeConfig(t, await fsp.readFile(path.join(t.runtimeDir, 'ReShade.ini'), 'utf8'), policy);
     const restoredConfig = localConfig(currentConfig, saved.originalReShadeConfig, t.dir, options.environment || process.env,
       { panelDefaultAdded: saved.panelDefaultAdded === true, panelDefaultKey: saved.panelDefaultKey ?? PREVIOUS_RESHADE_DEFAULT_KEY });
     await change(path.join(t.dir, 'ReShade.ini'), 'reshade-config', null, restoredConfig || saved.originalConfigExisted ? restoredConfig : undefined, null);
     await change(manifestPath(t.gameRoot), 'manifest', null, jsonBytes(manifest));
-    for (const row of saved.files) await change(path.join(t.runtimeDir, row.name), row.role, null, undefined, null);
+    for (const row of activeFiles) await change(path.join(t.runtimeDir, row.name), row.role, null, undefined, null);
     await change(path.join(t.runtimeDir, 'ReShade.ini'), 'reshade-config', null, undefined, null);
     const next = { ...saved, mode: 'local', loadingMode: 'proxy', proxy: { ...saved.proxy, name: initial.name }, generation: operation, payloadVersion: manifest.payloadVersion,
-      localManifest: manifest, currentManifest: manifest, loaderConfigHash: hash(Buffer.from(restoredConfig)),
+      localManifest: manifest, currentManifest: manifest, runtimeIsolatedAddons, runtimeCompatibility: policy.compatibility,
+      loaderConfigHash: hash(Buffer.from(restoredConfig)),
       previous: { mode: 'external', version: saved.payloadVersion, generation: saved.generation, snapshot: operation,
         snapshotDirectory: path.join(t.ownerRoot, 'history', operation) } };
     await change(t.receipt, 'receipt', null, jsonBytes(next));
-    const result = await directPlan(t, game, next, operations, { fromMode: 'external', requiresFgRestore });
+    const result = await directPlan(t, game, next, operations, { fromMode: 'external', requiresFgRestore, sourceGuard: policy.guard,
+      compatibility: policy.compatibility, isolatedAddonTransfers,
+      warnings: isolatedAddonTransfers.map(row => ({ code: 'ADDON_ISOLATION_TRANSFER', path: row.originPath,
+        message: '隔离备份随部署迁移，卸载恢复到 ' + row.restorePath })) });
     return { ...result, projectedManifest: manifest };
   }
   async function preview(game, request = {}, internal = {}) {
@@ -915,6 +1033,8 @@ function createExternalRuntime(options) {
     const loadingMode = request.mode === 'external' ? request.loadingMode || saved?.loadingMode || 'proxy' : 'proxy';
     if (loadingMode === 'proxy' && request.proxyEntry === 'd3d12' && api !== 'dx12') fail('PROXY_ENTRY', 'D3D12 加载入口只适用于已确认的 DX12 路线。');
     const operation = crypto.randomUUID(), operations = [], rows = external ? saved.files.map(row => ({ ...row, source: path.join(t.runtimeDir, row.name) })) : await collectLocal(t, manifest);
+    const runtimePolicy = external ? await runtimeAddonPolicy(t, game, saved, request) : null;
+    const isolatedPaths = new Set(runtimePolicy?.isolated.map(row => key(row.path)) || []);
     if (external) {
       getLayout(game);
       for (const row of rows) {
@@ -924,10 +1044,12 @@ function createExternalRuntime(options) {
           fail('FILE_CHANGED', '外置组件缺失或被修改，未覆盖。', { file: row.source });
         row.sha256 = actual;
       }
+      for (let index = rows.length - 1; index >= 0; index--) if (isolatedPaths.has(key(rows[index].source))) rows.splice(index, 1);
       // Newly installed independent Add-ons are copied back as user-owned
       // files, rather than discarded merely because the NR receipt predates them.
       const known = new Set(rows.map(row => row.name.toLowerCase()));
       for (const entry of await fsp.readdir(t.runtimeDir, { withFileTypes: true })) {
+        if (isolatedPaths.has(key(path.join(t.runtimeDir, entry.name)))) continue;
         if (known.has(entry.name.toLowerCase()) || entry.name.toLowerCase() === 'reshade.ini' || !ADDON.test(entry.name) && !MUTABLE.test(entry.name)) continue;
         if (!entry.isFile()) fail('LAYOUT', '外置目录含无法迁移的组件。');
         const role = ADDON.test(entry.name) ? 'user-addon' : 'user-sidecar', source = path.join(t.runtimeDir, entry.name);
@@ -946,7 +1068,7 @@ function createExternalRuntime(options) {
     const originalConfig = external ? saved.originalReShadeConfig : await fsp.readFile(path.join(t.dir, 'ReShade.ini'), 'utf8').catch(error => {
       if (error.code === 'ENOENT') return ''; throw error;
     });
-    const currentConfig = external ? await fsp.readFile(path.join(t.runtimeDir, 'ReShade.ini'), 'utf8') : originalConfig;
+    const currentConfig = external ? isolatedRuntimeConfig(t, await fsp.readFile(path.join(t.runtimeDir, 'ReShade.ini'), 'utf8'), runtimePolicy) : originalConfig;
     const currentManifest = external ? structuredClone(saved.currentManifest || saved.localManifest) : structuredClone(manifest);
     let proxy = saved?.proxy || null;
     if (!proxy) {
@@ -1027,6 +1149,8 @@ function createExternalRuntime(options) {
       operations.push({ file, role, source, ...(value === undefined ? {} : { bytes: value }), before,
         after: value !== undefined ? hash(value) : after });
     }
+    const runtimeIsolatedAddons = external ? await isolateRuntimeAddons(t, runtimePolicy, saved, operation, operations, change) : [];
+    const isolatedAddonTransfers = external && request.mode === 'local' ? await transferIsolation(t, runtimeIsolatedAddons, currentManifest, operations, change) : [];
     const toExternal = request.mode === 'external', activeConfig = toExternal ? external ? currentConfig : ensureDefaultReShadeHotkey(externalConfig(originalConfig, t.dir))
       : localConfig(currentConfig, originalConfig, t.dir, options.environment || process.env,
         { panelDefaultAdded: saved?.panelDefaultAdded === true, panelDefaultKey: saved?.panelDefaultKey ?? PREVIOUS_RESHADE_DEFAULT_KEY });
@@ -1080,6 +1204,7 @@ function createExternalRuntime(options) {
       previous: { mode: external ? 'external' : 'local', version: saved?.payloadVersion || manifest.payloadVersion,
         generation: saved?.generation || null, snapshot: operation, snapshotDirectory: path.join(t.ownerRoot, 'history', operation) },
       files: rows.map(({ source, ...row }) => row) };
+    if (external) Object.assign(next, { runtimeIsolatedAddons, runtimeCompatibility: runtimePolicy.compatibility });
     if (external && ['direct', 'direct_hoyo'].includes(saved?.origin)) Object.assign(next, { origin: saved.origin, initialOperation: saved.initialOperation,
       initialProxy: saved.initialProxy, retiredProxy: saved.retiredProxy, sourceLayout: saved.sourceLayout, sourceBinding: saved.sourceBinding,
       isolatedAddons: saved.isolatedAddons, compatibility: saved.compatibility });
@@ -1096,13 +1221,16 @@ function createExternalRuntime(options) {
     }
     const planId = crypto.randomUUID();
     plans.set(planId, { planId, game, target: t, operation, operations, next, requiresFgRestore, expires: Date.now() + 5 * 60 * 1000,
-      exeHash: await digest(t.exe) });
+      exeHash: await digest(t.exe), sourceGuard: runtimePolicy?.guard });
     const configured = getLayout(game).configured;
     const desired = { loaderDir: t.dir, baseDir: toExternal ? t.runtimeDir : t.dir, addonDir: toExternal ? t.runtimeDir : t.dir,
       activeConfigPath: path.join(toExternal ? t.runtimeDir : t.dir, 'ReShade.ini') };
     return { planId, gameId: game.id, fromMode: external ? 'external' : 'local', toMode: request.mode, mode: request.mode,
       api, version: payloadVersion, loadingMode, requiresFgRestore, requiresConfirmation: true, requiresAntiCheat: Boolean(guards.antiCheatPresent?.(t.gameRoot)),
-      configured, sourceLayout: next.sourceLayout, desired, blockers: [], warnings: getLayout(game).warnings,
+      configured, sourceLayout: next.sourceLayout, desired, blockers: [], warnings: [...getLayout(game).warnings,
+        ...isolatedAddonTransfers.map(row => ({ code: 'ADDON_ISOLATION_TRANSFER', path: row.originPath,
+          message: '隔离备份随部署迁移，卸载恢复到 ' + row.restorePath }))],
+      compatibility: runtimePolicy?.compatibility || null, addonCompatibility: runtimePolicy?.compatibility || null, isolatedAddonTransfers,
       layout: { mode: request.mode, runtimeDir: toExternal ? t.runtimeDir : t.dir, addonDir: desired.addonDir, addonDirectory: toExternal ? t.runtimeDir : t.dir,
         projectedConfig: { sha256: hash(Buffer.from(activeConfig)), text: activeConfig },
         projectedFiles: operations.filter(row => row.role !== 'receipt').map(row => ({ path: row.file, sha256: row.after })),
@@ -1292,13 +1420,16 @@ function createExternalRuntime(options) {
       await change(file, row.role, null, undefined, null);
     }
     await change(path.join(t.runtimeDir, 'ReShade.ini'), 'reshade-config', null, undefined, null);
-    if (mode === 'restore') for (const row of saved.isolatedAddons || []) {
+    if (mode === 'restore') for (const row of [...(saved.isolatedAddons || []), ...(saved.runtimeIsolatedAddons || [])]) {
       const current = await digest(row.path), source = historyFile(t, row.operation, row.snapshot);
       if (await digest(source) !== row.sha256) fail('BACKUP_CHANGED', '插件隔离快照缺失或被修改。');
+      const planned = operations.find(item => key(item.file) === key(row.path));
+      if (planned?.after) { warnings.push({ code: 'ADDON_RESTORE_CONFLICT', path: row.path, archive: source,
+        message: '同一位置有多个隔离版本，恢复最早隔离的文件，其余快照继续保留。' }); continue; }
       if (current === row.sha256) continue;
       if (current !== null) { warnings.push({ code: 'ADDON_RESTORE_CONFLICT', path: row.path, archive: source,
         message: '原位置已有不同文件，保留当前文件和插件隔离快照。' }); continue; }
-      await change(row.path, 'source-addon', source, undefined, row.sha256);
+      await change(row.path, row.role || 'source-addon', source, undefined, row.sha256);
     }
     if (saved.origin === 'direct_hoyo') {
       for (const row of saved.initialProxies) {

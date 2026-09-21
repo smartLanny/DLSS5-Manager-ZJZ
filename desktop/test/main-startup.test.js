@@ -292,14 +292,29 @@ test('failed managed restoration never proceeds to external cleanup preview', as
 test('pending environment recovery blocks writes but its owner recovery remains reachable first', async () => {
   const order = []; const h = harness({
     environmentService: { assertReady: async () => { throw new Error('environment pending'); },
+      inspect: async () => ({ pending: true }),
       recoverPending: async () => { order.push('recovery'); return { recovered: true }; }, restore: async () => { order.push('undo'); return { restored: true }; } },
     preparationService: { assertReady: async () => order.push('preparation') },
     restoreForUninstall: async () => order.push('settings'),
-    appService: { restoreManagedForCleanup: async () => order.push('managed') } });
+    appService: { inspectDeployment: async () => ({ installed: false, pending: true, needsRecovery: true }), restoreManagedForCleanup: async () => order.push('managed') } });
   await settle(); await assert.rejects(h.handles.get('game-install')({}, 'g'), /environment pending/);
   const result = await h.handles.get('game-environment-restore')({}, 'g');
-  assert.deepEqual(order, ['recovery', 'preparation', 'settings', 'managed', 'undo']); assert.equal(result.interruptedFilesRecovered, true);
+  assert.deepEqual(order, ['recovery', 'preparation', 'undo']); assert.equal(result.interruptedFilesRecovered, true);
   h.window.emit('closed');
+});
+
+test('restoring isolated files requires explicit uninstall and never uninstalls or restores settings implicitly', async () => {
+  for (const state of [{ deployment: { installed: true } }, { deployment: { needsRecovery: true } }, { fgComponents: { managed: true } }, { ownedSettings: true }]) {
+    let writes = 0;
+    const forbidden = async () => { writes++; throw Error('must not mutate'); };
+    const h = harness({ appService: { inspectDeployment: async () => state.deployment || {}, restoreManagedForCleanup: forbidden },
+      coordinatorInspect: async () => ({ fgComponents: state.fgComponents || {} }), restoreForUninstall: forbidden,
+      launchService: { hasOwnedState: async () => state.ownedSettings === true },
+      environmentService: { recoverPending: forbidden, restore: forbidden } });
+    await settle();
+    try { await assert.rejects(h.handles.get('game-environment-restore')({}, 'g'), { code: 'ENVIRONMENT_RESTORE_FIRST' }); assert.equal(writes, 0); }
+    finally { h.window.emit('closed'); }
+  }
 });
 
 test('business-module require failure produces an early log and visible native dialog', async () => {

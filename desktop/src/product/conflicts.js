@@ -223,7 +223,13 @@ async function restoreConflicts(gameDir, rows, options = {}) {
       await options.capture(backup);
       await options.capture(source);
     }
-    await rename(backup, source);
+    if (typeof options.capture === 'function') {
+      // A confirmed uninstall already has a file WAL. Restore the original
+      // without consuming the fixed quarantine archive or overwriting a new file.
+      await fs.promises.copyFile(backup, source, fs.constants.COPYFILE_EXCL);
+      if (sha256(source) !== sha256(backup) || row.sha256 && sha256(source) !== row.sha256)
+        throw appError('ERR_BACKUP_INVALID', { rel: row.sourceRel });
+    } else await rename(backup, source);
   }
   return warnings;
 }

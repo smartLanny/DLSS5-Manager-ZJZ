@@ -11,7 +11,7 @@ const { createWorkScheduler } = require('../../src/product/work-scheduler');
 const { PAYLOAD_FILES } = require('../../src/product/constants');
 
 async function createExperienceFixture(root, options = {}) {
-  const gameDir = path.join(root, 'NTE-fixture'), exeDir = path.join(gameDir, 'Binaries', 'Win64'), exe = path.join(exeDir, 'Game.exe');
+  const gameDir = path.join(root, 'NTE-fixture'), exeDir = path.join(gameDir, 'Binaries', 'Win64'), exe = path.join(exeDir, options.executableName || 'Game.exe');
   fs.mkdirSync(exeDir, { recursive: true }); fs.writeFileSync(exe, 'synthetic selected EXE; never executed');
   const payload = path.join(root, 'resources/payload/nr-before-sr');
   for (const family of ['RTX40', 'RTX50']) {
@@ -32,10 +32,13 @@ async function createExperienceFixture(root, options = {}) {
   const bytes = Buffer.alloc(16 * 1024 * 1024); bytes.write('MZ'); bytes.writeUInt32LE(64, 60); bytes.writeUInt32LE(0x4550, 64); bytes.writeUInt16LE(2, 84); bytes.writeUInt16LE(0x20b, 88);
   const runtime = path.join(dlc, 'nvngx_dlssnr.dll'); fs.writeFileSync(runtime, bytes);
   fs.writeFileSync(path.join(dlc, 'component-manifest.json'), JSON.stringify({ schema: 'dlss5-component-v1', id: 'experience-runtime', kind: 'nr-runtime', version: 'fixture', architecture: 'x64', interface: 'NGX-Feature18', hardwareFamilies: ['RTX40'], files: [{ path: 'nvngx_dlssnr.dll', bytes: bytes.length, sha256: sha256(runtime) }] }));
-  const chosen = { path: exe, rel: path.relative(gameDir, exe), name: 'Game.exe', size: 1, api: 'dxgi', apiLabel: 'DirectX 11/12', bitness: 64 };
+  const chosen = { path: exe, rel: path.relative(gameDir, exe), name: path.basename(exe), size: 1, api: 'dxgi', apiLabel: 'DirectX 11/12', bitness: 64 };
   const native = { path: path.join(exeDir, 'nvngx_dlss.dll'), name: 'nvngx_dlss.dll', bitness: 64 };
   const scan = { gameDir, gameName: '异环反馈 · 混合 API 回归', chosen, exeCandidates: [chosen], dlssFiles: [native], primaryDlss: native, emulator: null, reshade: { installed: false } };
-  const scanner = { scanGame: async () => structuredClone(scan), selectPrimaryDlss: files => files[0], inspectReShade: dir => ({ installed: fs.existsSync(path.join(dir, 'dxgi.dll')), file: 'dxgi.dll', addonSupport: true }) };
+  const scanner = { scanGame: async () => structuredClone(scan), selectPrimaryDlss: files => files[0], inspectReShade: dir => {
+    const file = ['dxgi.dll', 'd3d12.dll'].find(name => fs.existsSync(path.join(dir, name)));
+    return { installed: Boolean(file), file: file || null, addonSupport: true };
+  } };
   if (options.existingInstallation) {
     if (!['reshade-standard', 'unknown-proxy'].includes(options.existingInstallation)) throw new Error('unknown synthetic installation scenario');
     fs.writeFileSync(path.join(exeDir, 'dxgi.dll'), options.existingInstallation === 'reshade-standard' ? 'ReShade ordinary synthetic build without Add-on support' : 'unidentified synthetic user proxy; never executed');

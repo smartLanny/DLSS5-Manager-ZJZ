@@ -144,6 +144,8 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
     const routeChange = request.api !== undefined || request.version !== undefined || request.components?.bridge !== undefined;
     const deploy = !request.uninstall && !request.repair && (routeChange || request.deployment !== undefined || request.loadingMode !== undefined || request.loadingBackend !== undefined || request.hoyo !== undefined || request.route !== undefined || request.addonKeep !== undefined || request.proxyEntry !== undefined && (before.layout.mode === 'external' || before.layout.source === 'feeder'));
     const defaults = deploy && service.installationDefaults ? await service.installationDefaults(id, request) : null;
+    if (deploy && (!request.proxyEntry || request.proxyEntry === 'auto') && defaults?.proxyEntry && defaults.proxyEntry !== 'auto')
+      request.proxyEntry = defaults.proxyEntry;
     const installed = Boolean(current.installed || current.addonVersion || before.layout.source === 'xiaofeng-external-runtime');
     const loadingBackend = request.loadingBackend || before.layout.loadingBackend || defaults?.loadingBackend || 'local';
     const targetMode = loadingBackend === 'hoyoshade' ? 'external' : request.deployment || defaults?.deployment || (installed ? before.layout.mode || 'local' : 'local');
@@ -247,6 +249,7 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
     blockers.push(...blockerMessages(adoption));
     const value = { version: 1, planId: crypto.randomUUID(), gameId: id, exe: t.exe, game: t.game, request, before, resolved,
       adoption, requiresAdoptionConfirmation: adoption?.required === true,
+      nrConflicts: require('./nr-conflict-summary').nrConflictSummary(request.uninstall ? null : deployment, { userData, exe: t.exe, game: t.game }),
       createdAt: Date.now(), expiresAt: Date.now() + 10 * 60000, changes, blockers: [...new Set(blockers.filter(Boolean))],
       steps, deployment, runtimeVerified: false, requiresConfirmation: true };
     value.fingerprint = fingerprint(value); plans.set(value.planId, value);

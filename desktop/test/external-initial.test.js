@@ -137,6 +137,84 @@ test('source changes after first external preview reject before a file WAL or pr
   assert.match(fs.readFileSync(path.join(f.dir, 'ReShade.ini'), 'utf8'), /new external edit/);
 });
 
+test('new external NR addons are previewed without writes, hash-bound, isolated across updates and restored only on uninstall', async t => {
+  const f = fixture(t), first = await f.service.preview(f.game, f.request); await f.service.apply(first.planId);
+  const runtime = f.service.getLayout(f.game).runtimeDir, plugin = path.join(runtime, 'external-dlsnr.addon64'), bytes = 'RenoDX NR original plugin';
+  fs.writeFileSync(plugin, bytes);
+  const cancelled = await f.service.preview(f.game, f.request);
+  assert.equal(cancelled.addonCompatibility.isolate.find(row => row.path === plugin)?.mandatory, true);
+  assert.equal(fs.readFileSync(plugin, 'utf8'), bytes, 'cancel/preview writes nothing');
+  fs.writeFileSync(plugin, bytes + ' changed');
+  await assert.rejects(f.service.apply(cancelled.planId), /改变|变化/);
+  assert.equal(fs.readFileSync(plugin, 'utf8'), bytes + ' changed'); assert.equal(fs.existsSync(f.pending), false);
+  fs.writeFileSync(plugin, bytes);
+  const plan = await f.service.preview(f.game, f.request); await f.service.apply(plan.planId);
+  assert.equal(fs.existsSync(plugin), false);
+  const saved = JSON.parse(fs.readFileSync(f.receipt)), isolated = saved.runtimeIsolatedAddons.find(row => row.path === plugin);
+  const backup = path.join(path.dirname(runtime), 'history', isolated.operation, isolated.snapshot);
+  assert.equal(fs.readFileSync(backup, 'utf8'), bytes);
+  const upgrade = await f.service.preview(f.game, f.request); await f.service.apply(upgrade.planId);
+  assert.equal(fs.existsSync(plugin), false, 'upgrade does not restore a conflicting NR plugin');
+  await f.service.remove(f.game, 'restore'); assert.equal(fs.readFileSync(plugin, 'utf8'), bytes);
+  assert.equal(fs.existsSync(path.join(runtime, INSTALLED_NAMES.addon)), false);
+});
+
+test('direct external isolation transfers its backup into native ownership and native uninstall restores exact bytes', async t => {
+  const f = fixture(t), ini = path.join(f.dir, 'ReShade.ini'), plugin = path.join(f.dir, 'renodx-dlsnr.addon64');
+  fs.writeFileSync(ini, '[ADDON]\nAddonPath=.\n'); fs.unlinkSync(path.join(f.dir, INSTALLED_NAMES.runtime));
+  fs.writeFileSync(plugin, 'renodx-dlssnr original');
+  const first = await f.service.preview(f.game, f.request); await f.service.apply(first.planId);
+  assert.equal(fs.existsSync(plugin), false);
+  const runtime = f.service.getLayout(f.game).runtimeDir, latePlugin = path.join(runtime, 'late-nr.addon64');
+  fs.writeFileSync(latePlugin, 'RenoDX NR later');
+  const isolate = await f.service.preview(f.game, f.request); await f.service.apply(isolate.planId);
+  let local = await f.service.preview(f.game, { mode: 'local' });
+  assert.ok(local.isolatedAddonTransfers.some(row => row.originPath === latePlugin && row.restorePath === path.join(f.dir, 'late-nr.addon64')));
+  assert.ok(local.warnings.some(row => /卸载恢复到/.test(row.message)));
+  assert.equal(fs.existsSync(path.join(f.gameRoot, '_DLSS5_Backup', 'conflicts')), false, 'migration preview creates no native backup');
+  const occupied = path.join(f.dir, 'late-nr.addon64'); fs.writeFileSync(occupied, 'new user file');
+  await assert.rejects(f.service.apply(local.planId), { code: 'DEPLOYMENT_PLAN_CHANGED' });
+  assert.equal(fs.readFileSync(occupied, 'utf8'), 'new user file'); assert.equal(fs.existsSync(f.pending), false);
+  fs.unlinkSync(occupied); local = await f.service.preview(f.game, { mode: 'local' });
+  await f.service.apply(local.planId); assert.equal(fs.existsSync(plugin), false);
+  const manifest = JSON.parse(fs.readFileSync(path.join(f.gameRoot, '_DLSS5_Backup/xiaofeng-manager.json')));
+  assert.equal(manifest.conflicts.find(row => row.originPath === latePlugin)?.sourceRel, path.relative(f.gameRoot, path.join(f.dir, 'late-nr.addon64')));
+  const installer = require('../src/product/installer').createInstaller({ guards: f.options.guards, pe: f.options.pe });
+  await installer.uninstall({ gameDir: f.gameRoot, scan: f.game.scan, mode: 'restore', removeSettings: false });
+  assert.equal(fs.readFileSync(plugin, 'utf8'), 'renodx-dlssnr original');
+  assert.equal(fs.readFileSync(path.join(f.dir, 'late-nr.addon64'), 'utf8'), 'RenoDX NR later');
+});
+
+test('a failed external update rolls new isolation back, and explicit DLL isolation removes its active load entry', async t => {
+  const f = fixture(t); await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = f.service.getLayout(f.game).runtimeDir, file = path.join(runtime, 'renodx-plugin.dll'), ini = path.join(runtime, 'ReShade.ini');
+  fs.writeFileSync(file, 'RenoDX NR explicit plugin'); fs.appendFileSync(ini, '[ADDON]\nLoadFromDllMain=renodx-plugin.dll\n');
+  const before = fs.readFileSync(ini), receipt = fs.readFileSync(f.receipt);
+  const failing = createExternalRuntime({ ...f.options, afterWrite: ({ row }) => { if (row.file === file) throw Error('synthetic isolation failure'); } });
+  await assert.rejects(failing.apply((await failing.preview(f.game, f.request)).planId), /synthetic isolation failure/);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'RenoDX NR explicit plugin'); assert.deepEqual(fs.readFileSync(ini), before);
+  assert.deepEqual(fs.readFileSync(f.receipt), receipt); assert.equal(fs.existsSync(f.pending), false);
+  await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  assert.equal(fs.existsSync(file), false); assert.equal(addonValues(fs.readFileSync(ini, 'utf8')).has('LoadFromDllMain'), false);
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  await f.service.remove(f.game, 'restore'); assert.equal(fs.readFileSync(file, 'utf8'), 'RenoDX NR explicit plugin');
+});
+
+test('a legacy retained user addon matching a known renamed Core cannot become the selected active Core', async t => {
+  const f = fixture(t); await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = f.service.getLayout(f.game).runtimeDir, file = path.join(runtime, 'renamed-old.addon64'), bytes = 'known historical Core';
+  fs.writeFileSync(file, bytes);
+  const saved = JSON.parse(fs.readFileSync(f.receipt));
+  saved.files.push({ name: path.basename(file), role: 'user-addon', kind: 'user-addon', mutable: false, localOwned: false,
+    originAbsent: true, sha256: hash(bytes), originHash: hash(bytes) });
+  fs.writeFileSync(f.receipt, JSON.stringify(saved));
+  const plan = await f.service.preview(f.game, { ...f.request, knownComponents: [{ sha256: hash(bytes), role: 'core' }] });
+  assert.equal(plan.addonCompatibility.retire.find(row => row.path === file)?.mandatory, true);
+  assert.equal(plan.addonCompatibility.keep.some(row => row.path === path.join(runtime, INSTALLED_NAMES.addon)), true);
+  await f.service.apply(plan.planId); assert.equal(fs.existsSync(file), false);
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+});
+
 test('external source addons are isolated through their bound WAL and restored to original paths outside the game root', async t => {
   const f = fixture(t), external = path.join(f.root, 'personal-external-addons'); fs.mkdirSync(external);
   const userAddon = path.join(external, 'user.addon64'); fs.writeFileSync(userAddon, 'unverified external user addon');

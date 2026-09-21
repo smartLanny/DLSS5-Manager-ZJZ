@@ -56,6 +56,45 @@ test('new blockers after exit stop without consuming the installation journal', 
   assert.equal((await f.queue.inspect('game')).status, 'attention');
   assert.deepEqual(f.state.calls, ['prepare', 'preview']);
 });
+
+test('mandatory NR isolation always requires a preview confirmation even when keep choices are empty', async t => {
+  const f = fixture(t); f.state.running = false;
+  f.options.operations.preview = async (_id, request) => ({ planId: 'nr-plan', fingerprint: 'nr-fp', request, blockers: [],
+    nrConflicts: { required: true, backupDirectories: ['backup'], files: [{ name: 'renodx.addon64', path: path.join(f.dir, 'renodx.addon64'), action: 'backup-isolate' }] } });
+  const result = await f.queue.submit('game', { nr: { Intensity: 1.5 }, addonKeep: [] });
+  assert.equal(result.needsAttention, true); assert.equal(result.plan.nrConflicts.required, true);
+  assert.equal(f.state.calls.includes('apply'), false); assert.equal(await f.queue.inspect('game'), null);
+});
+
+test('an NR conflict discovered after exit stops waiting for explicit review without applying or relaunching', async t => {
+  const f = fixture(t); await f.queue.submit('game', { nr: { Intensity: 1.5 } }); f.state.running = false;
+  f.options.operations.preview = async (_id, request) => ({ planId: 'nr-plan', fingerprint: 'nr-fp', request, blockers: [],
+    nrConflicts: { required: true, backupDirectories: ['backup'], files: [{ name: 'renodx.addon64', path: path.join(f.dir, 'renodx.addon64'), action: 'backup-isolate' }] } });
+  await f.queue.tick(); const state = await f.queue.inspect('game');
+  assert.equal(state.status, 'attention'); assert.equal(state.requiresReview, true); assert.equal(state.pending, false);
+  assert.equal(f.state.calls.includes('apply'), false); assert.match(state.message, /确认|冲突/);
+});
+
+test('a running-game NR confirmation binds the reviewed file hashes and applies once after exit', async t => {
+  const f = fixture(t), plugin = path.join(f.dir, 'renodx.addon64'); let fingerprint = 'one';
+  const preview = request => ({ planId: 'nr-plan', fingerprint, request, blockers: [],
+    nrConflicts: { required: true, backupDirectories: ['backup'], files: [{ name: 'renodx.addon64', path: plugin, action: 'backup-isolate' }] },
+    deployment: { addonCompatibility: { decisions: [{ moduleMayLoad: true, mandatory: false, classification: 'unknown', action: 'isolate' }] } },
+    changes: [{ path: plugin, beforeSha256: fingerprint, afterSha256: null }] });
+  f.options.operations.prepareForWaiting = async (_id, request) => preview(request);
+  f.options.operations.preview = async (_id, request) => preview(request);
+  const result = await f.queue.submit('game', { nr: { Intensity: 1.5 } });
+  assert.equal(result.needsAttention, true); assert.equal(result.plan.waitingConfirmation, true);
+  assert.equal(await f.queue.inspect('game'), null);
+  await assert.rejects(f.queue.apply('game', result.plan.planId, { fingerprint: 'one' }), { code: 'WAITING_CONFIRM' });
+  const accepted = await f.queue.apply('game', result.plan.planId, { confirm: true, fingerprint: 'one' }); assert.equal(accepted.waiting, true);
+  f.state.running = false; await f.queue.tick(); assert.equal((await f.queue.inspect('game')).status, 'complete');
+  assert.equal(f.state.calls.filter(row => row === 'apply').length, 1);
+  f.state.running = true;
+  const again = await f.queue.submit('game', { nr: { Intensity: 1.7 } }); await f.queue.apply('game', again.plan.planId, { confirm: true, fingerprint: 'one' });
+  fingerprint = 'changed-plugin'; f.state.running = false; await f.queue.tick();
+  assert.equal((await f.queue.inspect('game')).status, 'attention'); assert.equal(f.state.calls.filter(row => row === 'apply').length, 1);
+});
 test('missing or blocked components cannot enter the waiting queue', async t => {
   const f = fixture(t); f.state.sourceError = Object.assign(new Error('runtime DLC missing'), { code: 'ERR_PAYLOAD_MISSING' });
   await assert.rejects(f.queue.submit('game', { version: 'candidate' }), { code: 'ERR_PAYLOAD_MISSING' });

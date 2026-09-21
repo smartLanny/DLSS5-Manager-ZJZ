@@ -626,7 +626,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       deployment: request.deployment || (installed ? layout.mode : 'local'),
       loadingMode: request.loadingMode || (installed ? layout.loadingMode : 'proxy') || 'proxy',
       loadingBackend: layout.loadingBackend || 'local',
-      proxyEntry: request.proxyEntry || manifest?.reshadeRoute || 'auto', route };
+      proxyEntry: require('./proxy-entry-policy').proxyEntryDefault({ game, api: resolvedApi, request, layout, manifest }), route };
   }
 
   async function resolveInputRoute(id, request = {}) {
@@ -655,7 +655,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   async function previewProxyEntry(id, entry, { deployment } = {}) {
     const game = findGame(id), layout = gameLayout(game), manifest = readManifest(game.dir), changes = [], blockers = [];
     const api = deployment?.api || manifest?.deploymentApi || classifyApi(game.scan.chosen);
-    const current = manifest?.reshadeRoute || 'dxgi', desired = entry === 'auto' ? current : entry;
+    const current = manifest?.reshadeRoute || deployment?.adoption?.replaceProxy?.name?.replace(/\.dll$/i, '') || 'dxgi', desired = entry === 'auto' ? current : entry;
     if (!['dxgi', 'd3d12'].includes(desired) || desired === 'd3d12' && api !== 'dx12') blockers.push('当前原生路线只支持 DXGI，D3D12 入口仅用于 DX12 游戏。');
     if (deployment?.mode === 'external' || !deployment && layout.mode === 'external') blockers.push('外置入口需由外置部署记录共同切换。');
     const source = path.join(path.dirname(game.scan.chosen.path), current + '.dll'), destination = path.join(path.dirname(game.scan.chosen.path), desired + '.dll');
@@ -815,7 +815,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       for (const kind of ['bridge', 'runtime', 'config', 'reshade', 'carrier']) {
         const provided = kind === 'bridge' ? imported.bridgeFile : kind === 'carrier' ? imported.carrierFile : null;
         const row = manifest.files.find(row => row.kind === kind), expected = kind === 'bridge' ? imported.bridgeSha256 : kind === 'carrier' ? imported.carrierSha256 : null;
-        const rel = kind === 'reshade' && manifest.reshadeRoute === 'd3d12' ? path.join(path.dirname(row?.rel || ''), 'd3d12.dll') : row?.rel;
+        const rel = row ? require('./native-loader-target').nativeTargetRel(manifest, row) : null;
         const file = provided || (rel ? path.resolve(game.dir, rel) : path.join(path.dirname(game.scan.chosen.path), INSTALLED_NAMES[kind]));
         if (fs.existsSync(file)) result[kind] = { file, name: path.basename(file), actual: provided ? expected : sha256(file), expected: provided ? expected : sha256(file) };
       }
@@ -1583,7 +1583,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         loaderPath: loadingMode === 'helper' ? path.join(proposedLayout.runtimeDir, 'ReShade64.dll') : null },
       configured: migration?.configured || current.configured, sourceLayout: migration?.sourceLayout || current.sourceLayout,
       desired: migration?.desired || proposedLayout.desired, blockers: [...(migration?.blockers || []), ...(addonPolicy?.plan.blockers || [])], warnings: migration?.warnings || current.warnings || [],
-      addonCompatibility: addonPolicy?.plan || migration?.addonCompatibility || null,
+      addonCompatibility: addonPolicy?.plan || migration?.addonCompatibility || migration?.compatibility || null,
+      isolatedAddonTransfers: migration?.isolatedAddonTransfers || [],
       adoption, requiresAdoptionConfirmation: adoption?.required === true,
       retainedAddons: migration?.retainedAddons || [], inactiveAddons: migration?.inactiveAddons || [], requiresFgRestore: migration?.requiresFgRestore === true,
       requiresAntiCheat: Boolean(require('../core/install-guards').antiCheatPresent(game.dir)), requiresConfirmation: true, runtimeVerified: false };
@@ -1873,8 +1874,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       const nativeRoles = { addon: 'core', reshade: 'reshade', bridge: 'chain', runtime: 'nr-runtime', carrier: 'carrier' };
       const nativeModule = async (manifest, row, owner) => {
         const role = nativeRoles[row.kind]; if (!role) return;
-        const rel = row.kind === 'reshade' && manifest.reshadeRoute === 'd3d12' && path.basename(row.rel).toLowerCase() === 'dxgi.dll'
-          ? path.join(path.dirname(row.rel), 'd3d12.dll') : row.rel;
+        const rel = require('./native-loader-target').nativeTargetRel(manifest, row);
         const file = path.resolve(game.dir, rel);
         if (!same(path.dirname(file), path.dirname(exe)) || (row.kind === 'reshade'
           ? !/^(?:dxgi|d3d12)\.dll$/i.test(path.basename(file)) : path.basename(file) !== INSTALLED_NAMES[row.kind])) throw new Error('module target does not match its owner');

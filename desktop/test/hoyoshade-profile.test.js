@@ -86,6 +86,18 @@ test('first HoYo installation uses helper directly, stable preview layout and or
   assert.equal(f.service.profile(f.game).installed, false);
 });
 
+test('HoYo updates isolate newly added declared NR via the shared external ledger and restore only on uninstall', async t => {
+  const f = fixture(t), first = await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const file = path.join(first.layout.runtimeDir, 'renodx-dlssnr.addon64'), bytes = peBytes('renodx-dlssnr'); fs.writeFileSync(file, bytes);
+  const plan = await f.service.preview(f.game, f.request);
+  assert.equal(plan.addonCompatibility.isolate.find(row => row.path === file)?.mandatory, true);
+  assert.deepEqual(fs.readFileSync(file), bytes);
+  await f.service.apply(plan.planId); assert.equal(fs.existsSync(file), false);
+  await f.service.apply((await f.service.preview(f.game, f.request)).planId); assert.equal(fs.existsSync(file), false);
+  await f.service.restore(f.game); assert.deepEqual(fs.readFileSync(file), bytes);
+  assert.equal(fs.existsSync(path.join(first.layout.runtimeDir, INSTALLED_NAMES.addon)), false);
+});
+
 test('HoYo Feeder profile owns no native Core, preserves loader ownership and emits a derived Starward URI', async t => {
   const f = fixture(t, 'StarRail.exe'), launcher = path.join(f.root, 'Starward.exe'); fs.writeFileSync(launcher, peBytes('fixture Starward'));
   const request = { ...f.request, hoyo: { family: 'starrail', channel: 'bilibili', launcher: { kind: 'starward', path: launcher } },

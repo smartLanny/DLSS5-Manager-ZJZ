@@ -96,13 +96,13 @@ test('late conflict restoration failure rolls all removed manager files and rece
   fs.writeFileSync(name, 'old addon');
   await f.installer.install({ gameDir: f.gameDir, payload: f.payload, scan: f.scan });
   const receipt = fs.readFileSync(manifestPath(f.gameDir));
-  const rename = fs.promises.rename; let failed = false;
-  fs.promises.rename = async (source, target) => {
+  const copy = fs.promises.copyFile; let failed = false;
+  fs.promises.copyFile = async (source, target, flags) => {
     if (!failed && path.resolve(target) === path.resolve(name)) { failed = true; throw Object.assign(new Error('restore locked'), { code: 'EBUSY' }); }
-    return rename(source, target);
+    return copy(source, target, flags);
   };
   try { await assert.rejects(f.installer.uninstall({ gameDir: f.gameDir }), /restore locked/); }
-  finally { fs.promises.rename = rename; }
+  finally { fs.promises.copyFile = copy; }
   assert.equal(failed, true); assert.deepEqual(fs.readFileSync(manifestPath(f.gameDir)), receipt);
   assert.equal(fs.existsSync(name), false);
   for (const kind of ['addon', 'bridge', 'runtime', 'reshade']) assert.equal(sha256(path.join(f.exeDir, INSTALLED_NAMES[kind])), f.payload[kind].actual);

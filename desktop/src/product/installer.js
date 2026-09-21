@@ -62,7 +62,7 @@ function createInstaller(overrides = {}) {
       await noLinks(write.source);
       if (!write.expected || !fs.existsSync(write.source) || !fs.statSync(write.source).isFile() || sha256(write.source) !== write.expected.toLowerCase())
         throw appError('ERR_PAYLOAD_HASH', { file: path.basename(write.source), reason: 'source-changed' });
-      const row = findEntry(manifest, path.relative(gameDir, write.target)), current = await checkedHash(gameDir, write.target);
+      const row = require('./native-loader-target').nativeEntryForTarget(manifest, path.relative(gameDir, write.target)), current = await checkedHash(gameDir, write.target);
       if (!row) continue;
       validateEntry(gameDir, manifest, row, journal.safePath);
       if (row.original.existed) {
@@ -252,8 +252,8 @@ function createInstaller(overrides = {}) {
     const rel = path.relative(gameDir, target);
     journal.safePath(gameDir, rel);
     let entry = findEntry(manifest, rel);
-    if (!entry && kind === 'reshade' && manifest.reshadeRoute === 'd3d12' && path.basename(target).toLowerCase() === 'd3d12.dll')
-      entry = findEntry(manifest, path.join(path.dirname(rel), 'dxgi.dll'));
+    if (!entry && kind === 'reshade') entry = manifest.files.find(row => row.kind === 'reshade' &&
+      require('./native-loader-target').nativeTargetRel(manifest, row).toLowerCase() === rel.toLowerCase());
     if (entry) return entry;
 
     const existed = fs.existsSync(target);
@@ -282,7 +282,7 @@ function createInstaller(overrides = {}) {
     let sourceHash = null;
     try { sourceHash = fs.statSync(source).isFile() ? sha256(source) : null; } catch {}
     if (!expected || sourceHash !== expected) throw appError('ERR_PAYLOAD_HASH', { file: path.basename(source), reason: 'source-changed' });
-    const existing = findEntry(manifest, path.relative(gameDir, target));
+    const existing = require('./native-loader-target').nativeEntryForTarget(manifest, path.relative(gameDir, target));
     if (existing && fs.existsSync(target)) {
       const current = fs.statSync(target).isFile() ? sha256(target) : null;
       if (!existing.installedSha256 || current !== existing.installedSha256) {
@@ -413,8 +413,8 @@ function createInstaller(overrides = {}) {
 
   function managedTargetForRow(gameDir, manifest, row) {
     const original = journal.safePath(gameDir, row.rel);
-    if (row.kind !== 'reshade' || manifest.reshadeRoute !== 'd3d12') return { target: original, original, routed: null, ambiguous: false };
-    const routed = journal.safePath(gameDir, path.relative(gameDir, path.join(path.dirname(original), 'd3d12.dll')));
+    if (row.kind !== 'reshade') return { target: original, original, routed: null, ambiguous: false };
+    const routed = journal.safePath(gameDir, require('./native-loader-target').nativeTargetRel(manifest, row));
     if (path.resolve(original).toLowerCase() === path.resolve(routed).toLowerCase()) {
       return { target: original, original, routed, ambiguous: false };
     }
@@ -889,8 +889,7 @@ function createInstaller(overrides = {}) {
       for (const item of entries) {
         const row = manifest.files.find(row => row.rel === item.rel && row.kind === item.kind);
         if (!row || row.installedSha256 !== item.sha256) throw appError('ERR_BACKUP_INVALID');
-        const targetRel = row.kind === 'reshade' && manifest.reshadeRoute === 'd3d12' && path.basename(row.rel).toLowerCase() === 'dxgi.dll'
-          ? path.join(path.dirname(row.rel), 'd3d12.dll') : row.rel;
+        const targetRel = require('./native-loader-target').nativeTargetRel(manifest, row);
         if (item.targetRel && item.targetRel !== targetRel) throw appError('ERR_BACKUP_INVALID');
         const target = safe(gameDir, path.resolve(gameDir, targetRel));
         await noLinks(item.source); await noLinks(target);
@@ -926,14 +925,15 @@ function createInstaller(overrides = {}) {
 
     return journal.transaction(gameDir, async () => {
       const source = want ? dxgi : d3d12, destination = want ? d3d12 : dxgi;
-      const owned = manifest.files.find(row => row.kind === 'reshade' && path.basename(row.rel).toLowerCase() === 'dxgi.dll');
+      const owned = manifest.files.find(row => row.kind === 'reshade' &&
+        path.resolve(gameDir, require('./native-loader-target').nativeTargetRel(manifest, row)).toLowerCase() === source.toLowerCase());
       await noLinks(source); await noLinks(destination);
       if (!fs.existsSync(source) || (owned ? sha256(source) !== owned.installedSha256 : !want || !isAddonReShade(source))) throw appError('ERR_FILE_CHANGED');
       if (fs.existsSync(destination)) throw appError('ERR_D3D12_CONFLICT');
       if (want) {
         if (!fs.existsSync(dxgi)) throw appError('ERR_NOT_INSTALLED');
         if (fs.existsSync(d3d12)) throw appError('ERR_D3D12_CONFLICT');
-        if (!findEntry(manifest, path.relative(gameDir, dxgi))) {
+        if (!owned) {
           const entry = await recordOriginal(gameDir, manifest, dxgi, 'reshade');
           entry.installedSha256 = sha256(dxgi);
           entry.sourceName = path.basename(dxgi);
