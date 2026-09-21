@@ -21,7 +21,7 @@
   const hasFgComponents = assessment => ['installed', 'managed', 'receipt', 'needsRecovery', 'needsCleanup', 'fileRecoveryPending', 'fileOperationActive', 'migrationPending'].some(key => assessment?.enhancements?.fgComponents?.[key]);
   const TAB_SECTION = { overview: 'installation', nr: 'installation', enhance: 'enhancements' };
   const DETAIL_TAB = { overview: 'enhance', nr: 'graphics', enhance: 'advanced' };
-  const STANDARD_CORES = ['0.4.7beta', '0.5-dline21-unified3'];
+  const STANDARD_CORES = ['0.4.7beta', '0.5-dline21-unified5'];
   const COMPARISON_VERSION = '0.4.7beta-bg3-bridge1411';
   const coreLabel = value => String(value || '').replace(/(?:beta\s*0\.4\.7|0\.4\.7(?:-?beta)?)(?![\d.])/gi, '0.4.7beta');
   function adoptionMarkup(plan, prefix = 'gp') {
@@ -214,7 +214,7 @@
       return `<label class="gp-field"><span>${label}</span><select data-gp-group="${group}" data-gp-field="${key}"${disabled ? ' disabled' : ''}>${markup}</select>${note ? `<small>${note}</small>` : ''}</label>`;
     }
     function nrFields() {
-      const nr = { ...(data.nr || {}), ...(draft.nr || {}) }, available = Boolean(data.game.installed && data.nr && data.nr.status !== 'error' && data.nr.readable !== false);
+      const nr = { ...(data.nr || {}), ...(data.nr?.contract?.colourMemory && data.nr.effective?.ColorStrength != null ? { ColorStrength: data.nr.effective.ColorStrength } : {}), ...(draft.nr || {}) }, available = Boolean(data.game.installed && data.nr && data.nr.status !== 'error' && data.nr.readable !== false);
       if (data.nr?.capabilities?.Layer2Enabled === true) return uniformNrFields(nr, available);
       const primary = ['Intensity', 'LocalToneStrength', 'LocalStructureStrength'];
       const controls = rows => rows.map(([key, label, min, max, step]) => {
@@ -253,6 +253,7 @@
         ${(data.nr?.warnings || []).map(row => `<p class="gp-caption">${esc(row.message)}</p>`).join('')}
         <div class="gp-controls">${choice('ProcessingStart', '处理顺序', [['Before', '增强 → 放大'], ['After', '放大 → 增强'], ['Present', '自动兼容']])}
         ${choice('WorkMode', '统一工作模式', NR_CHOICES.WorkMode.map((label, value) => [value, label]))}${Number(nr.WorkMode) === 5 ? number('CustomWorkScale', '前置统一工作比例', 0, 1) : ''}${number('PostWorkPercent', '后置工作比例 %', 0, 100, 1)}${number('CompatPostPercent', '兼容工作比例 %', 50, 100, 1)}${number('TransferStrength', '最终增强', 1, 4)}${number('ColorStrength', 'AI 色彩')}</div>
+        ${capable('ColourLabMode') ? `<div class="gp-controls">${choice('ColourLabMode', '颜色策略', [[2, '保守 · 默认'], [1, '颜色优先 · 实验'], [0, '保留旧版许可设置']])}</div><p class="gp-caption">保守模式不放行未经确认的 HDR 颜色；颜色优先允许尝试。两种策略分别记住 AI 色彩强度，切换不会覆盖另一组。</p>` : ''}
         <p class="gp-caption">工作比例正常范围为 50–100%；自定义比例和后置比例设为 0 会停用增强。实际运行效果需在游戏内确认。</p>
         <section class="gp-layer"><h4>第 1 层</h4>${model('', 1)}</section>${[2, 3, 4, 5].map(layer => `<section class="gp-layer"><h4>${check('Layer' + layer + 'Enabled', '第 ' + layer + ' 层')}</h4>${nr['Layer' + layer + 'Enabled'] ? model('Layer' + layer, layer) : '<small>未启用，保留此层已保存参数。</small>'}</section>`).join('')}
         <details class="gp-nr-details" data-gp-detail="nr-common"><summary>光照、细节与保护</summary><div class="gp-controls">${choice('NRInputFilter', '输入滤波', [[0, '关闭'], [1, '开启']])}${number('LightingLock', '亮度锁定', 0, 1)}${number('EdgeGuard', '边缘保护', 0, 1)}${number('DetailStability', '细节稳定', 0, 1)}${choice('LightControlMode', '光照控制', [[0, '分项光照'], [1, '整体明暗']])}${choice('LightPreset', '光照预设', [[0, '原始'], [1, '自然'], [2, '减少光晕'], [3, '自定义']])}${number('LightBroad', '整体光照')}${number('LightDark', '暗部光照')}${number('LightReflection', '反射')}${number('LightStructure', '光照结构')}${number('LightGlow', '光晕', 0, 1)}</div><div class="gp-small-actions">${check('HighStrengthProtection', '高强度保护')}${check('ColorProtection', '色彩保护')}</div></details></section>`;
@@ -706,6 +707,15 @@
           input.setAttribute('aria-invalid', 'true');
         } else { delete invalidFields[invalidKey]; input.removeAttribute('aria-invalid'); }
         message = Object.values(invalidFields).join('；'); error = Boolean(message);
+        if (data.nr?.capabilities?.ColourLabMode && ['ColourLabMode', 'ColorStrength'].includes(key)) {
+          const current = { ...data.nr.effective, ...draft.nr };
+          const mode = key === 'ColourLabMode' ? value : current.ColourLabMode;
+          const bank = mode === 1 || mode === 0 && current.AllowUnverifiedHdrColor ? 'ColourPriorityStrength' : 'ColourConservativeStrength';
+          draft.nr = { ...draft.nr, [key]: value,
+            [bank]: key === 'ColorStrength' ? value : current[bank],
+            ColorStrength: key === 'ColorStrength' ? value : current[bank] };
+          render(); return;
+        }
         draft.nr = { ...(draft.nr || {}), [key]: value };
         if (value === data.nr?.[key]) delete draft.nr[key]; if (!Object.keys(draft.nr).length) delete draft.nr;
         const out = input.parentElement.querySelector('output'); if (out) out.textContent = key === 'SkinStructureStrength' && value === -1 ? '关闭' : value;

@@ -147,6 +147,16 @@ function inspectText(text, input = '') {
       raw: entry?.raw ?? null, saved: entry ? saved[key] : null, defaultValue: fallback, effective: value, effectiveKnown: contract.known, ...(entry ? { line: entry.index + 1 } : {}) };
   }
   const reasons = {};
+  if (contract.colourMemory) {
+    // Match the delivered Core's Win32 parser and two independent colour banks.
+    const mode = nativeInt('ColourLabMode', 2);
+    effective.ColourLabMode = !readRaw('ColourLabMode')?.value && readRaw('AllowUnverifiedHdrColor')?.value ? 0 : mode === 0 || mode === 1 ? mode : 2;
+    const priority = effective.ColourLabMode === 1 || effective.ColourLabMode === 0 && effective.AllowUnverifiedHdrColor !== 0;
+    const old = nativeFloat('ColorStrength', null);
+    effective.ColourPriorityStrength = clamp(nativeFloat('ColourPriorityStrength', priority && old !== null ? old : .7), 0, 2);
+    effective.ColourConservativeStrength = clamp(nativeFloat('ColourConservativeStrength', !priority && old !== null ? old : 1), 0, 2);
+    effective.ColorStrength = priority ? effective.ColourPriorityStrength : effective.ColourConservativeStrength;
+  }
   if (contract.dline) {
     const mode = readRaw('WorkMode'), scale = readRaw('CustomWorkScale'), modeValue = mode ? Number(mode.value) : 0, scaleValue = scale ? Number(scale.value) : 1;
     const exact = (entry, integer) => !entry || (integer ? /^[+-]?\d+$/.test(entry.value) : /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(entry.value));
@@ -249,6 +259,15 @@ function normalizePatch(patch, input) {
 function preparedPatch(text, patch, input) {
   const normalized = normalizePatch(patch || {}, input), contract = resolveContract(input);
   if (!contract.uniform) return normalized;
+  if (contract.colourMemory && ['ColourLabMode', 'AllowUnverifiedHdrColor', 'ColorStrength', 'ColourPriorityStrength', 'ColourConservativeStrength'].some(key => own(normalized, key))) {
+    const current = inspectText(text, input).effective;
+    const mode = normalized.ColourLabMode ?? current.ColourLabMode;
+    const priority = mode === 1 || mode === 0 && (normalized.AllowUnverifiedHdrColor ?? current.AllowUnverifiedHdrColor) !== 0;
+    const bank = priority ? 'ColourPriorityStrength' : 'ColourConservativeStrength';
+    for (const key of ['ColourPriorityStrength', 'ColourConservativeStrength']) normalized[key] ??= current[key];
+    if (own(normalized, 'ColorStrength')) normalized[bank] = normalized.ColorStrength;
+    normalized.ColorStrength = normalized[bank];
+  }
   if (own(normalized, 'TransferStrength') || own(normalized, 'PostTransferStrength')) {
     if (own(normalized, 'TransferStrength') && own(normalized, 'PostTransferStrength') && normalized.TransferStrength !== normalized.PostTransferStrength)
       fail('ERR_BAD_REQUEST', '当前 Core 的前后置最终强度共享一个值。');
@@ -354,7 +373,9 @@ function resetLayerPatch(layer, input = '') {
 function defaultPatch(input = '') {
   const contract = resolveContract(input);
   if (contract.uniform) return { ...resetLayerPatch(1, input), ...layerCountPatch(1, null, input), ProcessingStart: 'Before', WorkMode: 0, CustomWorkScale: 1,
-    TransferStrength: 1, PostTransferStrength: 1, ColorStrength: 1, LightingLock: 0, EdgeGuard: 0, DetailStability: 0, NRInputFilter: 0, HighStrengthProtection: 1, ColorProtection: 1 };
+    TransferStrength: 1, PostTransferStrength: 1, ColorStrength: 1,
+    ...(contract.colourMemory ? { ColourLabMode: 2, ColourPriorityStrength: .7, ColourConservativeStrength: 1 } : {}),
+    LightingLock: 0, EdgeGuard: 0, DetailStability: 0, NRInputFilter: 0, HighStrengthProtection: 1, ColorProtection: 1 };
   return Object.fromEntries(Object.entries(contract.known ? contract.defaults : LEGACY_DEFAULTS).filter(([key]) => !['Mode', 'UICorrection'].includes(key)));
 }
 

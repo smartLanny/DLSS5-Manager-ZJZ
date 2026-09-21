@@ -5,6 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { UNIFORM_SOURCE, resolveContract } = require('./nr-config-contract');
 const { noLinks } = require('./launch-safety');
+const unified5 = require('./unified5-core');
 
 // Public artifact identities from the reviewed bilingual delivery manifest.
 const UNIFORM_CORE_HASHES = Object.freeze([
@@ -33,10 +34,12 @@ function createNrCoreIdentity({ digest = streamDigest, checkPath = noLinks } = {
     try {
       const hash = await fingerprint(row.path, fresh), matchedReceipt = hash === row.sha256;
       const identity = { corePath: row.path, coreSha256: hash, matchedReceipt };
+      if (Object.values(unified5.HASHES).includes(hash)) return { version, configContract: unified5.CONTRACT,
+        sourceCommit: unified5.SOURCE, identityStatus: matchedReceipt ? 'verified' : 'known-core-receipt-drift', ...identity };
       if (UNIFORM_CORE_HASHES.includes(hash)) return { version, configContract: 'nr-uniform-v1', sourceCommit: UNIFORM_SOURCE,
         identityStatus: matchedReceipt ? 'verified' : 'known-core-receipt-drift', ...identity };
       const legacy = resolveContract(version);
-      if (matchedReceipt && legacy.known && !legacy.uniform) return { version, configContract: legacy.id, identityStatus: 'verified', ...identity };
+      if (matchedReceipt && legacy.known && !legacy.uniform && !/unified\d/i.test(version)) return { version, configContract: legacy.id, identityStatus: 'verified', ...identity };
       return unknown(matchedReceipt ? 'unrecognized' : 'changed', identity);
     } catch (error) { return unknown('unreadable', { error: { code: error.code || 'ERR_NR_CORE_IDENTITY', message: error.message } }); }
   };

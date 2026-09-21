@@ -295,7 +295,7 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
         !Array.isArray(input.files) || input.files.length < 2 || input.files.length > 11) fail('Core 组件身份不完整。');
     const companions = require('./payload-companions');
     const allowed = new Set(['nr-before-sr.zh-CN.addon64','nrchain_nvngx.dll','nr_before_sr.ini',
-      ...(input.id === '0.5-dline21-unified3' ? [require('./constants').DX11_COMPAT_CARRIER] : []), ...companions.NAMES]);
+      ...(companions.required(input.id) ? [require('./constants').DX11_COMPAT_CARRIER] : []), ...companions.NAMES]);
     const seen = new Set(), staged = [];
     for (const row of input.files) {
       if (!row || !allowed.has(row.name) || seen.has(row.name) || !Buffer.isBuffer(row.bytes) || !HASH.test(row.sha256 || '') ||
@@ -377,13 +377,13 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
         capabilities: core.capabilities || [], coreUpdateOnly: core.coreUpdateOnly === true, comparisonOnly: false,
         ota: core.coreUpdateOnly === true, stableRelease: core.stableRelease === true,
         validation: core.validation || 'candidate', blockers: core.blockers || [],
-        compatibility: core.id === '0.5-dline21-unified3' ? base.versions[templateVersion]?.compatibility || 'dx11' : null };
+        compatibility: require('./payload-companions').required(core.id) ? base.versions[templateVersion]?.compatibility || 'dx11' : null };
       delete entry.companions;
       const resourceRows = core.files.filter(row => require('./payload-companions').isCompanionName(row.name));
       const companionMap = require('./payload-companions').validateMap(resourceRows.length ? Object.fromEntries(resourceRows.map(row => [row.name, row.sha256])) : undefined, core.id);
       if (resourceRows.length) entry.companions = companionMap;
       const sources = { 'nr-before-sr.zh-CN.addon64': addons[0] };
-      for (const name of ['nrchain_nvngx.dll','nr_before_sr.ini', ...(core.id === '0.5-dline21-unified3' ? [require('./constants').DX11_COMPAT_CARRIER] : [])]) { const file = core.files.find(f => path.basename(f.name) === name); if (file) sources[name] = file; }
+      for (const name of ['nrchain_nvngx.dll','nr_before_sr.ini', ...(require('./payload-companions').required(core.id) ? [require('./constants').DX11_COMPAT_CARRIER] : [])]) { const file = core.files.find(f => path.basename(f.name) === name); if (file) sources[name] = file; }
       for (const [name, file] of Object.entries(sources)) entry.files[name] = file.sha256;
       for (const [name, hash] of Object.entries(entry.files)) {
         // A new independent Core never inherits an old private carrier.

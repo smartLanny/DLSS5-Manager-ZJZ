@@ -14,7 +14,7 @@ function installScenario() {
   const api = window.manager, mock = window.__gpMock, ok = value => ({ ok: true, value: structuredClone(value) });
   mock.launchCount = 0; mock.adoption = true; mock.proxyUnknown = false; mock.hostKind = 'reshade-standard';
   for (const value of Object.values(mock.assessments)) {
-    value.coreVersions = [{ id: '0.4.7beta', label: '0.4.7beta', ready: true }, { id: '0.5-dline21-unified3', label: '0.5 unified3', ready: true }, { id: '0.4.2', label: '0.4.2', ready: true }];
+    value.coreVersions = [{ id: '0.4.7beta', label: '0.4.7beta', ready: true }, { id: '0.5-dline21-unified5', label: '0.5 unified5', ready: true }, { id: '0.4.2', label: '0.4.2', ready: true }];
     value.waiting = { pending: false };
   }
   const assess = api.assessGame, apply = api.applyOperation, preview = api.previewOperation;
@@ -62,7 +62,7 @@ async function smoke() {
   await until(() => ctrl('fixture')?.getState().loaded.includes('installation'), 'installed page');
   check([...host('fixture').querySelectorAll('[data-gp-tab]')].map(n => n.textContent).join('|') === '安装与启动|NR 画面增强|DLSS 超分与补帧', 'exactly three task pages');
   check(!host('fixture').querySelector('[data-gp-field="Intensity"]'), 'installation page does not mix NR controls');
-  check([...host('fixture').querySelector('.gp-install-section [data-gp-field="version"]').options].map(n => n.value).join('|') === '0.4.7beta|0.5-dline21-unified3', 'main Core selector has the two supported choices');
+  check([...host('fixture').querySelector('.gp-install-section [data-gp-field="version"]').options].map(n => n.value).join('|') === '0.4.7beta|0.5-dline21-unified5', 'main Core selector has the two supported choices');
   check(Boolean(host('fixture').querySelector('[data-gp-detail="rollback"] option[value="0.4.2"]')), 'historical Core stays in rollback controls');
   check(!visible(card('fixture').querySelector('.unified-launch-btn')), 'expanded ordinary card hides duplicate header action');
   check(host('fixture').querySelectorAll('.gp-apply-bar .primary').length === 1, 'ordinary page has one primary action');
@@ -110,14 +110,14 @@ async function smoke() {
   check([...hoyoHost().querySelectorAll('.button.primary')].filter(visible).length === 1, 'installed HoYo uses one shared primary action');
   check(!hoyo.calls.some(row => row[0] === 'start'), 'HoYo install never starts automatically');
   const corePicker = () => hoyoHost().querySelector('[data-gp-group="route"][data-gp-field="version"]');
-  check(Boolean(corePicker()) && [...corePicker().options].filter(row => ['0.4.7beta', '0.5-dline21-unified3'].includes(row.value)).every(row => row.disabled), 'HoYo Feeder shows Core choices with honest compatibility limits');
+  check(Boolean(corePicker()) && [...corePicker().options].filter(row => ['0.4.7beta', '0.5-dline21-unified5'].includes(row.value)).every(row => row.disabled), 'HoYo Feeder shows Core choices with honest compatibility limits');
   const hoAssessment = mock.assessments['fixture-hoyo'];
   hoAssessment.layout.inputRoute = 'native'; hoAssessment.game.nativeDlssAvailable = true; hoAssessment.game.feeder = null;
   await hoyoHost().querySelector('.hoyo-settings-host').__gpController.refresh();
-  check([...corePicker().options].some(row => row.value === '0.5-dline21-unified3' && !row.disabled), 'HoYo native input exposes the standard 0.5 switch in the shared page');
-  change(hoyoHost(), 'route', 'version', '0.5-dline21-unified3'); click(hoyoHost(), 'preview');
+  check([...corePicker().options].some(row => row.value === '0.5-dline21-unified5' && !row.disabled), 'HoYo native input exposes the standard 0.5 switch in the shared page');
+  change(hoyoHost(), 'route', 'version', '0.5-dline21-unified5'); click(hoyoHost(), 'preview');
   await until(() => !hoyoHost().querySelector('.hoyo-settings-host').__gpController.getState().busy, 'HoYo Core apply');
-  check(mock.calls.some(row => row[0] === 'request' && row[1].version === '0.5-dline21-unified3' && row[2] === 'fixture-hoyo'), 'HoYo Core selection follows the same operation contract');
+  check(mock.calls.some(row => row[0] === 'request' && row[1].version === '0.5-dline21-unified5' && row[2] === 'fixture-hoyo'), 'HoYo Core selection follows the same operation contract');
   check(!hoyo.calls.some(row => row[0] === 'start'), 'HoYo Core apply never launches');
   hoyoHost().querySelector('[data-gp-tab="nr"]').click(); change(hoyoHost(), 'nr', 'Intensity', '1.35');
   check([...hoyoHost().querySelectorAll('.button.primary')].filter(visible).length === 1 && hoyoHost().querySelector('.gp-apply-bar .primary').textContent === '应用', 'HoYo draft uses the shared Apply action');

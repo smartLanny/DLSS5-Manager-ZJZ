@@ -245,21 +245,24 @@ function standardPackage(entries, archiveSha256) {
 
 function dx11Package(entries, archiveSha256) {
   const buildInfo = parseJson(entries.get('build-info.json'), 'build-info.json');
-  if (archiveSha256 === UNIFIED3_ARCHIVE && buildInfo.version === 'beta0.5-dline21-unified3' &&
-      buildInfo.source_commit === '7a90660bc468ca86a02abe2e145638b51489d549' && buildInfo.language === 'zh-CN' &&
+  const u5 = require('./unified5-core');
+  const isUnified5 = archiveSha256 === '55d044a6739ba89b8411f33fe0a336fc5de1477c216db3c6672ebaab572c4162';
+  const unifiedId = isUnified5 ? u5.ID : '0.5-dline21-unified3';
+  if ((isUnified5 || archiveSha256 === UNIFIED3_ARCHIVE) && buildInfo.version === `beta${unifiedId}` &&
+      buildInfo.source_commit === (isUnified5 ? u5.SOURCE : '7a90660bc468ca86a02abe2e145638b51489d549') && buildInfo.language === 'zh-CN' &&
       buildInfo.full_face_backend === true && buildInfo.game_runtime_verified === false && buildInfo.stable_release === false) {
     const rows = verifyRows(entries, parseJson(entries.get('SHA256.json'), 'SHA256.json'), 'file', 'SHA256.json');
-    const addon = exactlyOne(rows, row => row.sha256 === '01b4155dcca346f6b3485f210191baaaf4af6faa9dfb9b29302c8f7e36ae3c93' && /\.addon64$/i.test(row.name), 'unified3 Core');
+    const addon = exactlyOne(rows, row => row.sha256 === (isUnified5 ? u5.HASHES['zh-CN'] : '01b4155dcca346f6b3485f210191baaaf4af6faa9dfb9b29302c8f7e36ae3c93') && /\.addon64$/i.test(row.name), `${unifiedId} Core`);
     const bridge = exactlyOne(rows, row => row.name === 'nrchain_nvngx.dll' && row.sha256 === D21_BRIDGE_SHA256, 'unified3 NR chain');
-    const carrier = exactlyOne(rows, row => row.name === DX11_CARRIER && row.sha256 === 'eb604bc1149da67492660a6d9e6dc622ca8fbcd247f67f8592aabc7cee633900', 'unified3 DX11 carrier');
+    const carrier = exactlyOne(rows, row => row.name === DX11_CARRIER && row.sha256 === (isUnified5 ? u5.CARRIER : 'eb604bc1149da67492660a6d9e6dc622ca8fbcd247f67f8592aabc7cee633900'), `${unifiedId} DX11 carrier`);
     const policy = require('./payload-companions'), companions = rows.filter(row => policy.isCompanionName(row.name));
-    policy.validateMap(Object.fromEntries(companions.map(row => [row.name, row.sha256])), '0.5-dline21-unified3');
+    policy.validateMap(Object.fromEntries(companions.map(row => [row.name, row.sha256])), unifiedId);
     return result(buildInfo, addon, bridge, carrier, 'dx11', instructionText(entries, ['安装说明.txt']), {
       archiveSha256, companions,
-      canonicalCore: { id: '0.5-dline21-unified3', version: '0.5 D21 unified3', variant: 'zh-CN', architecture: 'x64',
+      canonicalCore: { id: unifiedId, version: isUnified5 ? '0.5 Unified5' : '0.5 D21 unified3', variant: 'zh-CN', architecture: 'x64',
         interface: 'NGX-D3D12-Feature1', inputInterfaces: ['NGX-D3D12-Feature1'], supportsPresent: true,
         capabilities: ['same-frame-output'], validation: 'candidate', stableRelease: false, coreUpdateOnly: false,
-        blockers: ['具体游戏和 NVIDIA 实机尚未验证；此 Core 未声明外部 Provider V1 接口。'] }
+        blockers: [isUnified5 ? 'Provider V1 已实现；与 Feeder 成品及实际游戏的配套验收未完成，不自动启用外部路线。' : '具体游戏和 NVIDIA 实机尚未验证；此 Core 未声明外部 Provider V1 接口。'] }
     });
   }
   // Core acceptance archives share the metadata filenames, but are not a
