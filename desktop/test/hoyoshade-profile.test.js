@@ -42,6 +42,30 @@ test('formal client table selects eleven channel mappings by the actual EXE and 
   assert.equal(new Set(HOYO_CLIENTS.map(row => row.gameBiz)).size, 11);
 });
 
+test('HoYo rescue reconnects an externally edited loader INI, restores a deleted helper and can clean then reinstall', async t => {
+  const f = fixture(t), original = await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = original.layout.runtimeDir, rootIni = path.join(f.dir, 'ReShade.ini');
+  const loader = path.join(runtime, 'ReShade64.dll');
+  const foreign = path.join(f.root, 'unknown-settings'); fs.mkdirSync(foreign); fs.writeFileSync(path.join(foreign, 'private.ini'), 'private');
+  const edited = `[GENERAL]\nBasePath=${foreign}\n[ADDON]\nAddonPath=${foreign}\n`;
+  fs.writeFileSync(rootIni, edited); fs.unlinkSync(loader);
+  const preview = await f.external.previewRescue(f.game, 'repair');
+  assert.equal(fs.existsSync(loader), false); assert.equal(fs.readFileSync(rootIni, 'utf8'), edited);
+  const result = await f.external.applyRescue(f.game, preview.planId, { confirm: true });
+  assert.equal(hash(fs.readFileSync(loader)), HOYO_RECIPE.loaderSha256);
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  assert.equal((await f.service.inspect(f.game)).loadingBackend, 'hoyoshade');
+  const archive = JSON.parse(fs.readFileSync(path.join(result.archiveDirectory, 'operation.json')));
+  const row = archive.files.find(item => item.file === rootIni);
+  assert.equal(fs.readFileSync(path.join(result.archiveDirectory, row.snapshot), 'utf8'), edited);
+  fs.unlinkSync(path.join(runtime, INSTALLED_NAMES.addon)); fs.writeFileSync(rootIni, edited);
+  const clean = await f.external.previewRescue(f.game, 'clean'); await f.external.applyRescue(f.game, clean.planId, { confirm: true });
+  assert.equal(fs.existsSync(loader), false); assert.equal(fs.readFileSync(path.join(foreign, 'private.ini'), 'utf8'), 'private');
+  assert.equal(fs.readFileSync(rootIni, 'utf8'), f.original);
+  await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+});
+
 test('first HoYo installation uses helper directly, stable preview layout and original INI preservation; restore leaves user presets intact', async t => {
   const f = fixture(t), a = await f.service.preview(f.game, f.request), b = await f.service.preview(f.game, f.request);
   assert.equal(a.origin, 'direct_hoyo'); assert.equal(a.loadingMode, 'helper'); assert.equal(a.layout.generation, b.layout.generation);

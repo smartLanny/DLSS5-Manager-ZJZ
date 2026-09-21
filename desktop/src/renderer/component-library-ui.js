@@ -3,7 +3,9 @@
   const $ = id => document.getElementById(id), message = $('componentLibraryMessage');
   const labels = { bridge: 'Bridge', feeder: 'Feeder', mfg: 'RTX 40 多帧生成', 'dlssg-sm86': 'RTX 20/30 多帧生成',
     'nr-runtime': '显卡运行库 DLC', core: 'Core', host: 'Feeder 运行宿主', 'user-addon': '用户插件', 'custom-candidate': '自定义候选' };
-  const unwrap = result => { if (result?.ok === false) throw new Error(result.error?.message || '组件操作失败'); return result?.ok === true ? result.value : result; };
+  const unwrap = result => { if (result?.ok === false) throw Object.assign(new Error(result.error?.message || '组件操作失败'), result.error); return result?.ok === true ? result.value : result; };
+  const errorText = value => `${value?.code ? `[${value.code}] ` : ''}${value?.message || value || '组件操作失败'}`;
+  const operationLabel = key => { const [action, kind] = key.split(':'); return kind ? labels[kind] || kind : ({ runtime: '显卡运行库 DLC', import: '组件导入', move: '组件库移动', refresh: '组件列表', updates: '组件更新检查' })[action] || '游戏组件搭配'; };
   const add = (parent, tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; parent.append(node); return node; };
   const label = kind => labels[kind] || kind;
   const running = new Set();
@@ -114,7 +116,7 @@
         add(card, 'span', '', item.label); add(card, 'strong', '', item.value); add(card, 'small', '', item.detail || '');
       }
     } catch (error) {
-      if (generation === routeGeneration) { host.replaceChildren(); add(host, 'p', 'error', error.message); }
+      if (generation === routeGeneration) { host.replaceChildren(); add(host, 'p', 'error', errorText(error)); }
     }
   }
   async function perform(button, key, progress, action) {
@@ -122,7 +124,7 @@
     running.add(key); button.disabled = true; message.textContent = progress;
     let outcome;
     try { outcome = await action(); await refreshComponents(); }
-    catch (error) { outcome = error.message; }
+    catch (error) { outcome = `${operationLabel(key)}：${errorText(error)}`; }
     finally {
       running.delete(key); button.disabled = false;
       if (!button.isConnected) await refreshComponents().catch(() => {});
@@ -150,16 +152,16 @@
   bind('checkComponentUpdatesBtn', 'updates', '正在检查更新…', async () => {
     const results = unwrap(await window.manager.checkComponentUpdates());
     const failures = results.filter(row => row.error);
-    return failures.length ? `${failures.map(row => label(row.kind)).join('、')}暂时无法检查更新；可以继续使用内置组件。` : '检查完成，兼容更新显示在下方。';
+    return failures.length ? `${failures.map(row => `${label(row.kind)}：${errorText(row.error)}`).join('；')}。可以继续使用内置组件。` : '检查完成，兼容更新显示在下方。';
   });
   $('componentRuntimeHelpBtn').onclick = () => window.manager.openExternal('runtimePacksUrl');
   $('componentRouteGameSelect').onchange = () => void refreshComponentRoute();
   $('componentRouteDetails').addEventListener('toggle', () => { if ($('componentRouteDetails').open) void refreshComponentRoute(true); });
   window.addEventListener('manager-components-changed', () => {
-    if (loaded) refreshComponents().catch(error => { message.textContent = error.message; });
+    if (loaded) refreshComponents().catch(error => { message.textContent = errorText(error); });
   });
   const view = $('view-addons');
-  const loadIfVisible = () => { if (view.classList.contains('active') && !loaded) refreshComponents().catch(error => { message.textContent = error.message; }); };
+  const loadIfVisible = () => { if (view.classList.contains('active') && !loaded) refreshComponents().catch(error => { message.textContent = errorText(error); }); };
   new MutationObserver(loadIfVisible).observe(view, { attributes: true, attributeFilter: ['class'] });
   loadIfVisible();
 })();

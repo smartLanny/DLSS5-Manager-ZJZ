@@ -67,7 +67,7 @@ async function digest(file) {
 }
 function createExternalRuntime(options) {
   if (!path.isAbsolute(options.userData || '')) fail('CONFIG', '外置运行目录需要绝对用户目录。');
-  const base = path.join(path.resolve(options.userData), 'external-runtime'), plans = new Map();
+  const base = path.join(path.resolve(options.userData), 'external-runtime'), plans = new Map(), rescuePlans = new Map();
   const copy = options.copyFile || fsp.copyFile;
   const guards = options.guards || require('../core/install-guards');
   const pe = options.pe || require('../core/pe');
@@ -295,8 +295,11 @@ function createExternalRuntime(options) {
   }
   async function inspect(game) {
     const t = target(game), saved = record(t), interrupted = pending(t), localManifest = readManifest(t.gameRoot);
+    const localPending = fs.existsSync(path.join(t.gameRoot, '_DLSS5_Backup/pending-switch.json'));
     let layout; try { layout = getLayout(game); } catch (error) {
-      layout = { mode: saved?.mode || 'local', verified: false, blockers: [error.message], needsRecovery: Boolean(interrupted) };
+      layout = { mode: saved?.mode || 'local', runtimeDir: saved?.mode === 'external' ? t.runtimeDir : t.dir,
+        verified: false, blockers: [error.message], needsRecovery: Boolean(interrupted),
+        errorCode: error.code, errorDetails: error.details };
     }
     const files = [];
     if (saved?.mode === 'external' && !interrupted) for (const row of saved.files) {
@@ -304,12 +307,14 @@ function createExternalRuntime(options) {
       try { actual = await digest(path.join(t.runtimeDir, row.name)); } catch (error) { reason = error.message; }
       files.push({ ...row, actual, valid: actual !== null && (row.mutable || actual === row.sha256), reason });
     }
-    return { ...layout, installed: Boolean(saved?.mode === 'external' || localManifest), pending: Boolean(interrupted),
+    return { ...layout, installed: Boolean(saved?.mode === 'external' || localManifest), pending: Boolean(interrupted || localPending),
+      needsRecovery: Boolean(interrupted || localPending),
       canRestore: Boolean(interrupted || saved?.mode === 'external'), version: saved?.mode === 'external' ? saved.payloadVersion : localManifest?.payloadVersion || null,
       api: saved?.api || classifyApi(game.scan?.chosen || game.chosen), baseline: saved?.baseline || null,
       previous: saved?.previous || null, current: saved ? { generation: saved.generation, mode: saved.mode, version: saved.payloadVersion,
         runtimeDir: saved.mode === 'external' ? t.runtimeDir : t.dir } : null,
-      files, ready: Boolean(saved?.mode === 'external' || localManifest) && !interrupted && layout.verified && files.every(row => row.valid), runtimeVerified: false };
+      rescue: { available: Boolean(interrupted || saved?.mode === 'external'), pending: Boolean(interrupted) },
+      files, ready: Boolean(saved?.mode === 'external' || localManifest) && !interrupted && !localPending && layout.verified && files.every(row => row.valid), runtimeVerified: false };
   }
   async function publish(temp, destination, replacing) {
     if (options.publish) return options.publish(temp, destination, replacing);
@@ -343,7 +348,7 @@ function createExternalRuntime(options) {
     if (!UUID.test(operation) || !/^(?:before|after)\/[0-9]+\.bin$/.test(name)) fail('RECOVERY_INVALID', '外置快照位置无效。');
     return path.join(t.ownerRoot, 'history', operation, name);
   }
-  async function validateWal(t, wal) {
+  async function validateWal(t, wal, allowChanged = false) {
     if (!wal || wal.product !== PRODUCT || wal.version !== 1 || wal.id !== t.id || !UUID.test(wal.operation || '') ||
         key(wal.exe || '.') !== key(t.exe) || key(wal.gameRoot || '.') !== key(t.gameRoot) ||
         (wal.profileId || null) !== (t.profileId || null) ||
@@ -365,7 +370,7 @@ function createExternalRuntime(options) {
       if (row.before !== null && await digest(historyFile(t, wal.operation, row.snapshot)) !== row.before)
         fail('BACKUP_CHANGED', '原始快照缺失或被修改，已保留恢复记录。');
       const current = await digest(row.file);
-      if (current !== row.before && current !== row.after) fail('FILE_CHANGED', '部署目标被外部改变，未覆盖。', { file: row.file });
+      if (!allowChanged && current !== row.before && current !== row.after) fail('FILE_CHANGED', '部署目标被外部改变，未覆盖。', { file: row.file });
     }
   }
   async function rollback(t, wal) {
@@ -644,7 +649,12 @@ function createExternalRuntime(options) {
       }
       return true;
     }
-    for (const entry of await fsp.readdir(t.runtimeDir, { withFileTypes: true })) {
+    if (saved.uninstallMode === 'rescue-clean') {
+      const proof = history.files.find(row => row.role === 'receipt' && key(row.file) === key(t.receipt));
+      if (!proof || proof.after !== await digest(t.receipt)) fail('PROFILE_EXISTS', '环境清理记录与归档不一致，未复用旧目录。');
+      // Explicit rescue detached this entire profile. Unknown files remain in
+      // the inactive directory; the next install gets a separate generation.
+    } else for (const entry of await fsp.readdir(t.runtimeDir, { withFileTypes: true })) {
       const file = path.join(t.runtimeDir, entry.name); noLinksSync(file);
       if (entry.name === '_DLSS5_Backup' && entry.isDirectory()) continue;
       // Feeder restores its owned shader files but deliberately leaves empty
@@ -1132,6 +1142,138 @@ function createExternalRuntime(options) {
     active.add(t.id); try { const wal = pending(t); return wal ? await rollback(t, wal) : { recovered: false }; }
     finally { active.delete(t.id); }
   }
+  // An edited loader INI is a binding conflict, not proof of a running file
+  // transaction. Rescue uses receipt/WAL paths only, never paths from that INI.
+  // It has a separate preview token so ordinary apply cannot bypass consent.
+  async function rescueSource(t, saved, file, expected) {
+    const root = path.join(t.ownerRoot, 'history'); await noLinks(root);
+    const entries = await fsp.readdir(root, { withFileTypes: true });
+    if (entries.length > 512) fail('RESCUE_HISTORY_LIMIT', '恢复历史过多，请先保存反馈；仍可只移出游戏库。');
+    const ids = [...new Set([saved.generation, saved.initialOperation, ...entries.filter(row => row.isDirectory() && UUID.test(row.name)).map(row => row.name)])].filter(value => UUID.test(value || ''));
+    for (const id of ids) {
+      const wal = readJson(path.join(root, id, 'operation.json'));
+      if (wal?.product !== PRODUCT || wal.id !== t.id || wal.operation !== id || key(wal.exe || '.') !== key(t.exe) ||
+          key(wal.gameRoot || '.') !== key(t.gameRoot) || !Array.isArray(wal.files) || wal.files.length > 256) continue;
+      const row = wal.files.find(value => typeof value.file === 'string' && key(value.file) === key(file) && value.after === expected);
+      if (row && /^after\/[0-9]+\.bin$/.test(row.prepared || '')) {
+        const source = historyFile(t, id, row.prepared);
+        if (await digest(source) === expected) return source;
+      }
+    }
+    fail('RESCUE_SOURCE_MISSING', '该组件的已验证快照缺失，无法补齐；可选择备份清理受管环境后重新安装。', { file });
+  }
+  async function previewRescue(game, mode) {
+    if (!['repair', 'clean', 'recover'].includes(mode)) fail('RESCUE_REQUEST', '请选择修复、清理或处理未完成部署。');
+    const t = target(game, true); await closed(t);
+    if (active.has(t.id)) fail('BUSY', '该游戏正在部署。');
+    const wal = pending(t), saved = mode === 'recover' ? null : record(t);
+    const operation = crypto.randomUUID(), operations = [], warnings = [];
+    const receiptHash = await digest(t.receipt), pendingHash = await digest(t.pending), exeHash = await digest(t.exe);
+    if (!exeHash) fail('TARGET', '游戏程序已缺失，请重新定位正式 EXE；也可以只移出游戏库并保留文件。');
+    const add = async (file, role, after, source, bytes) => {
+      if (!allowed(t, file, role)) fail('TARGET', '恢复计划含未知目标。');
+      if (operations.some(row => key(row.file) === key(file))) return;
+      const before = await digest(file);
+      operations.push({ file, role, before, after, ...(source ? { source } : {}), ...(bytes !== undefined ? { bytes } : {}) });
+    };
+    if (mode === 'recover') {
+      if (!wal) fail('RESCUE_NO_PENDING', '没有未完成的外置事务；请使用“修复运行目录”。');
+      await validateWal(t, wal, true);
+      for (const row of wal.files) await add(row.file, row.role, row.before,
+        row.before === null ? null : historyFile(t, wal.operation, row.snapshot));
+    } else {
+      await assertReady(game);
+      if (saved?.mode !== 'external') fail('RESCUE_NOT_EXTERNAL', '没有可核实的受管外置环境；可以只移出游戏库，保留文件与恢复记录。');
+      const rootIni = path.join(t.dir, 'ReShade.ini');
+      if (mode === 'repair') {
+        const bytes = Buffer.from(loaderConfig(saved.originalReShadeConfig, t.runtimeDir));
+        if (hash(bytes) !== saved.loaderConfigHash) fail('RESCUE_RECORD', '原运行目录配置与记录不一致，未重建路径。');
+        await add(rootIni, 'reshade-config', saved.loaderConfigHash, null, bytes);
+        for (const row of saved.files) {
+          const file = path.join(t.runtimeDir, row.name), current = await digest(file);
+          if (current === row.sha256 || row.mutable && current !== null) continue;
+          await add(file, row.role, row.sha256, await rescueSource(t, saved, file, row.sha256));
+        }
+        const config = path.join(t.runtimeDir, 'ReShade.ini');
+        if (await digest(config) === null) {
+          const history = readJson(path.join(t.ownerRoot, 'history', saved.generation, 'operation.json'));
+          const proof = history?.files?.find(row => key(row.file || '.') === key(config) && row.role === 'reshade-config' && HASH.test(row.after || ''));
+          if (!proof) fail('RESCUE_SOURCE_MISSING', '运行目录配置快照缺失，请备份清理后重新安装。', { file: config });
+          await add(config, 'reshade-config', proof.after, await rescueSource(t, saved, config, proof.after));
+        }
+        if (saved.loadingMode !== 'helper' && saved.proxy) {
+          const file = path.join(t.dir, saved.proxy.name);
+          if (await digest(file) !== saved.proxy.sha256) await add(file, 'game-proxy', saved.proxy.sha256, await rescueSource(t, saved, file, saved.proxy.sha256));
+        }
+        warnings.push({ message: '恢复记录对应的版本和路径；保留现有个人 INI。需要切换 Core 时，请在修复后再应用所选版本。' });
+      } else {
+        // Do not orphan an independent FG owner by silently detaching its
+        // runtime. Repair the binding first so its own recovery stays reachable.
+        for (const name of ['xiaofeng-fg-components.json', 'xiaofeng-fg-sm86.json', 'xiaofeng-fg-migration.json']) {
+          if (fs.existsSync(path.join(t.runtimeDir, '_DLSS5_Backup', name)))
+            fail('RESCUE_COMPONENTS_FIRST', '外置目录仍有补帧恢复记录。请先修复运行目录并恢复补帧；只移出库始终可用。', { file: path.join(t.runtimeDir, '_DLSS5_Backup', name) });
+        }
+        for (const row of saved.files) await add(path.join(t.runtimeDir, row.name), row.role, null);
+        await add(path.join(t.runtimeDir, 'ReShade.ini'), 'reshade-config', null);
+        if (saved.proxy && saved.loadingMode !== 'helper') await add(path.join(t.dir, saved.proxy.name), 'game-proxy', null);
+        const bytes = saved.originalConfigExisted ? Buffer.from(saved.originalReShadeConfig) : undefined;
+        await add(rootIni, 'reshade-config', bytes === undefined ? null : hash(bytes), null, bytes);
+        const next = { ...saved, generation: operation, mode: 'local', loadingMode: 'proxy', removed: true, uninstallMode: 'rescue-clean',
+          updatedAt: new Date().toISOString(), loaderConfigHash: hash(Buffer.from(saved.originalReShadeConfig)),
+          previous: { mode: 'external', version: saved.payloadVersion, generation: saved.generation, snapshot: operation,
+            snapshotDirectory: path.join(t.ownerRoot, 'history', operation) } };
+        const receiptBytes = jsonBytes(next); await add(t.receipt, 'receipt', hash(receiptBytes), null, receiptBytes);
+        warnings.push({ message: '现有受管文件（包括被改过的文件）先归档再移除；原来隔离的旧插件继续保留在备份，不重新启用。未知目录与无关插件不处理。' });
+      }
+    }
+    const planId = crypto.randomUUID(), archiveDirectory = path.join(t.ownerRoot, 'history', operation);
+    rescuePlans.set(planId, { game, target: t, operation, mode, operations, wal, receiptHash, pendingHash, exeHash, expires: Date.now() + 5 * 60 * 1000 });
+    return { planId, mode, gameId: game.id, archiveDirectory, requiresConfirmation: true, requiresAntiCheat: Boolean(guards.antiCheatPresent?.(t.gameRoot)),
+      scope: '仅处理原部署记录绑定的文件。当前文件逐项备份，未知 ReShade 路径不扫描、不删除；取消不改文件。', warnings, blockers: [],
+      changes: operations.map(row => ({ path: row.file, name: path.basename(row.file), beforeSha256: row.before, afterSha256: row.after,
+        action: row.before === row.after ? 'keep' : row.after === null ? 'remove' : row.before === null ? 'create' : 'replace' })) };
+  }
+  async function applyRescue(game, planId, consent = {}) {
+    if (consent.confirm !== true) fail('RESCUE_CONFIRM_REQUIRED', '请先确认逐文件恢复清单。');
+    const plan = rescuePlans.get(planId), t = target(game, true);
+    if (!plan || plan.game.id !== game.id || plan.target.id !== t.id || plan.expires < Date.now()) fail('PLAN_EXPIRED', '恢复预览已失效，请重新检查。');
+    if (active.has(t.id)) fail('BUSY', '该游戏正在部署。');
+    rescuePlans.delete(planId); active.add(t.id);
+    try {
+      await closed(t);
+      if (guards.antiCheatPresent?.(t.gameRoot) && consent.allowAntiCheat !== true)
+        throw Object.assign(new Error('请先确认本次部署风险。'), { code: 'ERR_ANTI_CHEAT_CONFIRM' });
+      if (await digest(t.exe) !== plan.exeHash || await digest(t.receipt) !== plan.receiptHash || await digest(t.pending) !== plan.pendingHash)
+        fail('PLAN_CHANGED', '预览后游戏或恢复记录已改变，请重新检查。');
+      for (const row of plan.operations) if (await digest(row.file) !== row.before) fail('PLAN_CHANGED', '预览后文件已改变，请重新检查。', { file: row.file });
+      const archiveDirectory = path.join(t.ownerRoot, 'history', plan.operation);
+      if (plan.mode === 'recover') {
+        await validateWal(t, plan.wal, true);
+        const adjusted = structuredClone(plan.wal), conflicts = [];
+        for (let i = 0; i < adjusted.files.length; i++) {
+          const row = adjusted.files[i], current = plan.operations[i].before;
+          if (current === row.before || current === row.after) continue;
+          const archive = path.join(archiveDirectory, 'conflicts', i + '.bin');
+          if (current !== null) await snapshot(row.file, archive, current);
+          conflicts.push({ path: row.file, sha256: current, archive: current === null ? null : archive });
+          row.after = current;
+        }
+        // Archive both the old mapping and conflicting bytes before replacing
+        // the WAL. After a crash normal recovery can finish this exact rollback.
+        await atomicJson(path.join(archiveDirectory, 'rescue.json'), { mode: plan.mode, originalWal: plan.wal, conflicts });
+        for (const row of plan.operations) if (await digest(row.file) !== row.before) fail('PLAN_CHANGED', '归档期间文件已改变，请重新检查。', { file: row.file });
+        if (await digest(t.pending) !== plan.pendingHash) fail('PLAN_CHANGED', '恢复记录已改变。');
+        await closed(t); await atomicJson(t.pending, adjusted);
+        await rollback(t, adjusted);
+      } else {
+        await assertReady(game);
+        await transaction(t, plan);
+      }
+      return { applied: true, rescued: true, mode: plan.mode, recovered: plan.mode === 'recover', removed: plan.mode === 'clean',
+        archiveDirectory, runtimeVerified: false, notice: plan.mode === 'clean' ? '已归档并清理受管外置环境；可重新预览安装。'
+          : plan.mode === 'recover' ? '已归档外部改动并恢复文件事务；请继续检查其他未完成操作。' : '已重连原运行目录并补齐可核实文件；请重新检查后应用所选 Core。' };
+    } finally { active.delete(t.id); }
+  }
   function direct(game) { const saved = record(target(game)); return saved?.mode === 'external' && ['direct', 'direct_hoyo'].includes(saved.origin); }
   async function previewRemove(game, mode = 'restore', internal = {}) {
     const t = target(game), saved = record(t); await closed(t); await assertReady(game);
@@ -1216,7 +1358,9 @@ function createExternalRuntime(options) {
     return { ...await apply(plan.planId, consent), restored: true };
   }
   function owned(game) { return record(target(game))?.mode === 'external'; }
-  return { getLayout, inspect, preview, apply, restore, recover, assertReady, owned, direct, previewRemove, remove,
+  return { getLayout, inspect, preview, apply, restore, recover, previewRescue, applyRescue, assertReady, owned, direct, previewRemove, remove,
+    rescueState: game => { const t = target(game, true), interrupted = pending(t);
+      return { available: Boolean(interrupted || record(t)?.mode === 'external'), pending: Boolean(interrupted) }; },
     planAddonMigration: (game, context = {}) => {
       const exe = game.scan?.chosen?.path || game.chosen?.path || game.exe;
       if (!path.isAbsolute(exe || '')) fail('TARGET', '插件迁移需要实际 EXE。');

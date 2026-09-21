@@ -4,6 +4,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { appError, normalizeError } = require('../src/product/errors');
 
+test('library and waiting recovery exit errors preserve actionable instructions across IPC', () => {
+  for (const code of ['LIBRARY_CONFIRM_REQUIRED', 'LIBRARY_RESTORE_FIRST', 'WAITING_OPERATION_ACTIVE']) {
+    const result = normalizeError({ code, message: '请确认仅移出，原备份保留。' });
+    assert.equal(result.code, code); assert.match(result.message, /原备份保留/);
+  }
+});
+
 test('bundled Core update prerequisite survives the IPC error formatter', () => {
   const result = normalizeError(appError('CORE_UPDATE_BASE_REQUIRED'));
   assert.equal(result.code, 'CORE_UPDATE_BASE_REQUIRED');

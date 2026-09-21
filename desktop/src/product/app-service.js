@@ -984,14 +984,14 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
 
   async function diagnoseGame(game) {
     if (externalOwned(game) || fs.existsSync(path.join(game.dir, EXTERNAL_PENDING))) {
-      const state = gameLayout(game).loadingBackend === 'hoyoshade' ? await hoyo.inspect(game) : await externalDeployment.inspect(game);
+      const state = await inspectDeployment(game.id);
       return { payload: { selectedVersion: state.version, ready: state.ready }, diagnostic: {
         installed: true, complete: state.ready, payloadVersion: state.version, version: state.version,
         deployment: state, runtimeVerified: false, routeMismatch: state.api !== classifyApi(game.scan?.chosen),
         components: [
           { key: 'deployment', label: '运行目录', ok: state.verified && !state.pending,
             detail: state.pending ? '外置部署未完成，请先恢复。' : state.runtimeDir || state.blockers?.join('；') },
-          ...state.files.map(row => ({ key: row.kind, label: row.name, file: path.join(state.runtimeDir || '', row.name),
+          ...(state.files || []).map(row => ({ key: row.kind, label: row.name, file: path.join(state.runtimeDir || '', row.name),
             ok: row.valid, detail: row.valid ? row.mutable ? '当前个人配置' : '摘要与部署记录一致' : row.reason || '文件缺失或摘要改变' }))
         ] } };
     }
@@ -1805,14 +1805,23 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const game = findGame(id), feed = feeder.summary(game), vk = vulkan.summary(game);
     const feederState = feed.installed || feed.needsRecovery, vulkanState = vk.installed || vk.needsRecovery;
     if (feederState && vulkanState) throw Object.assign(new Error('同一游戏同时存在多个固定配套的恢复记录，请保留现场核对，未接管其他路线。'), { code: 'DEPLOYMENT_OWNER_CONFLICT' });
-    if (gameLayout(game).loadingBackend === 'hoyoshade') {
+    let layout;
+    try { layout = gameLayout(game); }
+    catch (error) {
+      // A broken loader binding must not hide the independent, receipt-bound
+      // rescue entry. Ordinary config writes/launch still use strict getLayout.
+      if (!hasExternalRecord(game)) throw error;
+      return { ...await externalDeployment.inspect(game), errorCode: error.code, errorDetails: error.details,
+        blockers: [error.message], ready: false, verified: false, runtimeVerified: false };
+    }
+    if (layout.loadingBackend === 'hoyoshade') {
       const profile = await hoyo.inspect(game), input = feederState ? await feeder.inspect(game) : null;
       const blockers = [...(profile.blockers || []), ...(input?.blockers || []), ...(profile.inputRoute === 'feeder' && !input?.installed ? ['米哈游加载配置已准备，Feeder 输入配套尚未完成，请预览修复。'] : [])];
       const pending = Boolean(profile.needsRecovery || input?.needsRecovery || feed.needsRecovery);
       return { ...profile, mode: 'external', source: 'hoyoshade-profile', loadingBackend: 'hoyoshade', route: profile.inputRoute,
         version: input?.coreVersion || profile.version, ready: profile.ready && (profile.inputRoute !== 'feeder' || input?.ready === true) && !blockers.length,
         verified: profile.verified && (profile.inputRoute !== 'feeder' || input?.ready === true) && !blockers.length,
-        pending, needsRecovery: pending, blockers, input, runtimeVerified: false };
+        pending, needsRecovery: pending, blockers, input, rescue: { available: hasExternalRecord(game), pending: fs.existsSync(path.join(game.dir, EXTERNAL_PENDING)) }, runtimeVerified: false };
     }
     if (feederState || vulkanState) {
       const route = feederState ? 'feeder' : 'vulkan', summary = feederState ? feed : vk;
@@ -1821,7 +1830,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return { ...state, source: route, route, mode: feederState ? 'local' : 'external',
         pending, needsRecovery: pending, runtimeVerified: false };
     }
-    return gameLayout(game).loadingBackend === 'hoyoshade' ? hoyo.inspect(game) : externalDeployment.inspect(game);
+    return externalDeployment.inspect(game);
   }
   async function recoverDeployment(id) {
     const game = findGame(id);
@@ -2108,6 +2117,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     gameCoreIdentity,
     inspectDeployment,
+    deploymentRescueState: id => { const game = findGame(id); return hasExternalRecord(game)
+      ? externalDeployment.rescueState(game) : { available: false, pending: false }; },
+    previewDeploymentRescue: (id, mode) => externalDeployment.previewRescue(findGame(id), mode),
+    applyDeploymentRescue: async (id, planId, consent) => refreshAfterMutation(await externalDeployment.applyRescue(findGame(id), planId, consent)),
     previewDeployment,
     componentChoices,
     knownComponentCatalog,
@@ -2162,16 +2175,27 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     dismissGame: async (id, options = {}) => {
       const game = findGame(id);
-      const userAddonReceipt = await userAddons.readReceipt(game);
-      if (options.libraryOnly === true && (feederOwned(game) || vulkanOwned(game) || externalOwned(game) ||
+      const keepFiles = options.keepFiles === true;
+      if (keepFiles && options.confirm !== true) throw Object.assign(new Error('请确认仅移出游戏库；游戏文件、备份与未完成恢复记录都会保留。'), { code: 'LIBRARY_CONFIRM_REQUIRED' });
+      const retainedState = keepFiles ? store.read() : null;
+      const executable = game.scan?.chosen?.path || (keepFiles ?
+        retainedState.manualExecutables.find(row => pathKey(row.root) === pathKey(game.dir))?.file ||
+        retainedState.gameOverrides[pathKey(game.dir)]?.apiExecutable : null) || null;
+      let archiveFile = null;
+      if (keepFiles) {
+        const state = retainedState, aliases = executableAliases(state, game.dir, executable);
+        archiveFile = await require('./library-entry-archive').archiveLibraryEntry({ userData, game, executable, state, aliases, waitingArchive: options.waitingArchive });
+      }
+      const userAddonReceipt = keepFiles ? null : await userAddons.readReceipt(game);
+      if (!keepFiles && options.libraryOnly === true && (feederOwned(game) || vulkanOwned(game) || externalOwned(game) ||
           fs.existsSync(path.join(game.dir, EXTERNAL_PENDING)) || readManifest(game.dir) || userAddonReceipt.items.length))
         throw Object.assign(new Error('请先选择卸载方式并完成恢复，再移出游戏库。'), { code: 'LIBRARY_RESTORE_FIRST' });
-      if (options.libraryOnly === true) {
+      if (!keepFiles && options.libraryOnly === true) {
         requireNoFeeder(game); requireKnownVulkanOwnership(game);
         if (fs.existsSync(path.join(game.dir, '_DLSS5_Backup/pending-switch.json')))
           throw Object.assign(new Error('请先恢复未完成的组件操作，再移出游戏库。'), { code: 'LIBRARY_RESTORE_FIRST' });
       }
-      if (options.libraryOnly !== true) {
+      if (!keepFiles && options.libraryOnly !== true) {
         await userAddons.removeAll(game);
         if (feederOwned(game)) await feeder.restore(game);
         requireNoFeeder(game);
@@ -2186,7 +2210,6 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           if (result?.removed !== true) throw appError('ERR_BACKUP_INVALID',{operation:'dismiss-uninstall',removed:false,warnings:result?.warnings||[]});
         }
       }
-      const executable = game.scan?.chosen?.path || null;
       await store.update(state => {
       const aliases = executableAliases(state, game.dir, executable);
       const removable = [...aliases.roots].filter(([key]) => !aliases.protectedRoots.has(key) && !aliases.sharedRoots.has(key));
@@ -2204,11 +2227,16 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           appid: aliases.protectedRoots.size ? null : game.appid || null
         }))],
         manualGames: state.manualGames.filter(dir => !aliases.ownsRoot(dir) || aliases.sharedRoots.has(pathKey(dir))),
-        manualExecutables: state.manualExecutables.filter(row => !(aliases.ownsRoot(row.root) && (!executable || aliases.sameExe(row.file)))),
-        gameOverrides: Object.fromEntries(Object.entries(state.gameOverrides).filter(([dir, row]) => !aliases.ownsMetadata(dir, row)))
+        manualExecutables: keepFiles ? state.manualExecutables : state.manualExecutables.filter(row => !(aliases.ownsRoot(row.root) && (!executable || aliases.sameExe(row.file)))),
+        gameOverrides: keepFiles ? state.gameOverrides : Object.fromEntries(Object.entries(state.gameOverrides).filter(([dir, row]) => !aliases.ownsMetadata(dir, row)))
       };
       });
-      return refreshCollection(games);
+      if (!keepFiles) return refreshCollection(games);
+      // A failed rescan must not keep an explicitly hidden row reachable by
+      // already queued actions. The original ownership files remain in place.
+      games = games.filter(row => row.id !== id);
+      return { removedFromLibrary: true, filesKept: true, restored: false, archiveFile, games: await refreshCollection(games),
+        notice: '已仅移出游戏库，游戏文件、备份、外置目录与未完成恢复记录均保留；这不是卸载或恢复。重新添加同一游戏可继续处理。' };
     },
     renameGame: async (id, name) => {
       const game = findGame(id);

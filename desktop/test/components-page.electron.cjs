@@ -19,11 +19,11 @@ app.whenReady().then(async () => {
   try {
     const preload = path.join(root, 'preload.cjs');
     fs.writeFileSync(preload, `(${installMock.toString()})({on40:{},hoyoProfiles:[]},{captureOnly:true,paths:{gameDir:'C:\\\\UI-fixture',exe:'C:\\\\UI-fixture\\\\Game.exe',ini:'C:\\\\UI-fixture\\\\nr_before_sr.ini'}});\n` +
-      `const fixtureData=${JSON.stringify(inventory())};window.__componentCalls={list:0,updates:0,imports:0,downloads:0};
+      `const fixtureData=${JSON.stringify(inventory())};window.__componentCalls={list:0,updates:0,imports:0,downloads:0,updateError:false,downloadError:false};
       window.manager.listComponents=async()=>{window.__componentCalls.list++;await new Promise(r=>setTimeout(r,80));return {ok:true,value:fixtureData};};
-      window.manager.checkComponentUpdates=async()=>{window.__componentCalls.updates++;await new Promise(r=>setTimeout(r,200));return {ok:true,value:[]};};
+      window.manager.checkComponentUpdates=async()=>{window.__componentCalls.updates++;await new Promise(r=>setTimeout(r,200));return {ok:true,value:window.__componentCalls.updateError?[{kind:'bridge',error:{code:'HTTP_503',message:'下载源暂时不可用'}}]:[]};};
       window.manager.pickComponent=async()=>{window.__componentCalls.imports++;await new Promise(r=>setTimeout(r,350));return {ok:true,value:null};};
-      window.manager.downloadComponent=async()=>{window.__componentCalls.downloads++;await new Promise(r=>setTimeout(r,300));fixtureData.componentOverview.updates=[];return {ok:true,value:{changedGames:false}};};`);
+      window.manager.downloadComponent=async()=>{window.__componentCalls.downloads++;await new Promise(r=>setTimeout(r,300));if(window.__componentCalls.downloadError)return {ok:false,error:{code:'COMPONENT_HASH_MISMATCH',message:'下载文件摘要不符'}};fixtureData.componentOverview.updates=[];return {ok:true,value:{changedGames:false}};};`);
     win = new BrowserWindow({ width: Number(process.env.GAME_UI_WIDTH) || 1100, height: Number(process.env.GAME_UI_HEIGHT) || 820,
       show: false, useContentSize: true, webPreferences: { preload, contextIsolation: false, sandbox: true, offscreen: true, backgroundThrottling: false } });
     const errors = []; win.webContents.on('console-message', (_event, ...args) => { const entry = args[0]; if (entry?.level === 'error') errors.push(entry.message); });
@@ -58,11 +58,18 @@ async function exercise() {
   document.getElementById('checkComponentUpdatesBtn').click();
   await until(() => !document.getElementById('checkComponentUpdatesBtn').disabled, 'check updates');
   check(window.__componentCalls.updates === 1, 'update check explicit only');
+  window.__componentCalls.updateError = true; document.getElementById('checkComponentUpdatesBtn').click();
+  await until(() => !document.getElementById('checkComponentUpdatesBtn').disabled, 'failed update check');
+  check(document.getElementById('componentLibraryMessage').textContent.includes('Bridge：[HTTP_503]'), 'update error names its component and error code');
+  window.__componentCalls.downloadError = true; document.querySelector('#componentUpdateRows button').click();
+  await until(() => document.getElementById('componentLibraryMessage').textContent.includes('COMPONENT_HASH_MISMATCH'), 'failed download');
+  check(document.getElementById('componentLibraryMessage').textContent.includes('RTX 40 多帧生成') && !document.querySelector('#componentUpdateRows button').disabled, 'download failure keeps component identity and retry entry');
+  window.__componentCalls.downloadError = false;
   document.querySelector('#componentUpdateRows button').click();
   check(!document.getElementById('importComponentBtn').disabled, 'downloading does not block imports');
   await until(() => !document.querySelector('#componentUpdateRows button'), 'downloaded update disappears');
   await until(() => document.getElementById('componentLibraryMessage').textContent.includes('更新已准备'), 'download completion');
-  check(window.__componentCalls.downloads === 1, 'single requested download');
+  check(window.__componentCalls.downloads === 2, 'single requested download');
   document.querySelector('.component-advanced').open = false;
   await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
   check(document.documentElement.scrollWidth <= innerWidth + 1, 'no horizontal overflow');

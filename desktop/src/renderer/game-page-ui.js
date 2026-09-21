@@ -13,6 +13,7 @@
     ['Style', '画面风格', 0, 2, 1], ['ColorStrength', '颜色强度', 0, 2, .05], ['SkinStructureStrength', '人脸强度', -1, 2, .05],
     ['TransferStrength', '前置传递强度', 0, 4, .05], ['PostTransferStrength', '后置传递强度', 0, 4, .05] ];
   const unwrap = result => { if (result?.ok !== true) throw Object.assign(new Error(result?.error?.message || '操作未完成。'), result?.error); return result.value; };
+  const errorText = value => `${value?.code ? `[${value.code}] ` : ''}${value?.message || value || '操作未完成。'}`;
   const option = (value, label, selected, disabled = false) => `<option value="${esc(value)}"${String(value) === String(selected) ? ' selected' : ''}${disabled ? ' disabled' : ''}>${esc(label)}</option>`;
   const badge = (status, fallback) => `<span class="badge ${['passed', 'enabled', 'configurable'].includes(status) ? 'good' : ['failed', 'bypassed', 'version-mismatch'].includes(status) ? 'bad' : ''}">${esc(STATUS[status] || fallback || status || '待确认')}</span>`;
   const line = (label, value) => `<div class="gp-fact"><span>${esc(label)}</span><strong>${esc(value ?? '待确认')}</strong></div>`;
@@ -89,7 +90,7 @@
       const info = launchReadiness(), blocker = readinessBlocker();
       if (!info || !readinessNeedsNotice()) return '';
       if (info.state === 'unknown' && !blocker && info.source === 'metadata') return '已保存设置；启动时会检查当前状态。';
-      return blocker?.message || (info.state === 'unknown' ? '启动前状态暂时无法确认，请重新检查设置。' : '启动前还有需要处理的设置。');
+      return (blocker?.message ? errorText(blocker) : '') || (info.state === 'unknown' ? '启动前状态暂时无法确认，请重新检查设置。' : '启动前还有需要处理的设置。');
     }
     function readinessActionName() {
       const kind = readinessActionKind();
@@ -209,7 +210,7 @@
           <div class="gp-module-list">${(data.components.files || []).map(row => `<div><strong>${esc(row.name)}</strong>${badge(row.status)}<small>${esc(row.label)} · ${{ verified: '固定摘要已核对', declared: '组件自声明', hint: '仅文件名线索', unknown: '证据不足' }[row.confidence] || '待确认'}</small><small>${esc(row.path)}</small><small>${esc(({ enabled: '配置允许加载', disabled: '配置已禁用', candidate: '代理候选', dependency: '依赖文件', 'inactive-or-unverified': '加载位置待确认' })[row.loadState] || '')} · ${esc(row.architecture || '')}</small></div>`).join('') || '<p class="gp-caption">当前范围未发现需核对的组件。</p>'}</div>
           ${[...(data.components.conflicts || []), ...(data.components.warnings || [])].map(row => `<p class="gp-message">${esc(row.detail)}</p>`).join('')}</section>` : ''}
         ${data.antiCheat?.detected ? `<section class="gp-section gp-risk"><h3>游戏保护与账号风险</h3><p>${esc(data.antiCheat.message)}</p><div class="gp-actions">${act('anti-cheat', '官方说明')}${act('compatibility-search', '搜索此游戏兼容资料')}${act('maintenance-tab', '维护与恢复')}</div></section>` : ''}
-        ${(data.failures || []).length ? `<details class="gp-section"><summary>部分检查暂不可用</summary>${data.failures.map(row => `<p class="gp-caption">${esc(row.section)}：${esc(row.message)}</p>`).join('')}</details>` : ''}`;
+        ${(data.failures || []).length ? `<details class="gp-section"><summary>部分检查暂不可用</summary>${data.failures.map(row => `<p class="gp-caption">${esc(row.section)}：${esc(errorText(row))}</p>`).join('')}</details>` : ''}`;
     }
     function selectField(group, key, label, markup, disabled = false, note = '') {
       return `<label class="gp-field"><span>${label}</span><select data-gp-group="${group}" data-gp-field="${key}"${disabled ? ' disabled' : ''}>${markup}</select>${note ? `<small>${note}</small>` : ''}</label>`;
@@ -226,7 +227,7 @@
           return `<label class="gp-field"><span>${label}</span><input type="number" min="${lower}" max="${upper}" step="any" value="${esc(nr[key] ?? '')}" data-gp-group="nr" data-gp-field="${key}"${capable ? '' : ' disabled'}>${source?.status === 'invalid' ? `<small>保存值无效：${esc(source.raw)}；请核对后修改。</small>` : source?.source === 'default' ? '<small>此键未保存，显示当前 Core 缺省值。</small>' : ''}${capable ? key === 'CustomWorkScale' ? '<small>工作模式选为“自定义”后生效。</small>' : '' : '<small>当前 Core 或配置未提供此项。</small>'}</label>`;
       }).join('');
       return `<section class="gp-section"><div class="gp-section-title"><h3>NR 画面增强</h3><label class="check-line gp-check"><input type="checkbox" data-gp-group="nr" data-gp-field="Enabled"${nr.Enabled ? ' checked' : ''}${available ? '' : ' disabled'}>开启</label></div>
-        ${!available ? `<p class="gp-caption">${esc(data.nr?.error?.message || (data.game.installed ? '当前配置或 Core 身份尚未核实，请重新检查。' : '安装后可调整画面增强。'))}</p>` : ''}
+        ${!available ? `<p class="gp-caption">${esc((data.nr?.error ? errorText(data.nr.error) : '') || (data.game.installed ? '当前配置或 Core 身份尚未核实，请重新检查。' : '安装后可调整画面增强。'))}</p>` : ''}
         ${effectiveApi() === 'dx9' ? '<p class="gp-caption">游戏内面板提供 NR 回填开关；完整参数在此调整，退出游戏后应用。</p>' : ''}
         <div class="gp-controls gp-nr-primary">${controls(NR.filter(([key]) => primary.includes(key)))}</div>
         <div class="gp-face-control"><label class="check-line gp-check"><input type="checkbox" data-gp-group="face" data-gp-field="enabled"${nr.AutoMask ? ' checked' : ''}${available && data.nr?.capabilities?.SkinStructureStrength !== false ? '' : ' disabled'}>人脸调节</label>${nr.AutoMask ? controls([['SkinStructureStrength', '人脸强度', 0, 2, .05]]) : '<small>关闭时保留上次强度。</small>'}</div>
@@ -323,7 +324,7 @@
           (pickerRows.some(row => row.id === version) ? '' : option(version, `${coreLabel(version)} · 来源待检查`, version, true)) +
           pickerRows.map(row => option(row.id, coreLabel(row.label || row.id), version, row.ready === false)).join(''), busy || pending,
           special ? '选择最新 0.5 后自动匹配输入组件（实验）；已有固定配套切换前先恢复，避免混装。' : versions.find(row => row.id === version)?.notes || '切换前会预览本次文件变更；保留此客户端的绑定和个人配置。')}</div></section>`;
-        return `<p class="gp-caption">当前 Core：${esc(coreLabel(current))} · 此客户端独立配置</p>${picker}${hotkeySection()}${rollbackVersions()}${options.maintenanceContent?.() || ''}`;
+        return `<p class="gp-caption">当前 Core：${esc(coreLabel(current))} · 此客户端独立配置</p>${picker}${hotkeySection()}${rollbackVersions()}${maintenancePanel()}${options.maintenanceContent?.() || ''}`;
       }
       const attention = readinessNeedsAction(), readinessNotice = readinessNeedsNotice();
       const unresolved = !effective || ['mixed', 'unknown', 'auto'].includes(effective);
@@ -343,10 +344,10 @@
         ${selectField('route', 'version', 'AI 增强组件', (!visibleVersion ? option('', '请选择 AI 增强组件', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy)}</div>
         ${visibleVersion === '0.5-dline21-unified5' ? '<p class="gp-caption">兼容输入自动匹配：原生可用时不加桥；需要时补齐接口匹配的 Bridge / Feeder。兼容路线属于实验支持，应用前会显示实际文件，不影响其他游戏。</p>' : ''}
         ${manager.pickRuntimeDlc && (options.runtimeRequired?.(currentVersion()) || resumeAfterImport && error && /运行库|DLC|nvngx_dlssnr/i.test(message)) ? `<div class="gp-small-actions">${act('import-runtime', '导入运行库 DLC', busy, 'subtle')}<small>保留当前选择；导入成功后继续上次应用。</small></div>` : ''}
-        ${(data.failures || []).filter(row => ['operation', 'layout', 'defaults'].includes(row.section)).map(row => `<p class="gp-message error">检查未完成：${esc(row.message)}。处理后点击“重新检查”。</p>`).join('')}
+        ${(data.failures || []).filter(row => ['operation', 'layout', 'defaults'].includes(row.section)).map(row => `<p class="gp-message error">检查未完成：${esc(errorText(row))}。处理后点击“重新检查”。</p>`).join('')}
         <div class="gp-compatibility ${pending || readinessNotice || !apiReady() ? 'needs-attention' : ''}" role="status"><strong>兼容性</strong><span>${esc(status)}</span>${pending ? act('recover-operation', '恢复操作', busy, 'subtle') : attention && readinessActionName() !== 'resolve-readiness' ? act(readinessActionName(), readinessActionLabel(), busy, 'subtle') : ''}</div>
         ${existing ? `<div class="gp-message"><strong>检测到已有未受管安装</strong><p>${esc(existingNames.join('、') || '已有插件文件')}。选择目标 Core 后点击应用，管理器会核实文件身份和配套；可确认的文件先备份再接管，未知文件会列出具体冲突。</p><p>原文件备份保留在 _DLSS5_Backup 中，可在维护页恢复。</p></div>` : ''}
-        ${hasVersionUpdate() ? `<p class="gp-caption">当前已安装 ${esc(data.deployment?.version || game.addonVersion)}；应用后才会更新所选配套。</p>` : existing ? '<p class="gp-caption">请选择目标 Core，确认备份与接管后应用。</p>' : ''}</section>${hoyoControls()}${startupFields()}${hotkeySection()}${rollbackVersions()}<details class="gp-section" data-gp-detail="technical"><summary>配套与高级加载设置</summary>${componentStackOverview()}${advanced()}</details><details class="gp-section gp-maintenance-details" data-gp-detail="maintenance"><summary>维护与诊断</summary>${loaded.has('diagnostics') && loaded.has('enhancements') ? maintenance() + diagnosticsContent() : '<p class="gp-caption">展开后读取恢复记录和运行检测。</p>'}</details>`;
+        ${hasVersionUpdate() ? `<p class="gp-caption">当前已安装 ${esc(data.deployment?.version || game.addonVersion)}；应用后才会更新所选配套。</p>` : existing ? '<p class="gp-caption">请选择目标 Core，确认备份与接管后应用。</p>' : ''}</section>${hoyoControls()}${startupFields()}${hotkeySection()}${rollbackVersions()}<details class="gp-section" data-gp-detail="technical"><summary>配套与高级加载设置</summary>${componentStackOverview()}${advanced()}</details>${maintenancePanel()}`;
     }
     function startupFields() {
       const layout = data.layout || {}, special = specialRoute(), mode = deploymentMode();
@@ -380,19 +381,38 @@
         <section class="gp-section"><h3>用户 Add-on</h3><p class="gp-caption">从组件管理导入任意 64 位 .addon64 后，可在这里按游戏加载。管理器只删除自己部署且摘要未变化的文件。</p><div class="gp-module-list">${userAddons.length ? userAddons.map(row => `<div><strong>${esc(row.label)}</strong><small>${esc(row.name)}${row.classification && row.classification !== 'unknown' ? ` · ${esc(row.classification)}` : ''}</small><small>${row.installed ? '已由管理器加载' : row.present ? '游戏中已有同名文件' : '尚未加载'}</small><button type="button" class="button ${row.installed ? 'subtle' : ''}" data-gp-action="user-addon" data-gp-component="${esc(row.id)}" data-gp-enable="${row.installed ? 'false' : 'true'}"${busy || !row.canApply || row.present && !row.installed ? ' disabled' : ''}>${row.installed ? '移除' : row.present ? '已存在' : '加载到游戏'}</button></div>`).join('') : '<p class="gp-caption">尚未导入用户 Add-on。可到“组件管理”导入 .addon64；导入不会立即修改游戏。</p>'}</div></section>
         <section class="gp-section"><h3>游戏条目</h3><p class="gp-caption">这里只修改管理器中的显示名称，不会改动游戏文件。</p><div class="gp-actions">${act('rename-game', '修改游戏名称', busy)}</div></section>`;
     }
+    function deploymentChanged() {
+      return error && message.includes('DEPLOYMENT_FILE_CHANGED') || readinessBlocker()?.code === 'DEPLOYMENT_FILE_CHANGED' || data.deployment?.error?.code === 'DEPLOYMENT_FILE_CHANGED' || (data.failures || []).some(row => row.code === 'DEPLOYMENT_FILE_CHANGED') ||
+        (data.deployment?.blockers || []).some(row => row.code === 'DEPLOYMENT_FILE_CHANGED');
+    }
+    function recoveryNotice() {
+      return deploymentChanged() && manager.previewDeploymentRescue ? act('maintenance-tab', '查看恢复选项', busy, 'subtle') : '';
+    }
+    function rescueTools() {
+      const rescue = data.deployment?.rescue;
+      if (!manager.previewDeploymentRescue || rescue?.available !== true) return '';
+      return `<section class="gp-section gp-rescue"><h3>恢复受管环境</h3><p class="gp-caption">预览当前文件和备份位置，确认后再处理。未知路径不会修改。</p><div class="gp-actions">${rescue.pending ? act('rescue-recover', '处理未完成部署', busy) : act('rescue-repair', '修复运行目录', busy) + act('rescue-clean', '强制清理受管环境', busy, 'danger')}</div></section>`;
+    }
+    function removeLibraryEntry() {
+      return manager.removeGame ? `<section class="gp-section"><h3>游戏库条目</h3><p class="gp-caption">只移出管理器列表，保留游戏文件和全部备份；之后可重新添加。</p>${act('remove-game', '移出游戏库', busy, 'subtle')}</section>` : '';
+    }
+    function maintenancePanel() {
+      return `<details class="gp-section gp-maintenance-details" data-gp-detail="maintenance"><summary>维护与诊断</summary>${loaded.has('diagnostics') && loaded.has('enhancements') ? maintenance() + (options.hoyoSettingsOnly ? '' : diagnosticsContent()) : '<p class="gp-caption">展开后读取恢复记录和运行检测。</p>'}</details>`;
+    }
     function maintenance() {
       const dep = data.deployment || {}, env = data.maintenance || {}, records = data.operation?.record;
       const hasSettings = Object.keys(data.enhancements?.applied || {}).length > 0 || hasFgComponents(data);
-      return `<section class="gp-section" role="tabpanel" aria-label="维护与备份"><h3>恢复记录</h3><div class="gp-facts">${line('安装前基线', dep.baseline ? `${dep.baseline.version || '已记录'} · ${dep.baseline.api || ''}` : '由原安装记录保留')}
+      if (options.hoyoSettingsOnly) return rescueTools() + removeLibraryEntry();
+      return `${rescueTools()}<section class="gp-section" role="tabpanel" aria-label="维护与备份"><h3>恢复记录</h3><div class="gp-facts">${line('安装前基线', dep.baseline ? `${dep.baseline.version || '已记录'} · ${dep.baseline.api || ''}` : '由原安装记录保留')}
         ${line('上一完整部署', dep.previous ? `${dep.previous.version || ''} · ${dep.previous.mode || ''}` : '尚无外置切换记录')}${line('当前部署', `${dep.version || data.game.addonVersion || '未安装'} · ${dep.mode === 'external' ? '外置' : '游戏目录'}`)}
         ${line('清理归档', env.backupDirectory || (env.isolated ? '已备份隔离' : '尚无清理归档'))}</div>
-        ${records ? `<div class="gp-message error"><strong>上次统一应用尚未完成</strong><p>${esc(records.error?.message || '请恢复未完成事务后继续。')}</p>${(records.stages || []).map(row => `<span class="badge">${esc(row.kind)} · ${esc(row.status)}</span>`).join('')}${act('recover-operation', '恢复未完成操作', busy, 'primary')}</div>` : ''}
+        ${records ? `<div class="gp-message error"><strong>上次统一应用尚未完成</strong><p>${esc(records.error ? errorText(records.error) : '请恢复未完成事务后继续。')}</p>${(records.stages || []).map(row => `<span class="badge">${esc(row.kind)} · ${esc(row.status)}</span>`).join('')}${act('recover-operation', '恢复未完成操作', busy, 'primary')}</div>` : ''}
         ${data.enhancements?.pending?.length ? act('recover-settings', '恢复超分补帧事务', busy) : ''}${data.enhancements?.fgComponents?.fileRecoveryPending || data.enhancements?.fgComponents?.migrationPending ? act('recover-fg-components', '恢复未完成补帧组件操作', busy) : ''}${dep.needsRecovery ? act('recover-operation', '恢复部署事务', busy) : ''}
         <div class="gp-actions">${act('repair-install', '预览修复', busy || !data.game.installed || data.operation?.pending || dep.needsRecovery)}${!(data.enhancements?.fgComponents?.fileRecoveryPending || data.enhancements?.fgComponents?.migrationPending) ? act('recover-operation', '恢复未完成操作', busy || !(data.operation?.pending || dep.needsRecovery)) : ''}${act('back-local', '迁回游戏目录', busy || dep.mode !== 'external')}${act('open-folder', '打开游戏文件夹')}${act('feedback', '保存反馈与验收记录', busy)}</div></section>
         <section class="gp-section"><h3>卸载与原样恢复</h3><p class="gp-caption">每次选择本次的处理方式，预览文件后再应用。安装前备份和历史归档都会保留。</p><div class="gp-uninstall"><div><h4>干净移除</h4><p>移除摘要一致的受管文件，旧代理和旧插件继续留在备份中。</p>${act('uninstall-clean', '预览干净移除', busy || !data.game.installed, 'danger')}</div><div><h4>恢复安装前</h4><p>恢复有原始记录及摘要的文件。未知 .bak 不会自动当作原件。</p>${act('uninstall-restore', '预览恢复安装前', busy || !data.game.installed)}</div></div></section>
         <section class="gp-section"><h3>环境检查与清理</h3><p class="gp-caption">${esc(env.scope || '')}</p><div class="gp-module-list">${(env.remainingFiles || []).map(row => `<div><strong>${esc(row.name)}</strong><small>${esc(row.kind || row.classification || '需核对来源')}</small><small>${esc(row.sha256?.slice(0, 20) || '')}</small></div>`).join('') || '<p class="gp-caption">当前检查未发现额外代理或 Add-on。</p>'}</div>
         ${data.game.installed || hasSettings ? '<p class="gp-caption">请先明确移除配套并恢复超分补帧设置，再隔离剩余文件。</p>' : ''}<div class="gp-actions">${act('clean-environment', '预览剩余文件隔离', busy || data.game.installed || hasSettings || env.isolated)}${act('restore-environment', '撤销上次清理', busy || !env.canRestore)}</div></section>
-        ${manager.removeGame ? `<section class="gp-section"><h3>游戏库条目</h3><p class="gp-caption">先完成卸载与设置恢复，再移出游戏库；之后可重新添加。</p>${act('remove-game', '移出游戏库', busy || dirty() || data.game.installed || hasSettings || data.operation?.pending || dep.needsRecovery || env.isolated, 'subtle')}</section>` : ''}`;
+        ${removeLibraryEntry()}`;
     }
     function hotkeySection() {
       return `<section class="gp-section"><h3>游戏内面板快捷键</h3><p class="gp-caption">ReShade：${esc(bindingLabel(draft.hotkeys?.reshade || data.hotkeys?.reshade))} · NR：${esc(data.hotkeys?.nr?.label || '由 Core 提供')}</p>
@@ -471,9 +491,9 @@
       const top = host.closest('.view')?.scrollTop;
       const expanded = [...host.querySelectorAll('details[data-gp-detail][open]')].map(row => row.dataset.gpDetail);
       tabController?.dispose();
-      const notice = `<div class="gp-message${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}"${message ? '' : ' hidden'}>${esc(message)}</div>`;
+      const notice = `<div class="gp-message${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}"${message || deploymentChanged() ? '' : ' hidden'}>${esc(message)}${recoveryNotice()}</div>`;
       host.innerHTML = options.maintenanceOnly ? notice + (loaded.has('diagnostics') && loaded.has('enhancements') ? maintenance() : '<p class="gp-caption" role="status">正在读取维护记录…</p>') : footer() + head() + notice + ['overview', 'nr', 'enhance'].map(key => `<div class="detail-panel" data-detail-panel="${DETAIL_TAB[key]}" role="tabpanel"${tab === key ? '' : ' hidden'}>${tab === key ? key === 'overview' ? installation() : key === 'nr' ? nrFields() : enhancements() : ''}</div>`).join('');
-      if (!options.maintenanceOnly) syncHeaderAction();
+      if (!options.maintenanceOnly) syncHeaderAction(); else options.onActionState?.({ busy });
       if (scope.GameDetailTabs && !options.maintenanceOnly) tabController = scope.GameDetailTabs.mount(host, { initial: DETAIL_TAB[tab], onSelect: value => selectTab(Object.keys(DETAIL_TAB).find(key => DETAIL_TAB[key] === value)) });
       for (const key of expanded) { const detail = host.querySelector(`details[data-gp-detail="${key}"]`); if (detail) detail.open = true; }
       if (focusKey) host.querySelector(`[data-gp-group="${focusGroup}"][data-gp-field="${focusKey}"]`)?.focus({ preventScroll: true });
@@ -487,22 +507,22 @@
       const plan = modal.plan;
       const addonRows = plan?.deployment?.addonCompatibility?.decisions || [];
       modal.addonChoices = addonRows.filter(row => row.moduleMayLoad && !row.mandatory && !['core', 'native-carrier'].includes(row.classification) && (row.action === 'isolate' || row.explicitKeep || row.explicit && row.action === 'preserve'));
-      const modalTitle = ({ leave: '离开前处理修改', visual: '本次画面对照记录', cleanup: '备份隔离文件预览', remove: '移出游戏库' })[modal.kind] || '本次操作预览';
-      const content = modal.kind === 'remove' ? '<p>将此游戏移出管理器列表。游戏文件与历史备份保留，之后可以重新添加。</p>' : modal.kind === 'leave' ? '<p>当前修改尚未应用。离开后可放弃这些修改。</p>' : modal.kind === 'visual' ?
+      const modalTitle = ({ leave: '离开前处理修改', visual: '本次画面对照记录', cleanup: '备份隔离文件预览', remove: '移出游戏库', rescue: ({ repair: '修复运行目录预览', clean: '清理受管环境预览', recover: '恢复未完成部署预览' })[plan?.mode] })[modal.kind] || '本次操作预览';
+      const content = modal.kind === 'remove' ? '<p>只将此游戏移出管理器列表，不会卸载或删除文件。确认后放弃未应用草稿，游戏文件和全部备份保留，之后可以重新添加。</p>' : modal.kind === 'leave' ? '<p>当前修改尚未应用。离开后可放弃这些修改。</p>' : modal.kind === 'visual' ?
         '<p>记录绑定本次游戏程序、会话和 Core 摘要。来源会标为用户观察，NR 成功状态仍独立核对。</p><label class="check-line gp-check"><input type="checkbox" data-gp-same-scene>我已完成同场景、相同设置下的增强开关对照</label><label class="gp-field"><span>观察结果</span><select data-gp-visual-result><option value="uncertain">暂时无法确认</option><option value="changed">观察到画面变化</option><option value="unchanged">没有观察到画面变化</option></select></label><label class="gp-field"><span>观察说明</span><textarea data-gp-visual-note maxlength="2000" rows="3" placeholder="例如同一存档位置的人脸、材质或光照变化"></textarea></label><label class="gp-field"><span>F8 / ColorDiag 或截图材料名称（可选）</span><input data-gp-visual-evidence maxlength="240"></label>' : modal.kind === 'cleanup'
         ? `<p>${esc(plan.scope)}</p>${plan.candidates.map(row => `<label class="gp-file-choice"><input type="checkbox" data-gp-clean="${esc(row.name)}"${row.selectedByDefault ? ' checked' : ''}${row.selectable ? '' : ' disabled'}><span><strong>${esc(row.name)}</strong><small>${esc(row.kind)} · ${esc(row.note)}</small><small>${esc(row.sha256)}</small></span></label>`).join('')}`
-        : `${adoptionMarkup(plan)}<p>核对本次变更；操作过程中请保持游戏关闭。</p><div class="gp-change-list">${(plan.changes || []).map(row => `<div><strong>${esc(row.name || row.key || row.domain || row.action)}</strong><span>${esc(({ create: '新增', replace: '替换', remove: '移除', keep: '保留', 'set-config-key': '写入配置', 'set-launch-mode': '修改启动方式' })[row.action] || row.description || row.action)}${row.value !== undefined ? ` → ${esc(row.value)}` : ''}</span><small>${esc(row.path || '')}</small>${row.beforeSha256 !== undefined ? `<details><summary>核验摘要</summary><small>变更前 ${esc(row.beforeSha256 || '不存在')}<br>变更后 ${esc(row.afterSha256 || '移除')}</small></details>` : ''}</div>`).join('')}</div>
+        : `${modal.kind === 'rescue' ? `<p>${esc(plan.scope || '')}</p>${plan.archiveDirectory ? `<p>备份目录：${esc(plan.archiveDirectory)}</p>` : ''}${(plan.warnings || []).map(row => `<p class="gp-caption">${esc(errorText(row))}</p>`).join('')}` : adoptionMarkup(plan)}<p>核对本次变更；操作过程中请保持游戏关闭。</p><div class="gp-change-list">${(plan.changes || []).map(row => `<div><strong>${esc(row.name || row.key || row.domain || row.action)}</strong><span>${esc(({ create: '新增', replace: '替换', remove: '移除', keep: '保留', 'set-config-key': '写入配置', 'set-launch-mode': '修改启动方式', archive: '备份隔离', backup: '备份', isolate: '备份隔离', restore: '恢复' })[row.action] || row.description || row.action)}${row.value !== undefined ? ` → ${esc(row.value)}` : ''}</span><small>${esc(row.path || '')}</small>${row.beforeSha256 !== undefined ? `<details><summary>核验摘要</summary><small>变更前 ${esc(row.beforeSha256 || '不存在')}<br>变更后 ${esc(row.afterSha256 || '移除')}</small></details>` : ''}</div>`).join('')}</div>
         ${modal.addonChoices.length ? `<section class="gp-section"><h4>未知插件保留选择</h4><p class="gp-caption">默认备份隔离。确认需要保留的插件后，重新预览当前组合。</p>${modal.addonChoices.map((row, index) => `<label class="gp-file-choice"><input type="checkbox" data-gp-addon-keep="${index}"${row.explicitKeep ? ' checked' : ''}><span><strong>保留 ${esc(row.name)}</strong><small>${esc(row.path)}</small></span></label>`).join('')}${act('repreview-addons', '按保留选择重新预览', busy)}</section>` : ''}
-        ${(plan.blockers || []).map(row => `<p class="gp-message error">${esc(row.message || row)}</p>`).join('')}
-        ${data.antiCheat?.detected || plan.deployment?.requiresAntiCheat ? '<label class="check-line gp-check"><input type="checkbox" data-gp-consent>我已了解反作弊可能阻止加载及账号风险，并决定应用。</label>' : ''}`;
-      host.insertAdjacentHTML('beforeend', `<div class="gp-modal" role="dialog" aria-modal="true" aria-label="${modalTitle}"><div class="gp-modal-card"><h3>${modalTitle}</h3>${content}<div class="gp-message gp-modal-message" role="status"></div><div class="gp-modal-actions">${act('modal-cancel', modal.kind === 'leave' ? '继续编辑' : '取消', busy)}${modal.kind === 'leave' ? act('leave-confirm', '放弃修改并离开', busy, 'danger') : modal.kind === 'visual' ? act('save-visual', '保存用户观察', busy, 'primary') : modal.kind === 'remove' ? act('remove-confirm', '确认移出', busy, 'danger') : `${modal.kind === 'apply' && manager.applyOperationElevated ? act('apply-elevated', '以管理员权限应用本次操作', busy || plan.blockers?.length > 0) : ''}${act('modal-apply', modal.kind === 'cleanup' ? '备份并隔离所选文件' : '应用本次变更', busy || plan.blockers?.length > 0, 'primary')}`}</div></div></div>`);
+        ${(plan.blockers || []).map(row => `<p class="gp-message error">${esc(errorText(row))}</p>`).join('')}
+        ${(modal.kind === 'rescue' ? plan.requiresAntiCheat : data.antiCheat?.detected || plan.deployment?.requiresAntiCheat) ? '<label class="check-line gp-check"><input type="checkbox" data-gp-consent>我已了解反作弊可能阻止加载及账号风险，并决定应用。</label>' : ''}`;
+      host.insertAdjacentHTML('beforeend', `<div class="gp-modal" role="dialog" aria-modal="true" aria-label="${modalTitle}"><div class="gp-modal-card"><h3>${modalTitle}</h3>${content}<div class="gp-message gp-modal-message" role="status">${error ? esc(message) : ''}</div><div class="gp-modal-actions">${act('modal-cancel', modal.kind === 'leave' ? '继续编辑' : '取消', busy)}${modal.kind === 'leave' ? act('leave-confirm', '放弃修改并离开', busy, 'danger') : modal.kind === 'visual' ? act('save-visual', '保存用户观察', busy, 'primary') : modal.kind === 'remove' ? act('remove-confirm', '确认移出', busy, 'danger') : `${modal.kind === 'apply' && manager.applyOperationElevated ? act('apply-elevated', '以管理员权限应用本次操作', busy || plan.blockers?.length > 0) : ''}${act('modal-apply', modal.kind === 'cleanup' ? '备份并隔离所选文件' : '应用本次变更', busy || plan.blockers?.length > 0, 'primary')}`}</div></div></div>`);
       host.querySelector('.gp-modal button')?.focus();
     }
     function updateBar() {
       const bar = host.querySelector('.gp-apply-bar'); if (bar) bar.outerHTML = footer();
       syncHeaderAction();
       const notice = host.querySelector(':scope > .gp-message');
-      if (notice) { notice.textContent = message; notice.hidden = !message; notice.classList.toggle('error', error); notice.setAttribute('role', error ? 'alert' : 'status'); }
+      if (notice) { notice.innerHTML = esc(message) + recoveryNotice(); notice.hidden = !message && !deploymentChanged(); notice.classList.toggle('error', error); notice.setAttribute('role', error ? 'alert' : 'status'); }
     }
     function keepDraftBackup(reason) {
       draftBackup = { draft: structuredClone(draft), fields: structuredClone(fields), reason };
@@ -529,7 +549,7 @@
         if (disposed || gameId !== id || epoch !== generation) return;
         const previous = JSON.stringify(data.nr); externalConfiguration({ nr }); data.nr = nr;
         if (previous !== JSON.stringify(nr) && !modal) render();
-      } catch (failure) { message = failure.message; error = true; updateBar(); }
+      } catch (failure) { message = errorText(failure); error = true; updateBar(); }
       finally { configChecking = false; }
     }
     function mergeAssessment(value, section, order) {
@@ -572,7 +592,7 @@
               blockers: [{ domain: 'settings', code: failure.code || 'ASSESSMENT_UNAVAILABLE', message: failure.message, action: { kind: 'open-settings' } }] };
             readinessEpoch = generation; readinessOrder = order;
           }
-          message = failure.message; error = true; if (!modal) render();
+          message = errorText(failure); error = true; if (!modal) render();
         }
       }).finally(() => { if (sectionTokens.get(section) === token) sectionRequests.delete(section); });
       sectionRequests.set(section, task); return task;
@@ -584,7 +604,7 @@
       generation++; loaded.clear(); sectionRequests.clear();
       if (!preserve) { fields = initialFields(data); }
       const needed = new Set(['installation', TAB_SECTION[tab]]);
-      if (options.maintenanceOnly) { needed.add('diagnostics'); needed.add('enhancements'); }
+      if (options.maintenanceOnly || host.querySelector('[data-gp-detail="maintenance"][open]')) { needed.add('diagnostics'); needed.add('enhancements'); }
       await Promise.all([...needed].map(section => loadSection(section, true)));
     }
     async function loadMaintenance() {
@@ -605,7 +625,7 @@
       if (busy) return; busy = true; message = ''; error = false; render();
       const gameId = id;
       try { const result = unwrap(await fn()); if (disposed || id !== gameId) return result; message = result?.notice || success || '操作已完成。'; if (!preserve) { draft = {}; fields = {}; invalidFields = {}; pageDrafts.delete(gameId); } modal = null; await refresh(preserve); return result; }
-      catch (failure) { if (id === gameId) { message = failure.message; error = true; modal = null; try { await refresh(true); } catch {} } }
+      catch (failure) { if (id === gameId) { message = errorText(failure); error = true; modal = null; try { await refresh(true); } catch {} } }
       finally { if (id === gameId) { busy = false; render(); } }
     }
     async function preview(request = draft) {
@@ -634,14 +654,16 @@
           }
         } else modal = { kind: 'apply', plan: unwrap(await manager.previewOperation(id, request)) };
       }
-      catch (failure) { if (id === gameId) { message = failure.message; error = true; } }
+      catch (failure) { if (id === gameId) { message = errorText(failure); error = true; } }
       finally { if (id === gameId) { busy = false; render(); } }
     }
     async function apply(elevated = false) {
       if (!modal || busy) return;
       const value = modal, allowAntiCheat = host.querySelector('[data-gp-consent]')?.checked === true;
-      if (value.kind === 'apply' && (data.antiCheat?.detected || value.plan?.deployment?.requiresAntiCheat) && !allowAntiCheat) { host.querySelector('.gp-modal-message').textContent = '请先确认已了解本次游戏的反作弊提示。'; return; }
-      if (value.kind === 'cleanup') {
+      if ((value.kind === 'rescue' ? value.plan?.requiresAntiCheat : value.kind === 'apply' && (data.antiCheat?.detected || value.plan?.deployment?.requiresAntiCheat)) && !allowAntiCheat) { host.querySelector('.gp-modal-message').textContent = '请先确认已了解本次游戏的反作弊提示。'; return; }
+      if (value.kind === 'rescue') {
+        await work(() => manager.applyDeploymentRescue(id, value.plan.planId, { confirm: true, allowAntiCheat }), '受管环境已处理，可重新检查当前状态。', true);
+      } else if (value.kind === 'cleanup') {
         const names = [...host.querySelectorAll('[data-gp-clean]:checked')].map(input => input.dataset.gpClean);
         if (!names.length) { host.querySelector('.gp-modal-message').textContent = '请先选择需要隔离的文件。'; return; }
         await work(() => manager.applyEnvironmentCleanup(id, value.plan.planId, names), '所选文件已备份隔离，可撤销。');
@@ -696,7 +718,7 @@
         const result = options.onLaunch ? await options.onLaunch(targetId) : unwrap(await manager.launch(targetId));
         if (!disposed && id === targetId && attempt === launchAttempt) { session = result.launched || result; void loadSection('installation', true); }
       }
-      catch (failure) { if (!disposed && id === targetId && attempt === launchAttempt) { message = failure.message; error = true; session = failure.details?.launchSession || session; } }
+      catch (failure) { if (!disposed && id === targetId && attempt === launchAttempt) { message = errorText(failure); error = true; session = failure.details?.launchSession || session; } }
       finally { if (attempt === launchAttempt) { launching = false; render(); } }
     }
     function change(input) {
@@ -768,7 +790,7 @@
               if (!data.game.installed) delete draft.api;
               message = 'API 已记住，可继续准备组件或应用设置。'; error = false;
               await loadSection('installation', true);
-            }).catch(failure => { if (gameId === id) { message = failure.message; error = true; render(); } throw failure; });
+            }).catch(failure => { if (gameId === id) { message = errorText(failure); error = true; render(); } throw failure; });
             void apiSave.catch(() => {});
           }
           delete draft.route;
@@ -850,10 +872,19 @@
         else if (action === 'leave-confirm') { const callback = modal.callback; draft = {}; invalidFields = {}; modal = null; callback?.(); }
         else if (action === 'modal-apply' || action === 'apply-elevated') await apply(action === 'apply-elevated');
         else if (action === 'record-visual') { modal = { kind: 'visual' }; renderModal(); }
+        else if (/^rescue-(repair|clean|recover)$/.test(action)) {
+          const gameId = id;
+          busy = true; modal = null; message = ''; error = false; render();
+          try {
+            const plan = unwrap(await manager.previewDeploymentRescue(gameId, action.slice(7)));
+            if (!disposed && id === gameId) modal = { kind: 'rescue', plan };
+          } catch (failure) { if (!disposed && id === gameId) { message = errorText(failure); error = true; } }
+          finally { if (!disposed && id === gameId) { busy = false; render(); } }
+        }
         else if (action === 'remove-game') { modal = { kind: 'remove' }; renderModal(); }
         else if (action === 'remove-confirm') {
           busy = true; render();
-          try { unwrap(await manager.removeGame(id)); draft = {}; modal = null; await options.onChanged?.(id); options.onBack?.(); }
+          try { unwrap(await manager.removeGame(id, { keepFiles: true, confirm: true })); draft = {}; fields = {}; invalidFields = {}; draftBackup = null; pageDrafts.delete(id); scope.localStorage?.removeItem('manager-draft-backup:' + id); modal = null; if (options.onRemoved) await options.onRemoved(id); else { await options.onChanged?.(id); options.onBack?.(); } }
           finally { busy = false; if (modal) render(); }
         }
         else if (action === 'save-visual') {
@@ -879,7 +910,7 @@
         else if (action === 'maintenance-tab') selectTab('maintenance');
         else if (action === 'cancel-launch') unwrap(await manager.cancelLaunch(id));
         else if (action === 'launch') await launchGame();
-      } catch (failure) { message = failure.message; error = true; render(); }
+      } catch (failure) { message = errorText(failure); error = true; render(); }
     }, { signal: eventController.signal });
     host.addEventListener('keydown', event => {
       if (capturingHotkey) {

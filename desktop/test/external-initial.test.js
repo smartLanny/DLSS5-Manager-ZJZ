@@ -268,6 +268,84 @@ test('UTF-8 BOM survives a first external round trip and a changed root proxy is
   assert.deepEqual(fs.readFileSync(path.join(f.dir, 'ReShade.ini')), original);
 });
 
+test('rescue repairs a changed loader path and missing Core without following the new path or resetting personal INI', async t => {
+  const f = fixture(t), installed = await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = installed.layout.runtimeDir, loader = path.join(f.dir, 'ReShade.ini');
+  const unrelated = path.join(f.root, 'foreign'); fs.mkdirSync(unrelated); fs.writeFileSync(path.join(unrelated, 'keep.dll'), 'unrelated');
+  const edited = `[GENERAL]\nBasePath=${unrelated}\n[ADDON]\nAddonPath=${unrelated}\n`;
+  fs.writeFileSync(loader, edited); fs.unlinkSync(path.join(runtime, INSTALLED_NAMES.addon));
+  const config = path.join(runtime, INSTALLED_NAMES.config); fs.writeFileSync(config, '[NRBeforeSR]\nIntensity=1.23456\n');
+  const state = await f.service.inspect(f.game); assert.equal(state.ready, false); assert.equal(state.rescue.available, true); assert.equal(state.rescue.pending, false);
+  await assert.rejects(f.service.previewRemove(f.game), { code: 'DEPLOYMENT_FILE_CHANGED' });
+  const preview = await f.service.previewRescue(f.game, 'repair');
+  assert.equal(fs.readFileSync(loader, 'utf8'), edited); assert.equal(fs.existsSync(preview.archiveDirectory), false);
+  assert.equal(preview.changes.some(row => row.path.startsWith(unrelated)), false);
+  await assert.rejects(f.service.applyRescue(f.game, preview.planId), { code: 'DEPLOYMENT_RESCUE_CONFIRM_REQUIRED' });
+  const result = await f.service.applyRescue(f.game, preview.planId, { confirm: true });
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  assert.equal(fs.readFileSync(config, 'utf8'), '[NRBeforeSR]\nIntensity=1.23456\n');
+  const archive = JSON.parse(fs.readFileSync(path.join(result.archiveDirectory, 'operation.json')));
+  const row = archive.files.find(item => item.file === loader);
+  assert.equal(fs.readFileSync(path.join(result.archiveDirectory, row.snapshot), 'utf8'), edited);
+  assert.equal(fs.readFileSync(path.join(unrelated, 'keep.dll'), 'utf8'), 'unrelated');
+});
+
+test('rescue clean archives modified owned bytes, tolerates deleted files and leaves unrelated plugins intact', async t => {
+  const f = fixture(t), installed = await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = installed.layout.runtimeDir, addon = path.join(runtime, INSTALLED_NAMES.addon);
+  fs.writeFileSync(addon, 'outside replacement Core'); fs.unlinkSync(path.join(runtime, INSTALLED_NAMES.runtime));
+  fs.writeFileSync(path.join(f.dir, 'ReShade.ini'), '[ADDON]\nAddonPath=untrusted-path\n');
+  fs.writeFileSync(path.join(runtime, 'unrelated.addon64'), 'private unrelated addon');
+  const preview = await f.service.previewRescue(f.game, 'clean');
+  assert.equal(fs.readFileSync(addon, 'utf8'), 'outside replacement Core');
+  const result = await f.service.applyRescue(f.game, preview.planId, { confirm: true });
+  assert.equal(result.removed, true); assert.equal(fs.existsSync(addon), false);
+  assert.equal(fs.readFileSync(path.join(runtime, 'unrelated.addon64'), 'utf8'), 'private unrelated addon');
+  assert.equal(fs.readFileSync(path.join(f.dir, 'ReShade.ini'), 'utf8'), f.original);
+  assert.equal((await f.service.inspect(f.game)).installed, false);
+  const archive = JSON.parse(fs.readFileSync(path.join(result.archiveDirectory, 'operation.json'))), row = archive.files.find(item => item.file === addon);
+  assert.equal(fs.readFileSync(path.join(result.archiveDirectory, row.snapshot), 'utf8'), 'outside replacement Core');
+  const reinstalled = await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  assert.equal(reinstalled.applied, true); assert.equal((await f.service.inspect(f.game)).ready, true);
+});
+
+test('rescue rechecks preview hashes, process state and receipt identity before writing', async t => {
+  let running = false;
+  const f = fixture(t, { guards: { antiCheatPresent: () => false, assertGameClosed: async () => { if (running) throw Object.assign(new Error('game running'), { code: 'ERR_GAME_RUNNING' }); } } });
+  await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const file = path.join(f.dir, 'ReShade.ini'); fs.writeFileSync(file, 'edited');
+  const stale = await f.service.previewRescue(f.game, 'repair'); fs.writeFileSync(file, 'edited again');
+  await assert.rejects(f.service.applyRescue(f.game, stale.planId, { confirm: true }), { code: 'DEPLOYMENT_PLAN_CHANGED' });
+  assert.equal(fs.existsSync(stale.archiveDirectory), false); assert.equal(fs.readFileSync(file, 'utf8'), 'edited again');
+  const live = await f.service.previewRescue(f.game, 'repair'); running = true;
+  await assert.rejects(f.service.applyRescue(f.game, live.planId, { confirm: true }), { code: 'ERR_GAME_RUNNING' });
+  assert.equal(fs.existsSync(f.pending), false); assert.equal(fs.readFileSync(file, 'utf8'), 'edited again');
+});
+
+test('failed rescue publication rolls back to the edited pre-rescue bytes and leaves a retryable plan', async t => {
+  let fail = false;
+  const f = fixture(t, { afterWrite: () => { if (fail) throw new Error('injected rescue failure'); } });
+  await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const file = path.join(f.dir, 'ReShade.ini'); fs.writeFileSync(file, 'edited before rescue');
+  const preview = await f.service.previewRescue(f.game, 'repair'); fail = true;
+  await assert.rejects(f.service.applyRescue(f.game, preview.planId, { confirm: true }), /injected rescue failure/);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'edited before rescue'); assert.equal(fs.existsSync(f.pending), false);
+  fail = false; await f.service.applyRescue(f.game, (await f.service.previewRescue(f.game, 'repair')).planId, { confirm: true });
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+});
+
+test('rescue refuses a linked owned file and cannot turn damaged payload snapshots into a repair', async t => {
+  const f = fixture(t), installed = await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const addon = path.join(installed.layout.runtimeDir, INSTALLED_NAMES.addon), saved = JSON.parse(fs.readFileSync(f.receipt));
+  const history = path.join(path.dirname(installed.layout.runtimeDir), 'history', saved.generation), wal = JSON.parse(fs.readFileSync(path.join(history, 'operation.json')));
+  const row = wal.files.find(item => item.file === addon); fs.unlinkSync(addon);
+  fs.writeFileSync(path.join(history, row.prepared), 'damaged backup');
+  await assert.rejects(f.service.previewRescue(f.game, 'repair'), { code: 'DEPLOYMENT_RESCUE_SOURCE_MISSING' });
+  const other = path.join(f.root, 'outside.addon64'); fs.writeFileSync(other, 'foreign'); fs.linkSync(other, addon);
+  await assert.rejects(f.service.previewRescue(f.game, 'clean'), /链接|link/i);
+  assert.equal(fs.readFileSync(other, 'utf8'), 'foreign'); assert.equal(fs.existsSync(f.pending), false);
+});
+
 test('an invalid output prefix and a partial initial copy never leave a live component or file WAL', async t => {
   const prefix = fixture(t);
   fs.mkdirSync(prefix.options.userData, { recursive: true }); fs.writeFileSync(path.join(prefix.options.userData, 'external-runtime'), 'existing unrelated file');

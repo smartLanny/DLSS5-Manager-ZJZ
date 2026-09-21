@@ -17,6 +17,20 @@ function setup(t) {
   return { root, dll, bytes, lib:createComponentLibrary({ userData:root, catalog }) };
 }
 
+test('component update failures retain the component category and concrete error code', async t => {
+  const f = setup(t);
+  t.mock.method(globalThis, 'fetch', async url => {
+    if (url.includes('/dlss5-bridge/')) return { ok: false, status: 403 };
+    if (url.includes('/DLSS5-Feeder/')) throw Object.assign(new Error('network offline'), { cause: { code: 'ENETUNREACH' } });
+    return { ok: true, text: async () => '[]' };
+  });
+  const result = await f.lib.checkUpdates();
+  assert.equal(result.find(row => row.kind === 'bridge').error.code, 'HTTP_403');
+  assert.match(result.find(row => row.kind === 'bridge').error.message, /403/);
+  assert.deepEqual(result.find(row => row.kind === 'feeder').error, { code: 'ENETUNREACH', message: 'network offline' });
+  assert.equal(result.find(row => row.kind === 'mfg').error, undefined);
+});
+
 test('unified3 inventory and overlay retain complete resources and the matching configuration template', async t => {
   const f = setup(t), base = path.join(f.root, 'base'), id = '0.5-dline21-unified3';
   const names = require('../src/product/payload-companions').NAMES;

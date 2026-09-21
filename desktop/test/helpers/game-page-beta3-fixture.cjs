@@ -529,7 +529,7 @@ async function smoke() {
     await scenario(route + ' 固定配套', value => { value.game.installed = false; value.game.chosen.apiResolution.api = value.api.effectiveApi = api; value.game.nativeDlssAvailable = route !== 'feeder';
       value.game[route] = { installed: false, available: true, selectionAvailable: true, packageId, coreVersion: route + '-core' };
       value.layout.source = route; value.layout.mode = value.deployment.mode = route === 'vulkan' ? 'external' : 'local'; });
-    await tab('overview'); assert(field('route', 'version').disabled && field('route', 'version').value === packageId && field('route', 'version').options.length === 1, 'fixed route exposes only its package');
+    await tab('overview'); assert(field('route', 'version').value === packageId && field('route', 'version').options.length === 1, 'fixed route preserves its package when no verified current Core is offered');
     await preview('prepare'); assert(mock.plan.request.route === route && mock.plan.request.api === 'auto' && mock.plan.request.version === packageId && mock.plan.request.loadingMode === undefined, 'fixed route follows automatic detection and sends its fixed package without a native Core or helper choice'); click('modal-cancel'); discard();
     await tab('maintenance'); assert(field('route', 'deployment').disabled && (!field('route', 'loadingMode') || field('route', 'loadingMode').disabled), 'fixed route blocks unrelated layout and helper choices');
   }
@@ -663,7 +663,7 @@ async function smoke() {
   assert(mock.policyApplied === verifiedBeforeChange && host().querySelector('.gp-message.error[role="alert"]')?.textContent, 'last-moment mutation is rejected by production snapshot assertion and shown as an error'); discard();
 
   await scenario('库条目移出 · 已有覆盖', value => { value.game.installed = false; value.enhancements.applied.sr = { request: { backend: 'native', quality: 'quality', preset: 'K' }, readbackVerified: true }; }); await maintenance();
-  assert(button('remove-game').disabled, 'owned settings block library removal');
+  assert(!button('remove-game').disabled, 'owned settings permit explicit keep-files library removal');
   await scenario('库条目移出 · 无受管状态', value => { value.game.installed = false; }); await maintenance();
   const beforeRemoveApply = count('apply'), beforeRemovePreview = count('preview'); click('remove-game');
   assert(button('remove-confirm') && !button('modal-apply') && count('remove-game') === 0, 'library removal has a separate metadata-only dialog'); click('modal-cancel'); assert(count('remove-game') === 0, 'cancel retains entry');

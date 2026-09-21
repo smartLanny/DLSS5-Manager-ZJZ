@@ -452,7 +452,7 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
     const results = await Promise.all(Object.entries(repos).map(async ([kind, repo]) => {
       try {
         const response = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=3`, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15000) });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) throw Object.assign(new Error(`更新服务器返回 HTTP ${response.status}，可稍后重试。`), { code: `HTTP_${response.status}` });
         const body = await response.text(); if (body.length > 1024 * 1024) fail('更新目录过大。');
         const releases = JSON.parse(body); if (!Array.isArray(releases)) fail('更新目录格式无效。');
         return { kind, releases: releases.filter(r => !r.draft).slice(0,3).map(r => ({ version: String(r.tag_name).slice(0,100), preview: r.prerelease === true,
@@ -463,7 +463,10 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
               filename: a.name, bytes: a.size, sha256: a.digest.slice(7), downloadUrl: a.browser_download_url,
               architecture: kind === 'feeder' ? 'mixed' : 'x64', interface: kind === 'mfg' ? 'Streamline-DLSSG' : 'NGX-D3D12-Feature1',
               ...(kind === 'bridge' ? { gameApis:['dx11','vulkan'] } : kind === 'mfg' ? { hardwareFamilies:['RTX40'] } : {archive:true,requiresAdapter:true}), validation:'candidate' })) })) };
-      } catch (error) { return { kind, releases: [], error: error.message }; }
+      } catch (error) { return { kind, releases: [], error: {
+        code: error.code || error.cause?.code || (error.name === 'TimeoutError' ? 'UPDATE_TIMEOUT' : 'UPDATE_CHECK_FAILED'),
+        message: error.message || '更新检查失败。'
+      } }; }
     }));
     await atomicJson(releaseFile, { schemaVersion:1, checkedAt:new Date().toISOString(), packages:results.flatMap(r => r.releases.flatMap(v => v.assets || [])) });
     return results;

@@ -184,6 +184,27 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
       return publicState(row);
     });
   }
+  async function cancelWithinQueue(id) {
+    // The caller already owns this game's write queue. Use its directory, not
+    // a readable EXE/valid recovery record, so metadata removal stays reachable.
+    const game = path.resolve(service.gameDirectory(id)), key = hash(game.toLowerCase());
+    if (inFlight.has(key)) fail('WAITING_OPERATION_ACTIVE', '当前游戏仍在写入，请等待本次操作结束后再移出或恢复。');
+    const file = fileFor({ key }); await noLinks(file);
+    let archiveFile = null;
+    try {
+      const stat = await fs.lstat(file);
+      if (!stat.isFile()) fail('WAITING_RECORD', '待应用记录不是普通文件，未取消。');
+      archiveFile = path.join(root, 'cancelled', key + '-' + crypto.randomUUID() + '.json');
+      await noLinks(archiveFile); await fs.mkdir(path.dirname(archiveFile), { recursive: true });
+      // Preserve even a damaged or interrupted record byte-for-byte; the poller
+      // only reads direct children of root, so it can never replay this archive.
+      await fs.rename(file, archiveFile);
+    } catch (error) { if (error.code !== 'ENOENT') throw error; archiveFile = null; }
+    for (const [planId, saved] of waitingPlans) if (saved.id === id) waitingPlans.delete(planId);
+    const result = { cancelled: true, archiveFile, gameFilesChanged: false };
+    emit({ gameId: id, status: 'cancelled', message: '已取消等待应用，原记录已保留；游戏文件未改动。' });
+    return result;
+  }
   async function tick() {
     if (polling) return; polling = true;
     let tasks = [];
@@ -232,7 +253,7 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
     // the queue while it runs. Each game still has one checking/applying task.
     await Promise.allSettled(tasks);
   }
-  return { submit, apply, inspect, assertNoWaiting, cancel, tick,
+  return { submit, apply, inspect, assertNoWaiting, cancel, cancelWithinQueue, tick,
     start() { if (!timer) { timer = setInterval(() => { void tick().catch(() => {}); }, 3000); timer.unref?.(); } },
     stop() { clearInterval(timer); timer = null; } };
 }

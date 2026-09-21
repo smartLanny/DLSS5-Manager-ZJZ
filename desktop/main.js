@@ -299,7 +299,8 @@ function registerIpc() {
     'game-reframework-inspect', 'game-reframework-prepare', 'game-reframework-restore', 'game-reframework-recover',
     'game-feeder-inspect', 'game-feeder-install', 'game-feeder-restore', 'game-prepare-all', 'game-preparation-recover', 'fg-components-recover',
     'game-environment-inspect', 'game-environment-prepare-clean', 'game-environment-preview-clean', 'game-environment-apply', 'game-environment-restore', 'game-library-remove',
-    'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm'
+    'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm',
+    'game-deployment-rescue-preview', 'game-deployment-rescue-apply'
   ]);
   const guardedActions = new Set(['game-install', 'game-repair', 'game-upgrade-addon', 'game-toggle-d3d12',
     'game-api-set', 'game-route-apply', 'nr-write', 'nr-default', 'nr-recommended', 'game-hotkey-write', 'game-reframework-prepare', 'game-reframework-restore',
@@ -310,7 +311,8 @@ function registerIpc() {
     'payload-source-reset', 'payload-source-recheck', 'launch-settings-update', 'launch-settings-reset-all',
     'game-reframework-recover', 'game-feeder-restore', 'game-preparation-recover', 'fg-components-recover',
     'game-environment-prepare-clean', 'game-environment-preview-clean', 'game-environment-apply', 'game-environment-restore',
-    'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm', 'game-user-addon-set']);
+    'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm', 'game-user-addon-set',
+    'game-deployment-rescue-preview', 'game-deployment-rescue-apply']);
   for (const name of ['addon-import', 'addon-remove', 'components-runtime-activate', 'game-component-apply']) serializedActions.add(name);
   guardedActions.add('game-component-apply');
   serializedActions.add('components-core-activate');
@@ -328,10 +330,12 @@ function registerIpc() {
     async () => {
       if (_event.sender !== win?.webContents) throw Object.assign(new Error('请求不是来自当前管理器窗口。'), { code: 'IPC_SENDER' });
       const work = async () => {
+        const recoveryExit = name === 'game-deployment-rescue-preview' || name === 'game-deployment-rescue-apply' ||
+          name === 'game-library-remove' && args[1]?.keepFiles === true;
         if (serializedActions.has(name)) await operationElevation?.assertAvailable();
-        if (serializedActions.has(name) && loggedGameActions.has(name) && !['game-operation-recover', 'game-preparation-recover', 'launch-settings-recover', 'fg-components-recover', 'game-reframework-recover', 'game-feeder-restore', 'game-environment-restore'].includes(name)) await operationPlans?.assertReady(args[0]);
-        if (serializedActions.has(name) && loggedGameActions.has(name) && name !== 'game-environment-restore') await environment?.assertReady(args[0]);
-        if (serializedActions.has(name) && loggedGameActions.has(name) && !['game-operation-recover', 'game-preparation-recover', 'launch-settings-recover', 'fg-components-recover', 'game-reframework-recover', 'game-feeder-restore', 'game-environment-restore'].includes(name)) await preparation?.assertReady(args[0]);
+        if (!recoveryExit && serializedActions.has(name) && loggedGameActions.has(name) && !['game-operation-recover', 'game-preparation-recover', 'launch-settings-recover', 'fg-components-recover', 'game-reframework-recover', 'game-feeder-restore', 'game-environment-restore'].includes(name)) await operationPlans?.assertReady(args[0]);
+        if (!recoveryExit && serializedActions.has(name) && loggedGameActions.has(name) && name !== 'game-environment-restore') await environment?.assertReady(args[0]);
+        if (!recoveryExit && serializedActions.has(name) && loggedGameActions.has(name) && !['game-operation-recover', 'game-preparation-recover', 'launch-settings-recover', 'fg-components-recover', 'game-reframework-recover', 'game-feeder-restore', 'game-environment-restore'].includes(name)) await preparation?.assertReady(args[0]);
         if (guardedActions.has(name)) await launchCoordinator.assertMutationReady(args[0]);
         return fn(...args);
       };
@@ -406,9 +410,20 @@ function registerIpc() {
   call('game-repair', (id, options) => service.repair(id, options));
   call('game-upgrade-addon', (id, version, options) => service.upgradeAddon(id, version, options));
   call('game-dismiss', id => launchCoordinator.dismiss(id));
-  call('game-library-remove', async id => {
+  call('game-library-remove', async (id, options = {}) => {
+    if (options.keepFiles === true) {
+      if (options.confirm !== true) throw Object.assign(new Error('请确认仅移出游戏库，保留所有游戏文件与恢复记录。'), { code: 'LIBRARY_CONFIRM_REQUIRED' });
+      const waitingArchive = await deferredOperations.cancelWithinQueue(id);
+      return launchCoordinator.removeLibraryEntry(id, { keepFiles: true, confirm: true, waitingArchive });
+    }
     await operationPlans.assertReady(id); await preparation.assertReady(id); await environment.assertReady(id);
     return launchCoordinator.removeLibraryEntry(id);
+  });
+  call('game-deployment-rescue-preview', (id, mode = 'repair') => service.previewDeploymentRescue(id, mode));
+  call('game-deployment-rescue-apply', async (id, planId, consent = {}) => {
+    if (consent.confirm !== true) throw Object.assign(new Error('请先核对并确认本次部署恢复预览。'), { code: 'CONFIRM_REQUIRED' });
+    await deferredOperations.cancelWithinQueue(id);
+    return service.applyDeploymentRescue(id, planId, consent);
   });
   call('game-rename', (id, name) => service.renameGame(id, name));
   call('game-api-set', (id, api, options) => service.setGameApi(id, api, options));

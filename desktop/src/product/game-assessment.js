@@ -41,7 +41,7 @@ function createGameAssessment({ service, coordinator, environment, operations, d
     async function installation() {
       // This section reads small configuration/ownership records only. Full
       // binary, environment and runtime verification belongs to diagnostics.
-      const [currentLayout, operation, launch, currentSession, launchReadiness, nr, hotkeys, coreVersions, defaults, antiCheat, componentChoices] = await Promise.all([
+      const [currentLayout, operation, launch, currentSession, launchReadiness, nr, hotkeys, coreVersions, defaults, antiCheat, componentChoices, rescue] = await Promise.all([
         layout(), optional('operation', () => operations.inspect(id), { pending: false, unavailable: true, inspectionFailed: true }),
         optional('launch', () => launchMode(id), {}), session(),
         coordinator?.inspectLaunchReadiness ? optional('launchReadiness', () => coordinator.inspectLaunchReadiness(id), null) : null,
@@ -49,7 +49,8 @@ function createGameAssessment({ service, coordinator, environment, operations, d
         optional('coreVersions', () => !full && service.coreVersionCatalog ? service.coreVersionCatalog() : service.listAddonVersions(), []),
         optional('defaults', () => service.installationDefaults ? service.installationDefaults(id) : null, null),
         optional('antiCheat', () => antiCheatPresent(service.gameDirectory(id)), false),
-        optional('componentChoices', () => service.componentChoices?.(id), null)
+        optional('componentChoices', () => service.componentChoices?.(id), null),
+        optional('rescue', () => service.deploymentRescueState?.(id), null)
       ]);
       const nativeIntegration = inspectNativeEnhancementCapabilities(scan);
       const layoutFailed = !currentLayout || Boolean(currentLayout.blockers?.length) ||
@@ -64,6 +65,7 @@ function createGameAssessment({ service, coordinator, environment, operations, d
         deployment: owned ? currentLayout?.mode || 'local' : 'local', loadingMode: owned ? currentLayout?.loadingMode || 'proxy' : 'proxy',
         ...defaults, effectiveApi: selection.effectiveApi, requiresApiSelection: selection.requiresManualSelection };
       const deployment = { ...currentLayout, installed: owned, version: publicGame.addonVersion,
+        rescue,
         pending: Boolean(currentLayout?.needsRecovery), needsRecovery: currentLayout?.needsRecovery === true,
         inspectionFailed: layoutFailed,
         inspection: 'summary', layoutVerified: currentLayout?.verified === true,

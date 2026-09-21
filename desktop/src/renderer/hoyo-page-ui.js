@@ -2,7 +2,8 @@
 
 (function (scope) {
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
-  const unwrap = value => { if (value?.ok !== true) throw new Error(value?.error?.message || '本次操作未完成。'); return value.value; };
+  const unwrap = value => { if (value?.ok !== true) throw Object.assign(new Error(value?.error?.message || '本次操作未完成。'), value?.error); return value.value; };
+  const errorText = value => `${value?.code ? `[${value.code}] ` : ''}${value?.message || value || '本次操作未完成。'}`;
   const waiting = phase => ['waiting-helper', 'waiting-launcher', 'waiting-game', 'running'].includes(phase);
   const PHASES = {
     binding: ['绑定启动器', '选择这个客户端对应的官方启动器。'], api: ['确认游戏 API', '按游戏实际使用的图形 API 选择一次。'],
@@ -18,9 +19,9 @@
   function mount(host, api, options = {}) {
     let games = [], launchers = [], warnings = [], selectedId = null, flow = null, form = {}, busy = false, error = '', plan = null,
       discovering = false, disposed = false, generation = 0, timer = null, active = false, expanded = true, editingApi = false, currentWork = '', previewAction = 'install', editorReadiness = null;
-    const editors = new Map();
+    const editors = new Map(), recoveryEditors = new Map();
     const editor = () => editors.get(flow?.gameId);
-    const editorBusy = () => editor()?.controller.getState().busy === true;
+    const editorBusy = () => editor()?.controller.getState().busy === true || recoveryEditors.get(flow?.gameId)?.controller.getState().busy === true;
     const hasDraft = () => editor()?.controller.hasDraft() === true;
     const pendingAction = () => editor()?.controller.getState().action || null;
     const waitingForExit = () => pendingAction()?.waiting === true || flow?.waiting?.pending === true;
@@ -78,7 +79,7 @@
       const info = launchReadiness(), blocker = readinessBlocker();
       if (!info || !readinessNeedsNotice()) return '';
       if (info.state === 'unknown' && !blocker && info.source === 'metadata') return '已保存设置；启动时会检查当前状态。';
-      return blocker?.message || (info.state === 'unknown' ? '启动前状态暂时无法确认，请重新检查设置。' : '启动前还有需要处理的设置。');
+      return (blocker?.message ? errorText(blocker) : '') || (info.state === 'unknown' ? '启动前状态暂时无法确认，请重新检查设置。' : '启动前还有需要处理的设置。');
     }
     function readinessActionLabel() {
       const kind = readinessActionKind();
@@ -133,13 +134,13 @@
     }
     function maintenance() {
       const disabled = busy || editorBusy() || hasDraft() || editingApi || waiting(flow.phase);
-      return `<details class="gp-section gp-maintenance-details hoyo-details" data-hoyo-detail="maintenance"><summary>启动器、API 与维护</summary><div class="gp-facts">${[['启动器', flow.binding?.launcher?.path || '尚未绑定'], ['图形 API', { dx11: 'DirectX 11', dx12: 'DirectX 12' }[flow.api?.api] || '待确认']].map(([label, value]) => `<div class="gp-fact"><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div>
-        <div class="gp-actions">${button('inspect', '重新检查', false, disabled)}${button('edit-api', '修改图形 API', false, disabled || !['install', 'ready'].includes(flow.phase))}${button('pick-launcher', '重新选择启动器', false, disabled)}${flow.installation?.installed ? button('preview-repair', '预览修复', false, disabled) + button('preview-restore', '预览卸载与恢复', false, disabled) : ''}</div></details>`;
+      return `<details class="gp-section gp-maintenance-details hoyo-details" data-hoyo-detail="maintenance"${!ready() && (flow.phase === 'recovery' || flow.error?.code === 'DEPLOYMENT_FILE_CHANGED' || flow.installation?.error?.code === 'DEPLOYMENT_FILE_CHANGED') ? ' open' : ''}><summary>启动器、API 与维护</summary><div class="gp-facts">${[['启动器', flow.binding?.launcher?.path || '尚未绑定'], ['图形 API', { dx11: 'DirectX 11', dx12: 'DirectX 12' }[flow.api?.api] || '待确认']].map(([label, value]) => `<div class="gp-fact"><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div>
+        <div class="gp-actions">${button('inspect', '重新检查', false, disabled)}${button('edit-api', '修改图形 API', false, disabled || !['install', 'ready'].includes(flow.phase))}${button('pick-launcher', '重新选择启动器', false, disabled)}${flow.installation?.installed ? button('preview-repair', '预览修复', false, disabled) + button('preview-restore', '预览卸载与恢复', false, disabled) : ''}</div>${!ready() && flow.gameId ? '<div class="hoyo-recovery-slot"></div>' : ''}</details>`;
     }
     function detail() {
       const phase = editingApi ? 'api' : flow.phase === 'recovery' ? 'recovery' : error || flow.error || flow.installation?.error ? 'failed' : flow.phase;
       const text = PHASES[phase] || ['检查客户端', '重新检查后继续。'];
-      const description = busy ? '本次操作正在执行，完成后会显示结果。' : error || flow.error?.message || flow.installation?.error?.message || (editingApi ? '按游戏实际设置选择配套路线。确认后先预览应用，再启动。' : text[1]);
+      const description = busy ? '本次操作正在执行，完成后会显示结果。' : error || (flow.error ? errorText(flow.error) : '') || (flow.installation?.error ? errorText(flow.installation.error) : '') || (editingApi ? '按游戏实际设置选择配套路线。确认后先预览应用，再启动。' : text[1]);
       return `<div class="game-detail gp-inline hoyo-current" aria-label="当前客户端操作">${ready() ? '' : `<div class="gp-apply-bar hoyo-next-step"><div role="status"><strong>${esc(busy ? currentWork : text[0])}</strong><small>${esc(description)}</small></div><div class="hoyo-primary-actions">${currentAction()}</div></div>`}
         ${bindingFields() ? `<section class="gp-section"><h3>${editingApi || flow.phase === 'api' ? '图形 API' : '启动器绑定'}</h3>${bindingFields()}</section>` : ''}
         ${ready() ? '<div class="hoyo-settings-slot"></div>' : !busy && !['binding', 'api'].includes(phase) ? `<p class="gp-caption">${phase === 'install' ? '此客户端使用独立的 ReShade、Core 和 NR 配套。预览后再确认安装。' : ''}</p>` : ''}
@@ -165,9 +166,9 @@
       if (disposed) return;
       const view = host.closest('.view'), top = view?.scrollTop;
       const openDetails = [...host.querySelectorAll('[data-hoyo-detail][open]')].map(row => row.dataset.hoyoDetail);
-      for (const entry of editors.values()) entry.element.remove();
+      for (const entry of [...editors.values(), ...recoveryEditors.values()]) entry.element.remove();
       host.innerHTML = `<div class="library-header"><p class="summary">${discovering ? '正在发现本机客户端…' : `共 ${games.length} 个客户端 · 自动匹配已安装的启动器`}</p><div class="library-actions">${button('pick-game', '选择游戏程序', !games.length, busy || editorBusy() || hasDraft())}${button('discover', '重新扫描', false, busy || editorBusy() || hasDraft())}</div></div>
-        ${warnings.length ? `<details class="gp-section hoyo-discovery-notes"><summary>发现提示 ${warnings.length}</summary>${warnings.map(row => `<p class="gp-caption">${esc(row.message || row)}</p>`).join('')}</details>` : ''}
+        ${warnings.length ? `<details class="gp-section hoyo-discovery-notes"><summary>发现提示 ${warnings.length}</summary>${warnings.map(row => `<p class="gp-caption">${esc(errorText(row))}</p>`).join('')}</details>` : ''}
         <div class="game-list" aria-label="米哈游客户端">${games.map(row => {
           const current = row.id === selectedId, opened = current && expanded, failed = row.error || row.installation?.error || current && error;
           return `<article class="game-card hoyo-game-card${opened ? ' expanded' : ''}" data-hoyo-card="${esc(row.id)}"><div class="game-card-head" data-hoyo-client="${esc(row.id)}"><div class="poster hoyo-poster" aria-hidden="true"><span class="nav-icon nav-icon-hoyo"></span></div><div class="game-meta"><div class="game-title"><h3>${esc(row.name)}</h3><span class="badge ${failed ? 'bad' : row.installation?.ready && !(current && busy) ? 'good' : ''}" data-hoyo-status>${esc(phaseLabel(row))}</span></div><p>${esc(row.channelLabel || '客户端待确认')} · ${esc({ dx11: 'DirectX 11', dx12: 'DirectX 12' }[row.api?.api] || 'API 待确认')}${row.gameVersion ? ` · ${esc(row.gameVersion)}` : ''}</p><p class="game-exe-path" title="${esc(row.exePath)}">${esc(row.exePath)}</p></div><div class="card-action">${current && ready() ? `<div class="hoyo-header-action">${currentAction()}</div>` : ''}<button type="button" class="button subtle" data-hoyo-toggle="${esc(row.id)}"${busy || editorBusy() ? ' disabled' : ''}>${row.installation?.installed ? '设置' : '安装与设置'}</button><button class="expand-arrow" type="button" data-hoyo-toggle="${esc(row.id)}" aria-label="展开或收起游戏详情" aria-expanded="${opened}"${busy || editorBusy() ? ' disabled' : ''}></button></div></div>${opened ? detail() : ''}</article>`;
@@ -175,6 +176,7 @@
       host.setAttribute('aria-busy', String(busy));
       if (expanded && ready()) openSettings();
       for (const key of openDetails) { const node = host.querySelector(`[data-hoyo-detail="${key}"]`); if (node) node.open = true; }
+      openRecoveryTools();
       syncEditorActions();
       if (top !== undefined) view.scrollTop = top;
       if (plan) renderPlan();
@@ -184,15 +186,36 @@
       expanded = false; render(); schedule();
       host.querySelector(`[data-hoyo-toggle="${selectedId}"]`)?.focus();
     }
+    function removedGame(gameId) {
+      for (const cache of [editors, recoveryEditors]) { cache.get(gameId)?.controller.dispose(); cache.delete(gameId); }
+      games = games.filter(row => row.gameId !== gameId);
+      if (flow?.gameId === gameId) { flow = null; selectedId = null; expanded = false; plan = null; error = ''; }
+      render();
+    }
+    function openRecoveryTools() {
+      const slot = host.querySelector('.hoyo-recovery-slot');
+      if (!slot || !flow?.gameId || !slot.closest('details')?.open) return;
+      let entry = recoveryEditors.get(flow.gameId);
+      if (!entry) {
+        const element = document.createElement('div'), clientId = flow.id, gameId = flow.gameId;
+        element.className = 'hoyo-recovery-host'; slot.append(element);
+        const controller = scope.GamePageUi.mount(element, api, { maintenanceOnly: true, hoyoSettingsOnly: true, compatibilityFeedbackOwned: true,
+          onActionState: () => syncEditorActions(), onRemoved: removedGame,
+          onChanged: async () => { const value = unwrap(await api.hoyoInspect(clientId)); if (flow?.gameId === gameId) { accept(value); await editors.get(gameId)?.controller.refresh(true); render(); } } });
+        entry = { element, controller }; recoveryEditors.set(gameId, entry);
+        void controller.open(gameId);
+      } else slot.append(entry.element);
+    }
+    host.addEventListener('toggle', event => { if (event.target.matches?.('[data-hoyo-detail="maintenance"]') && event.target.open) openRecoveryTools(); }, true);
     function openSettings() {
       const slot = host.querySelector('.hoyo-settings-slot'); if (!slot || !flow?.gameId) return;
       let entry = editor();
       if (!entry) {
         const element = document.createElement('div'); element.className = 'hoyo-settings-host'; slot.append(element);
-        const id = flow.id, gameId = flow.gameId, controller = scope.GamePageUi.mount(element, api, { hoyoSettingsOnly: true, compatibilityFeedbackOwned: Boolean(feedback), onBack: closeSettings,
+        const id = flow.id, gameId = flow.gameId, controller = scope.GamePageUi.mount(element, api, { hoyoSettingsOnly: true, compatibilityFeedbackOwned: Boolean(feedback), onBack: closeSettings, onRemoved: removedGame,
           onLaunch: async () => { if (!ready() || waitingForExit() || hasDraft()) return; return run(() => api.hoyoStart(selectedId), true, '正在准备启动…'); },
           onActionState: state => { if (!disposed && selectedId === id && flow?.gameId === gameId && editors.get(gameId)?.element === element) syncEditorActions(state); }, maintenanceContent: () => maintenance() + evidence(),
-          onChanged: async () => { try { const value = unwrap(await api.hoyoInspect(id)); if (selectedId === id) { accept(value); render(); } } catch (failure) { error = failure.message; render(); } } });
+          onChanged: async () => { try { const value = unwrap(await api.hoyoInspect(id)); if (selectedId === id) { accept(value); render(); } } catch (failure) { error = errorText(failure); render(); } } });
         entry = { element, controller }; editors.set(flow.gameId, entry);
         void controller.open(flow.gameId, 'overview', { game: { id: flow.gameId, name: flow.name, installed: true, chosen: { path: flow.exePath, apiResolution: { api: flow.api?.api } } } });
       } else slot.append(entry.element);
@@ -200,13 +223,13 @@
     function renderPlan() {
       host.querySelector('.gp-modal')?.remove();
       const consent = plan.requiresAntiCheat === true || plan.deployment?.requiresAntiCheat === true;
-      host.insertAdjacentHTML('beforeend', `<div class="gp-modal" role="dialog" aria-modal="true" aria-label="米哈游操作预览"><div class="gp-modal-card"><h3>确认本次变更</h3>${scope.GamePageUi.adoptionMarkup?.(plan, 'hoyo') || ''}<p>${esc(flow?.name)} · 核对后一次应用。</p><div class="gp-change-list">${(plan.changes || []).map(row => `<div><strong>${esc(row.name || row.key || row.role || row.action)}</strong><span>${esc(({ create: '新增', replace: '替换', remove: '移除', keep: '保留' })[row.action] || row.description || row.action)}</span>${row.path ? `<small>${esc(row.path)}</small>` : ''}</div>`).join('')}</div>${(plan.blockers || []).map(row => `<p class="gp-message error">${esc(row.message || row)}</p>`).join('')}${plan.requiresElevation ? '<p>应用时会显示 Windows 权限确认，完成后管理器继续以普通权限运行。</p>' : ''}${consent ? '<label class="check-line gp-check"><input type="checkbox" data-hoyo-consent>我已了解反作弊可能阻止加载及账号风险，并决定应用。</label>' : ''}<p class="hoyo-plan-message gp-message" role="status" hidden></p><div class="gp-modal-actions">${button('close-plan', '取消', false, busy)}${button('apply', '应用本次变更', true, busy || Boolean(plan.blockers?.length))}</div></div></div>`);
+      host.insertAdjacentHTML('beforeend', `<div class="gp-modal" role="dialog" aria-modal="true" aria-label="米哈游操作预览"><div class="gp-modal-card"><h3>确认本次变更</h3>${scope.GamePageUi.adoptionMarkup?.(plan, 'hoyo') || ''}<p>${esc(flow?.name)} · 核对后一次应用。</p><div class="gp-change-list">${(plan.changes || []).map(row => `<div><strong>${esc(row.name || row.key || row.role || row.action)}</strong><span>${esc(({ create: '新增', replace: '替换', remove: '移除', keep: '保留' })[row.action] || row.description || row.action)}</span>${row.path ? `<small>${esc(row.path)}</small>` : ''}</div>`).join('')}</div>${(plan.blockers || []).map(row => `<p class="gp-message error">${esc(errorText(row))}</p>`).join('')}${plan.requiresElevation ? '<p>应用时会显示 Windows 权限确认，完成后管理器继续以普通权限运行。</p>' : ''}${consent ? '<label class="check-line gp-check"><input type="checkbox" data-hoyo-consent>我已了解反作弊可能阻止加载及账号风险，并决定应用。</label>' : ''}<p class="hoyo-plan-message gp-message" role="status" hidden></p><div class="gp-modal-actions">${button('close-plan', '取消', false, busy)}${button('apply', '应用本次变更', true, busy || Boolean(plan.blockers?.length))}</div></div></div>`);
       host.querySelector('[data-hoyo-action="close-plan"]')?.focus();
     }
     async function run(work, applyValue = true, label = '正在检查…') {
       if (busy || disposed) return; busy = true; expanded = true; currentWork = label; error = ''; stopPoll(); render(); const token = ++generation;
       try { const result = unwrap(await work()); if (disposed || generation !== token) return; if (applyValue) accept(result); return result; }
-      catch (failure) { if (!disposed && generation === token) error = failure.message; }
+      catch (failure) { if (!disposed && generation === token) error = errorText(failure); }
       finally { if (!disposed && generation === token) { busy = false; currentWork = ''; render(); schedule(); } }
     }
     async function discover() {
@@ -222,7 +245,7 @@
       if (!passive) return run(() => api.hoyoInspect(selectedId, { retry: true }));
       const token = generation, requestedId = selectedId;
       try { const value = unwrap(await api.hoyoInspect(requestedId)); if (!disposed && active && generation === token && selectedId === requestedId) { accept(value); render(); } }
-      catch (failure) { if (!disposed && generation === token && selectedId === requestedId) { error = failure.message; render(); } }
+      catch (failure) { if (!disposed && generation === token && selectedId === requestedId) { error = errorText(failure); render(); } }
       finally { schedule(); }
     }
     host.addEventListener('change', event => { const field = event.target.dataset.hoyoField; if (!field || busy) return; form[field] = event.target.value; const region = host.querySelector('.hoyo-primary-actions'); if (region) region.innerHTML = currentAction(); });
@@ -297,7 +320,7 @@
     });
     render();
     return { activate() { active = true; if (!games.length) return discover(); render(); schedule(); }, deactivate() { active = false; stopPoll(); feedback?.update(); },
-      refresh: discover, getState: () => ({ selectedId, flow, games, busy, error, plan, editingApi, currentWork, expanded }), dispose() { disposed = true; generation++; stopPoll(); feedback?.dispose(); for (const editor of editors.values()) editor.controller.dispose(); } };
+      refresh: discover, getState: () => ({ selectedId, flow, games, busy, error, plan, editingApi, currentWork, expanded }), dispose() { disposed = true; generation++; stopPoll(); feedback?.dispose(); for (const entry of [...editors.values(), ...recoveryEditors.values()]) entry.controller.dispose(); } };
   }
   const api = { mount, verificationLabel };
   if (typeof module === 'object' && module.exports) module.exports = api; else scope.HoYoPageUi = api;

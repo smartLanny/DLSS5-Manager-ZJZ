@@ -723,6 +723,68 @@ test('library removal cannot bypass any recovery guard, active worker, or the cu
   }
 });
 
+test('confirmed keep-files removal bypasses recovery guards, cancels waiting within the game lock and preserves options', async () => {
+  const calls = []; let locked = false;
+  const forbidden = async () => { throw new Error('generic recovery guard must not run'); };
+  const h = harness({ serialize: async work => { locked = true; try { return await work(); } finally { locked = false; } },
+    operationService: { assertReady: forbidden }, preparationService: { assertReady: forbidden }, environmentService: { assertReady: forbidden },
+    deferredService: { cancelWithinQueue: async id => { assert.equal(locked, true); calls.push('cancel:' + id); return { archiveFile: 'waiting-archive' }; } },
+    removeLibraryEntry: async (id, options) => { assert.equal(locked, true); calls.push('remove:' + id); assert.equal(options.keepFiles, true);
+      assert.equal(options.confirm, true); assert.equal(options.waitingArchive.archiveFile, 'waiting-archive'); return { removedFromLibrary: true }; } });
+  await settle();
+  try { const result = await h.handles.get('game-library-remove')({}, 'game', { keepFiles: true, confirm: true });
+    assert.equal(result.removedFromLibrary, true); assert.deepEqual(calls, ['cancel:game', 'remove:game']); }
+  finally { h.window.emit('closed'); }
+});
+
+test('keep-files removal and rescue apply require confirmation before cancelling queued work', async () => {
+  const calls = [], forbidden = async () => { throw new Error('generic recovery guard must not run'); };
+  const h = harness({ operationService: { assertReady: forbidden }, preparationService: { assertReady: forbidden }, environmentService: { assertReady: forbidden },
+    deferredService: { cancelWithinQueue: async () => calls.push('cancel') }, removeLibraryEntry: async () => calls.push('remove'),
+    appService: { applyDeploymentRescue: async () => calls.push('rescue') } }); await settle();
+  try {
+    await assert.rejects(h.handles.get('game-library-remove')({}, 'game', { keepFiles: true }), { code: 'LIBRARY_CONFIRM_REQUIRED' });
+    await assert.rejects(h.handles.get('game-deployment-rescue-apply')({}, 'game', 'plan', {}), { code: 'CONFIRM_REQUIRED' });
+    assert.deepEqual(calls, []);
+  } finally { h.window.emit('closed'); }
+});
+
+test('deployment rescue endpoints bypass total recovery gates but retain directory serialization and elevation checks', async () => {
+  const calls = []; let locked = false;
+  const forbidden = async () => { throw new Error('generic recovery guard must not run'); };
+  const h = harness({ serialize: async work => { locked = true; try { return await work(); } finally { locked = false; } },
+    operationService: { assertReady: forbidden }, preparationService: { assertReady: forbidden }, environmentService: { assertReady: forbidden },
+    elevationService: { assertAvailable: async () => { assert.equal(locked, true); calls.push('elevation'); } },
+    deferredService: { cancelWithinQueue: async () => calls.push('cancel') },
+    appService: { previewDeploymentRescue: async (id, mode) => { assert.equal(locked, true); calls.push('preview:' + mode); return { planId: id }; },
+      applyDeploymentRescue: async (id, planId, consent) => { assert.equal(locked, true); assert.equal(consent.confirm, true); calls.push('apply:' + planId); return { rescued: true }; } } }); await settle();
+  try {
+    assert.equal((await h.handles.get('game-deployment-rescue-preview')({}, 'game', 'clean')).planId, 'game');
+    assert.equal((await h.handles.get('game-deployment-rescue-apply')({}, 'game', 'plan', { confirm: true, fingerprint: 'fp' })).rescued, true);
+    assert.deepEqual(calls, ['elevation', 'preview:clean', 'elevation', 'cancel', 'apply:plan']);
+  } finally { h.window.emit('closed'); }
+});
+
+test('keep-files removal waits for an active same-game write and refuses active administrator jobs or foreign senders', async () => {
+  const gate = deferred(), calls = [];
+  const h = harness({ install: async () => { calls.push('write-start'); await gate.promise; calls.push('write-end'); },
+    deferredService: { cancelWithinQueue: async () => calls.push('cancel') }, removeLibraryEntry: async () => calls.push('remove') }); await settle();
+  try {
+    const writing = h.handles.get('game-install')({}, 'game'); await settle();
+    const removing = h.handles.get('game-library-remove')({}, 'game', { keepFiles: true, confirm: true }); await settle();
+    assert.deepEqual(calls, ['write-start']); gate.resolve(); await Promise.all([writing, removing]);
+    assert.deepEqual(calls, ['write-start', 'write-end', 'cancel', 'remove']);
+  } finally { gate.resolve(); h.window.emit('closed'); }
+  for (const entry of ['game-library-remove', 'game-deployment-rescue-preview', 'game-deployment-rescue-apply']) {
+    for (const reason of ['busy', 'unavailable', 'sender']) {
+      const h2 = harness({ elevationService: reason === 'busy' ? { busy: true } : reason === 'unavailable' ? { assertAvailable: async () => { throw Object.assign(new Error('worker pending'), { code: 'OPERATION_ELEVATION_PENDING' }); } } : {} }); await settle();
+      try { await assert.rejects(h2.handles.get(entry)(reason === 'sender' ? { sender: new EventEmitter() } : {}, 'game', { keepFiles: true, confirm: true }),
+        { code: reason === 'busy' ? 'ERR_JOB_BUSY' : reason === 'sender' ? 'IPC_SENDER' : 'OPERATION_ELEVATION_PENDING' }); }
+      finally { h2.window.emit('closed'); }
+    }
+  }
+});
+
 test('component assessment construction does not eagerly read a game or module owner', async () => {
   const reads = [], read = name => () => { reads.push(name); throw new Error('Eager component read: ' + name); };
   const h = harness({ appService: { getLayout: read('layout'), gameModuleManifest: read('modules') }, fgComponents: { ownedModuleManifest: read('fg-modules') } });
@@ -821,4 +883,12 @@ test('preload separates library-only removal and pure cleanup preview from resto
   new vm.Script(fs.readFileSync(file, 'utf8'), { filename: file }).runInNewContext({ require: name => { assert.equal(name, 'electron'); return electron; }, Object });
   assert.equal(await api.removeGame('game'), 'game-library-remove'); assert.equal(await api.previewEnvironmentCleanup('game'), 'game-environment-preview-clean');
   assert.deepEqual(calls, [['game-library-remove', 'game'], ['game-environment-preview-clean', 'game']]);
+  await api.removeGame('game', { keepFiles: true, confirm: true });
+  await api.previewDeploymentRescue('game'); await api.previewDeploymentRescue('game', 'recover');
+  await api.applyDeploymentRescue('game', 'plan', { confirm: true, fingerprint: 'fp' });
+  assert.deepEqual(calls.slice(2), [
+    ['game-library-remove', 'game', { keepFiles: true, confirm: true }],
+    ['game-deployment-rescue-preview', 'game', 'repair'], ['game-deployment-rescue-preview', 'game', 'recover'],
+    ['game-deployment-rescue-apply', 'game', 'plan', { confirm: true, fingerprint: 'fp' }]
+  ]);
 });

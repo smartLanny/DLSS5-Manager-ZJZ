@@ -140,7 +140,11 @@ function createLaunchCoordinator({ service, settings, legacySrModel, guards, com
       return { ...snapshot, fgComponents };
     },
     assertMutationReady: id => settings.assertReady(id),
-    async removeLibraryEntry(id) {
+    async removeLibraryEntry(id, options = {}) {
+      if (options.keepFiles === true) {
+        if (options.confirm !== true) throw Object.assign(new Error('请确认仅移出游戏库；游戏文件、备份与未完成恢复记录都会保留。'), { code: 'LIBRARY_CONFIRM_REQUIRED' });
+        return service.dismissGame(id, { keepFiles: true, confirm: true, waitingArchive: options.waitingArchive });
+      }
       await settings.assertReady(id);
       if (await settings.hasOwnedState(id) || hasComponentReceipt(id) || (await legacySrModel.migrationInfo(id))?.baselineCaptured)
         throw Object.assign(new Error('请先恢复超分补帧设置与组件，再移出游戏库。'), { code: 'LIBRARY_RESTORE_FIRST' });
