@@ -714,7 +714,8 @@
           draft.nr = { ...draft.nr, [key]: value,
             [bank]: key === 'ColorStrength' ? value : current[bank],
             ColorStrength: key === 'ColorStrength' ? value : current[bank] };
-          render(); return;
+          if (key === 'ColourLabMode') render(); else updateBar();
+          return;
         }
         draft.nr = { ...(draft.nr || {}), [key]: value };
         if (value === data.nr?.[key]) delete draft.nr[key]; if (!Object.keys(draft.nr).length) delete draft.nr;

@@ -18,6 +18,7 @@ DX12 原生路线不安装额外 Bridge 或 Feeder。
 Core 外部 Provider 接口已有受控 GPU 证据，但不是所有游戏通过的证明。
 现有 Feeder、Vulkan 配套保留自己的匹配 Core；不会因选择 Unified5 而偷偷混装。
 官方 Bridge 是独立组件，不能把同名版本当成相同文件。本包不承诺所有 API 无痛兼容。
+0.3.3.4 / 0.3.3.7 原件未随本包提供；保留旧版本身份，不用其他版本改名替代。
 
 RenoDX Add-on 与显卡 DLC 均独立导入；同一游戏不要同时启用多个 NR 消费者。
 Full.zip 只是管理器、RenoDX、RTX40、RTX50 四个包的合集。

@@ -6,8 +6,18 @@ const os = require('node:os');
 const path = require('node:path');
 const core = require('../src/product/unified5-core');
 const nr = require('../src/product/nr-config');
-const { createNrCoreIdentity } = require('../src/product/nr-core-identity');
+const { createNrCoreIdentity, pinnedConfigContract, UNIFORM_CORE_HASHES } = require('../src/product/nr-core-identity');
 const identity = { version: core.ID, configContract: core.CONTRACT, sourceCommit: core.SOURCE };
+test('waiting-source contracts use the same pinned identity as installed settings', () => {
+  for (const hash of Object.values(core.HASHES)) {
+    const contract = { version: core.ID, ...pinnedConfigContract(hash) };
+    assert.equal(nr.resolveContract(contract).colourMemory, true);
+    assert.equal(nr.normalizeValue('ColourLabMode', 1, contract), 1);
+    assert.equal(nr.normalizeValue('Layer2Enabled', 1, contract), 1);
+  }
+  assert.equal(pinnedConfigContract(UNIFORM_CORE_HASHES[0]).configContract, 'nr-uniform-v1');
+  assert.equal(pinnedConfigContract('0'.repeat(64)), null);
+});
 function fixture(t, text = '[NRBeforeSR]\n') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'unified5-contract-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

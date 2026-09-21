@@ -12,6 +12,11 @@ const UNIFORM_CORE_HASHES = Object.freeze([
   'dbf27301fd43a8753ac70590cd5aa9bdb27b73806391656326515ab363938edc',
   '01b4155dcca346f6b3485f210191baaaf4af6faa9dfb9b29302c8f7e36ae3c93'
 ]);
+function pinnedConfigContract(hash) {
+  if (Object.values(unified5.HASHES).includes(hash)) return { configContract: unified5.CONTRACT, sourceCommit: unified5.SOURCE };
+  if (UNIFORM_CORE_HASHES.includes(hash)) return { configContract: 'nr-uniform-v1', sourceCommit: UNIFORM_SOURCE };
+  return null;
+}
 function createNrCoreIdentity({ digest = streamDigest, checkPath = noLinks } = {}) {
   const cache = new Map();
   async function fingerprint(file, fresh) {
@@ -34,9 +39,8 @@ function createNrCoreIdentity({ digest = streamDigest, checkPath = noLinks } = {
     try {
       const hash = await fingerprint(row.path, fresh), matchedReceipt = hash === row.sha256;
       const identity = { corePath: row.path, coreSha256: hash, matchedReceipt };
-      if (Object.values(unified5.HASHES).includes(hash)) return { version, configContract: unified5.CONTRACT,
-        sourceCommit: unified5.SOURCE, identityStatus: matchedReceipt ? 'verified' : 'known-core-receipt-drift', ...identity };
-      if (UNIFORM_CORE_HASHES.includes(hash)) return { version, configContract: 'nr-uniform-v1', sourceCommit: UNIFORM_SOURCE,
+      const pinned = pinnedConfigContract(hash);
+      if (pinned) return { version, ...pinned,
         identityStatus: matchedReceipt ? 'verified' : 'known-core-receipt-drift', ...identity };
       const legacy = resolveContract(version);
       if (matchedReceipt && legacy.known && !legacy.uniform && !/unified\d/i.test(version)) return { version, configContract: legacy.id, identityStatus: 'verified', ...identity };
@@ -50,4 +54,4 @@ async function streamDigest(file) {
   for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
   return hash.digest('hex');
 }
-module.exports = { createNrCoreIdentity, UNIFORM_CORE_HASHES };
+module.exports = { createNrCoreIdentity, UNIFORM_CORE_HASHES, pinnedConfigContract };

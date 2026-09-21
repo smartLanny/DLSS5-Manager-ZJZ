@@ -74,7 +74,11 @@ function interact(useUnified5) {
       check(input('ColourLabMode').value === '2' && input('ColorStrength').value === '1', 'conservative defaults are visible');
       change('ColourLabMode', 1);
       check(Math.abs(Number(input('ColorStrength').value) - .7) < 1e-6, 'switch recalls the priority bank immediately');
+      const colourInput = input('ColorStrength');
+      change('ColorStrength', 0);
+      check(input('ColorStrength') === colourInput, 'numeric typing retains the same input and its intermediate editing state');
       change('ColorStrength', .85);
+      check(input('ColorStrength') === colourInput, 'decimal strength edit does not reconstruct the number input');
       change('ColourLabMode', 2);
       check(input('ColorStrength').value === '1', 'switch back retains conservative bank');
       change('ColourLabMode', 1);

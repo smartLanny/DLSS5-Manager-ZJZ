@@ -1388,9 +1388,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const support = assess(routed.scan, { allowDx11: payload.versionInfo?.compatibility === 'dx11', supportsPresent: payload.versionInfo?.supportsPresent === true });
     if (!support.supported) throw appError(support.code);
     const identity = payload.addon?.actual;
-    const uniform = require('./nr-core-identity').UNIFORM_CORE_HASHES.includes(identity);
+    const pinned = require('./nr-core-identity').pinnedConfigContract(identity);
     return { ready: true, deployment: true, route: 'native', api, version: payload.version || version, coreSha256: identity,
-      nrContract: { version: payload.version || version, ...(uniform ? { configContract: 'nr-uniform-v1', sourceCommit: require('./nr-config-contract').UNIFORM_SOURCE } : {}) },
+      nrContract: { version: payload.version || version, ...pinned },
       identity: [payload.version || version, identity, payload.bridge?.actual, payload.runtime?.actual].filter(Boolean).join(':'), runtimeVerified: false };
   }
   async function changeNrSettings(game, requested, options = {}) {
