@@ -536,7 +536,7 @@ function buildBridgeReservation({ stageRoot, manifest, components = null }) {
 async function inspectManifest(manifestFile, flavor = 'base') {
   const manifest = readJson(manifestFile);
   if (manifest.schemaVersion !== 1) fail('staging 清单 schemaVersion 必须为 1。');
-  if (!manifest.packageVersion || !/^0\.5\.0-beta\.[23456789]$/i.test(String(manifest.packageVersion))) fail('staging 清单 packageVersion 必须为已支持的 0.5.0-beta.2–9。');
+  if (!manifest.packageVersion || !/^0\.5\.0-beta\.(?:[23456789]|10)$/i.test(String(manifest.packageVersion))) fail('staging 清单 packageVersion 必须为已支持的 0.5.0-beta.2–10。');
   if (!['base', 'offline'].includes(flavor)) fail(`未知打包 flavor：${flavor}`);
   const payloadRoot = resolveInput(manifestFile, manifest.core?.payloadRoot, 'core.payloadRoot');
   const selectedCoreIds = [manifest.core?.version, ...(Array.isArray(manifest.core?.versions) ? manifest.core.versions : [])];
