@@ -3,7 +3,6 @@
 function installHoYoMock() {
   const clone = value => structuredClone(value), ok = value => ({ ok: true, value: clone(value) }), game = window.__gpMock.assessments['fixture-hoyo'];
   game.game.hoyoManaged = true;
-  game.coreVersions.push({ id: '0.5-dline21-unified5', label: '0.5 Unified5 · verified fixture', ready: true, supportsPresent: true });
   const launchers = [{ id: 'launcher-one', kind: 'hoyoplay', path: 'C:\\UI-fixture\\HoYoPlay\\launcher.exe' }, { id: 'launcher-two', kind: 'starward', path: 'C:\\UI-fixture\\Starward\\Starward.exe' }];
   const mock = window.__hoyoMock = { calls: [], requiresAntiCheat: false, flow: { id: 'client-one', gameId: 'fixture-hoyo', name: '崩坏：星穹铁道', exePath: game.game.chosen.path,
     gameRoot: game.game.dir, family: 'starrail', channel: null, channelLabel: '客户端待确认', gameVersion: '4.3.0',
@@ -73,6 +72,17 @@ async function smokeHoYo(options = {}) {
   const ownerFields = [...initialEditor.querySelectorAll('[data-gp-field="deployment"],[data-gp-field="loadingMode"]')];
   assert(gp.assessments['fixture-hoyo'].layout.loadingBackend === 'local' && ownerFields.length === 2 && ownerFields.every(row => row.disabled && row.options.length === 1) && ownerFields.map(row => row.value).join('|') === 'external|helper', 'the dedicated HoYo editor fixes external/helper ownership even before its first deployment updates the stored layout');
   assert(!initialEditor.querySelector('[data-gp-field="launchMode"],[data-gp-action="switch-proxy"]'), 'the dedicated HoYo owner has no conflicting launch or proxy choice');
+  const initialCore = () => initialEditor.querySelector('[data-gp-group="route"][data-gp-field="version"]');
+  assert([...initialCore().options].map(row => row.value).join('|') === '0.4.7beta|0.5-dline21-unified5' && !initialEditor.querySelector('[data-gp-detail="rollback"]'), 'the dedicated HoYo menu has current 0.4.7 and latest 0.5 only');
+  initialCore().value = '0.4.7beta'; initialCore().dispatchEvent(new Event('change', { bubbles: true }));
+  gp.assessments['fixture-hoyo'].componentChoices.stack = structuredClone(gp.feederRecommendation);
+  await initialEditor.__gpController.refresh(true);
+  assert(initialEditor.__gpController.getState().draft.version === '0.4.7beta' && initialCore().value === '0.4.7beta' && initialCore().selectedOptions[0].disabled && button('prepare')?.disabled && initialEditor.textContent.includes('原草稿已保留'), 'a newly unavailable explicit Core draft stays visible and requires a fresh selection instead of silently changing to 0.5');
+  const unavailableCurrent = gp.assessments['fixture-hoyo'].coreVersions.find(row => row.id === '0.5-dline21-unified5');
+  unavailableCurrent.ready = false; initialEditor.__gpController.discard(); await initialEditor.__gpController.refresh(true);
+  assert(button('prepare')?.disabled && !initialCore().value && [...initialCore().options].filter(row => row.value).every(row => row.disabled), 'missing verified current Core availability cannot be promoted by the HoYo version policy');
+  unavailableCurrent.ready = true; await initialEditor.__gpController.refresh(true);
+  assert(initialCore().value === '0.5-dline21-unified5' && !initialEditor.__gpController.hasDraft() && count('apply') === 0, 'a fresh Feeder install defaults to the ready latest Core without applying or creating a replacement draft');
   initialEditor.querySelector('[data-gp-tab="enhance"]').click();
   await until(() => initialEditor.querySelector('[data-gp-group="sr"][data-gp-field="quality"]:not([disabled])'), 'independent SR before Core installation');
   const srQuality = initialEditor.querySelector('[data-gp-group="sr"][data-gp-field="quality"]');

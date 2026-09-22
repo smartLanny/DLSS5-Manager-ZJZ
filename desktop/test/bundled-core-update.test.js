@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { fixture, peBytes, put, hashFile, sha, PROJECT, INSTALLED_NAMES, PAYLOAD_FILES } = require('./helpers/operation-integration-fixture');
-const { createCompactBundle } = require('../src/product/payload');
+const { createCompactBundle, requirePayload } = require('../src/product/payload');
 const { readManifest } = require('../src/product/manifest');
 const { createExternalRuntime } = require('../src/product/external-runtime');
 const { createHoYoProfileService } = require('../src/product/hoyoshade-profile');
@@ -61,9 +61,13 @@ async function hoyoCoreFixture(t) {
   const f = await fixture(t, {
     api: 'dx12', exeName: 'YuanShen.exe',
     specialSetup: async ({ root, userData, resourcesPath, guards, pe }) => {
-      const loader = fs.readFileSync(path.join(PROJECT, 'payload', 'nr-before-sr', 'fixed', 'RTX50', 'ReShade64.dll'));
+      const loader = fs.readFileSync(process.env.DLSS5_TEST_HOYO_LOADER || path.join(PROJECT, 'payload', 'nr-before-sr', 'fixed', 'RTX50', 'ReShade64.dll'));
       for (const family of ['RTX40', 'RTX50']) put(path.join(resourcesPath, 'payload', 'nr-before-sr', 'fixed', family, 'ReShade64.dll'), loader);
       catalog = customizePayload(resourcesPath);
+      fs.cpSync(path.join(catalog.payload, 'versions', BASE), path.join(catalog.payload, 'versions', '0.4.7beta'), { recursive: true });
+      const bundleFile = path.join(catalog.payload, 'bundle.json'), bundle = JSON.parse(fs.readFileSync(bundleFile));
+      bundle.versions['0.4.7beta'] = { ...bundle.versions[BASE], label: 'current HoYo Core fixture' };
+      put(bundleFile, JSON.stringify(bundle));
       put(path.join(resourcesPath, 'hoyoshade', 'component.json'), fs.readFileSync(path.join(PROJECT, 'resources', 'hoyoshade', 'component.json')));
       launcher = path.join(root, 'HYP.exe'); put(launcher, peBytes('fixture HoYo launcher; never launched'));
       external = createExternalRuntime({ userData, pe, guards });
@@ -203,21 +207,42 @@ test('Core update preview expires after a game configuration change and never ov
   assert.equal(readManifest(f.gameRoot).payloadVersion, BASE);
 });
 
-test('an existing native HoYo profile accepts a bundled Core update while first install rejects it', async t => {
+test('HoYo rejects old Core targets without writes and keeps historical native repair and restore available', async t => {
   const f = await hoyoCoreFixture(t), request = version => ({ route: 'native', api: 'dx12', deployment: 'external', loadingBackend: 'hoyoshade', version,
     hoyo: { family: 'genshin', channel: 'cn', launcher: { kind: 'hoyoplay', path: f.launcher } } });
   const before = walk(f.gameRoot);
-  await assert.rejects(f.plans.preview(f.id, request(D13)), { code: 'CORE_UPDATE_BASE_REQUIRED' });
+  await assert.rejects(f.plans.preview(f.id, request(D13)), { code: 'HOYO_CORE_UNAVAILABLE' });
   assert.deepEqual(walk(f.gameRoot), before, 'first-install Core update does not create a HoYo profile');
 
-  const base = await f.plans.preview(f.id, request(BASE)); assert.deepEqual(base.blockers, []);
+  const base = await f.plans.preview(f.id, request('0.4.7beta')); assert.deepEqual(base.blockers, []);
   await f.plans.apply(base.planId, confirm(base));
-  const initial = f.service.getLayout(f.id), initialConfig = fs.readFileSync(initial.activeConfigPath);
-  const update = await f.plans.preview(f.id, { version: D13, api: 'auto', deployment: 'external', loadingMode: 'helper' }); assert.deepEqual(update.blockers, []);
-  await f.plans.apply(update.planId, confirm(update));
+  const initial = f.service.getLayout(f.id);
+  fs.appendFileSync(initial.activeConfigPath, '\r\n; preserve existing HoYo configuration\r\n');
+  const initialConfig = fs.readFileSync(initial.activeConfigPath), gameBefore = walk(f.gameRoot), profileBefore = walk(initial.runtimeDir);
+  await assert.rejects(f.plans.preview(f.id, { version: D13, api: 'auto', deployment: 'external', loadingMode: 'helper' }), { code: 'HOYO_CORE_UNAVAILABLE' });
+  await assert.rejects(f.service.previewDeployment(f.id, { version: D13, api: 'dx12', mode: 'external', loadingMode: 'helper' }), { code: 'HOYO_CORE_UNAVAILABLE' });
+  assert.deepEqual(walk(f.gameRoot), gameBefore); assert.deepEqual(walk(initial.runtimeDir), profileBefore);
+  assert.equal(f.service.getLayout(f.id).version, '0.4.7beta');
+
+  // Seed a historical installation through the real external owner. The current
+  // service operations below still enforce the new-selection policy.
+  const game = (await f.service.listGames()).find(row => row.id === f.id);
+  const historical = await f.external.preview(game, { mode: 'external', loadingMode: 'helper', version: D13,
+    payload: requirePayload(f.payload, f.family, D13) });
+  await f.external.apply(historical.planId, { confirm: true });
   const layout = f.service.getLayout(f.id), core = layout.moduleManifest.find(row => row.role === 'core'), chain = layout.moduleManifest.find(row => row.role === 'chain');
   assert.equal(layout.version, D13);
   assert.equal(core.sha256, coreHash(f, D13, 'addon'));
   assert.equal(chain.sha256, coreHash(f, D13, 'bridge'));
-  assert.deepEqual(fs.readFileSync(layout.activeConfigPath), initialConfig, 'native HoYo update preserves its active INI');
+  assert.deepEqual(fs.readFileSync(layout.activeConfigPath), initialConfig);
+  const repair = await f.plans.preview(f.id, { repair: true }); assert.deepEqual(repair.blockers, []);
+  await f.plans.apply(repair.planId, confirm(repair));
+  assert.equal(f.service.getLayout(f.id).version, D13);
+  assert.deepEqual(fs.readFileSync(layout.activeConfigPath), initialConfig, 'repair of an old installed Core preserves its INI');
+  const restore = await f.plans.preview(f.id, { uninstall: 'restore' }); assert.deepEqual(restore.blockers, []);
+  await f.plans.apply(restore.planId, confirm(restore));
+  assert.equal(f.service.hoyoProfile(f.id).installed, false);
+  for (const [name, kind, value] of before) {
+    assert.equal(kind, 'file'); assert.equal(fs.readFileSync(path.join(f.gameRoot, name)).toString('base64'), value);
+  }
 });

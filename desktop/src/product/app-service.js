@@ -677,6 +677,12 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return withSelectedCore(id, request, () => previewHoYoDeployment(id, request, internal));
     const game = findGame(id), inputRoute = request.route || await resolveInputRoute(id, request);
     if (!['native', 'feeder'].includes(inputRoute)) throw Object.assign(new Error('米哈游模式尚未提供当前 API 的输入配套。'), { code: 'HOYO_INPUT_ROUTE' });
+    const installedFeed = internal.maintainInstalled === true ? feeder.summary(game) : null;
+    const maintainingFeed = installedFeed?.installed === true && inputRoute === 'feeder' && request.version === installedFeed.packageId &&
+      gameLayout(game).loadingBackend === 'hoyoshade' && gameLayout(game).inputRoute === 'feeder';
+    if (!maintainingFeed) require('../shared/hoyo-core-policy').assertTarget(request.version || gameLayout(game).version ||
+      readManifest(game.dir)?.payloadVersion || readBundle(payloadDir).defaultVersion, inputRoute);
+    const { maintainInstalled: ignoredMaintenance, ...profileInternal } = internal;
     const { api, routed } = deploymentApi(game, request.api || 'auto');
     const adoption = await inspectInstallationAdoption(id, request);
     if (adoption?.blockers.length) return { gameId: id, mode: 'external', route: inputRoute, loadingBackend: 'hoyoshade',
@@ -691,7 +697,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       : selectedPayload(routed, version, request.components);
     const payload = inputRoute === 'native' ? nativePayload : { reshade: nativePayload.reshade };
     const profile = await hoyo.preview(routed, { hoyo: request.hoyo, inputRoute, api, version: inputRoute === 'native' ? version : undefined,
-      payload, addonKeep: request.addonKeep, adoption, ...internal });
+      payload, addonKeep: request.addonKeep, adoption, ...profileInternal });
     const legacy = inputRoute === 'feeder' ? await feeder.previewInstall(routed, { version: request.version, api, loadingBackend: 'hoyoshade', layout: profile.layout }) : null;
     const planId = crypto.randomUUID();
     hoyoDeploymentPlans.set(planId, { id, routed, request, api, profile, legacy, adoption, expires: Date.now() + 5 * 60000 });
@@ -1501,6 +1507,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const { api, routed } = deploymentApi(game, preference);
     const current = await externalDeployment.inspect(game), manifest = readManifest(game.dir);
     const targetVersion = request.version || current.version || manifest?.payloadVersion || selectedVersionForGame(routed);
+    if (current.loadingBackend === 'hoyoshade' || hoyo.supportedProfileOptions?.(game)?.length)
+      require('../shared/hoyo-core-policy').assertTarget(targetVersion, 'native');
     const adoption = await inspectInstallationAdoption(id, request);
     if (adoption?.replaceProxy?.name === 'd3d11.dll') adoption.blockers.push({ code: 'ADOPTION_ALTERNATE_HOST',
       message: '当前普通 ReShade 使用 d3d11.dll；请先将入口切回其安装器支持的 DXGI 方式，再确认接管，未自动改名。' });
@@ -1606,7 +1614,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const game = findGame(id), layout = gameLayout(game);
     if (layout.loadingBackend === 'hoyoshade' && layout.inputRoute === 'feeder') {
       const plan = await previewHoYoDeployment(id, { route: 'feeder', api: game.apiOverride || 'auto', hoyo: hoyo.profile(game).hoyo,
-        version: feeder.summary(game).packageId, addonKeep: request.addonKeep });
+        version: feeder.summary(game).packageId, addonKeep: request.addonKeep }, { maintainInstalled: true });
       const planId = crypto.randomUUID();
       repairPlans.set(planId, { id, owner: 'hoyoshade', nested: plan.planId, expires: Date.now() + 5 * 60000 });
       return { ...plan, planId, repair: true };

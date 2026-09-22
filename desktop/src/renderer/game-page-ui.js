@@ -140,21 +140,30 @@
       return !current.installed && selected ? { ...current, ...selected, selectionAvailable: selected.available } : current;
     }
     function versionRows() {
+      if (hoyoCoreScope()) return scope.ManagerHoYoCorePolicy.menu(data.coreVersions || [], { route: hoyoInputRoute() });
       const special = specialRoute(), info = special ? specialInfo(special) : null;
       return special ? [{ id: info.packageId || '', label: `${special === 'vulkan' ? 'Vulkan' : `${apiLabel(info.api || effectiveApi())} Feeder`} · ${info.coreVersion || '固定配套'}`, ready: info.selectionAvailable ?? info.available },
         ...(data.coreVersions || []).filter(row => row.id === '0.5-dline21-unified5')] : data.coreVersions || [];
     }
     function mainVersions() {
+      if (hoyoCoreScope()) return versionRows();
       const installed = data.deployment?.version || data.game.addonVersion;
       return versionRows().filter(row => !isComparison(row) && (specialRoute() || STANDARD_CORES.includes(row.id) || row.id === installed || row.id === currentVersion()));
     }
     function rollbackVersions() {
+      if (hoyoCoreScope()) return '';
       const rows = versionRows().filter(row => !isComparison(row) && !STANDARD_CORES.includes(row.id));
       if (specialRoute() || !rows.length) return '';
       return `<details class="gp-section gp-rollback" data-gp-detail="rollback"><summary>历史版本与回退</summary><p class="gp-caption">仅在需要回退时选择；个人画面设置会保留。</p>${selectField('route', 'version', '回退到指定 Core', option('', '选择历史版本', '') + rows.map(row => option(row.id, coreLabel(row.label || row.id), currentVersion(), row.ready === false)).join(''), busy)}</details>`;
     }
     function currentVersion() {
       if (Object.hasOwn(draft, 'version')) return draft.version || '';
+      if (hoyoCoreScope()) {
+        if (data.game.installed) return data.deployment?.version || data.game.addonVersion || data.game.feeder?.coreVersion || '';
+        if (data.game.existingInstallation?.detected === true) return '';
+        const available = versionRows().filter(row => row.ready !== false);
+        return available.find(row => row.id === data.defaults?.version)?.id || available[0]?.id || '';
+      }
       const special = specialRoute();
       if (special) return specialInfo(special).packageId || '';
       if (data.game.installed) return data.deployment?.version || data.game.addonVersion || data.defaults?.version || '';
@@ -163,12 +172,25 @@
       return (STANDARD_CORES.includes(data.defaults?.version) ? data.defaults.version : null) || available.find(row => row.id === '0.4.7beta')?.id || available.find(row => STANDARD_CORES.includes(row.id))?.id || available[0]?.id || '';
     }
     function hoyoLoading() { return options.hoyoSettingsOnly === true || selected('loadingBackend', data.layout?.loadingBackend || 'local') === 'hoyoshade'; }
+    function hoyoCoreScope() { return hoyoLoading() || Boolean(data.game.hoyo?.profileOptions?.length); }
+    function hoyoInputRoute() {
+      return draft.route && draft.route !== 'auto' ? draft.route : data.layout?.inputRoute || data.componentChoices?.stack?.route || 'auto';
+    }
+    function hoyoCoreReady() { return versionRows().some(row => row.id === currentVersion() && row.ready !== false); }
+    function hoyoCoreNotice() {
+      if (!hoyoCoreScope()) return '';
+      const current = data.game.installed ? data.deployment?.version || data.game.addonVersion || data.game.feeder?.coreVersion : null;
+      const unavailable = Object.hasOwn(draft, 'version') && !hoyoCoreReady();
+      const reason = versionRows().find(row => row.id === currentVersion())?.reason;
+      return `${current ? `<p class="gp-caption">当前安装：${esc(coreLabel(current))}。画面设置、修复和恢复仍使用此安装。</p>` : ''}${unavailable ? `<p class="gp-message">${esc(reason || '所选 Core 不在当前米哈游配套中。')}请重新选择可用版本；原草稿已保留。</p>` : ''}`;
+    }
     function deploymentMode() { return hoyoLoading() ? 'external' : selected('deployment', specialRoute() ? data.layout?.mode || (specialRoute() === 'vulkan' ? 'external' : 'local') : data.game.installed ? data.layout?.mode || 'local' : data.defaults?.deployment || 'local'); }
     function hasVersionUpdate() {
       const installed = data.deployment?.version || data.game.addonVersion;
       return !specialRoute() && data.game.installed && installed && currentVersion() && installed !== currentVersion();
     }
     function installRequest() {
+      if (hoyoCoreScope() && !hoyoCoreReady()) throw new Error('请重新选择当前米哈游路线可用的 Core；原草稿已保留。');
       const route = specialRoute();
       const request = { ...draft, version: currentVersion(), api: selected('api', data.game.apiOverride || data.defaults?.api || 'auto'), ...(route ? { route } : {
         deployment: deploymentMode(), ...(deploymentMode() === 'external' ? { loadingMode: selected('loadingMode', data.layout?.loadingMode || data.defaults?.loadingMode || 'proxy') } : {}) }) };
@@ -340,12 +362,11 @@
       const versions = mainVersions();
       const pending = data.operation?.pending || data.deployment?.needsRecovery;
       if (options.hoyoSettingsOnly) {
-        const current = data.deployment?.version || game.addonVersion || game.feeder?.coreVersion || '待确认';
-        const pickerRows = special ? [...versions, ...(data.coreVersions || []).filter(row => STANDARD_CORES.includes(row.id) && !versions.some(item => item.id === row.id)).map(row => ({ ...row, ready: false }))] : versions;
+        const pickerRows = versions;
         const picker = `<section class="gp-section"><div class="gp-controls">${selectField('route', 'version', 'AI 增强组件',
-          (pickerRows.some(row => row.id === version) ? '' : option(version, `${coreLabel(version)} · 来源待检查`, version, true)) +
+          (pickerRows.some(row => row.id === version) ? '' : option('', '选择要安装或更换的 Core', '', true)) +
           pickerRows.map(row => option(row.id, coreLabel(row.label || row.id), version, row.ready === false)).join(''), busy || pending,
-          special ? '灰色版本暂无此路线的配套。' : '')}</div></section>`;
+          pickerRows.find(row => row.ready === false && row.reason)?.reason || '')}</div>${hoyoCoreNotice()}</section>`;
         return `${picker}${inputRouteControl()}${options.installationContent?.() || ''}${runtimeImportControl()}<details class="gp-section" data-gp-detail="startup"><summary>启动与快捷键</summary>${startupFields()}${hotkeySection()}</details>${rollbackVersions()}${maintenancePanel()}${options.maintenanceContent?.() || ''}`;
       }
       const attention = readinessNeedsAction(), readinessNotice = readinessNeedsNotice();
@@ -363,7 +384,7 @@
       const existingNames = existing?.files?.map(row => row.name).slice(0, 6) || [];
       return `<section class="gp-section gp-install-section"><div class="gp-controls">
         ${selectField('route', 'api', '游戏 API', option('auto', automaticLabel, api) + ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].map(key => option(key, API[key] || key.toUpperCase(), api)).join(''), busy)}
-        ${selectField('route', 'version', 'AI 增强组件', (!visibleVersion ? option('', '请选择 AI 增强组件', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy)}</div>
+        ${selectField('route', 'version', 'AI 增强组件', (!visibleVersion || hoyoCoreScope() && !versions.some(row => row.id === visibleVersion) ? option('', '请选择 AI 增强组件', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy, hoyoCoreScope() ? versions.find(row => row.ready === false && row.reason)?.reason || '' : '')}</div>${hoyoCoreNotice()}
         ${visibleVersion === '0.5-dline21-unified5' ? '<p class="gp-caption" title="自动核对并匹配当前图形接口需要的 Bridge / Feeder；运行效果需进游戏确认。">0.5 候选 · 兼容路线为实验支持</p>' : ''}
         ${runtimeImportControl()}${inputRouteControl()}
         ${(data.failures || []).filter(row => ['operation', 'layout', 'defaults'].includes(row.section)).map(row => `<p class="gp-message error">检查未完成：${esc(errorText(row))}。处理后点击“重新检查”。</p>`).join('')}
@@ -501,6 +522,7 @@
       else if (hasVersionUpdate() || data.layout?.needsInputPreparation || data.deployment?.verified === false && data.deployment?.inspection !== 'summary') {
         action = hasVersionUpdate() ? 'prepare' : 'repair-install'; label = '应用'; disabled ||= !loaded.has('installation') || !apiReady();
       } else if (readinessNeedsAction()) { action = readinessActionName(); label = readinessActionLabel(); disabled ||= !loaded.has('installation'); }
+      if (hoyoCoreScope() && (action === 'prepare' || action === 'preview' && ['version', 'api', 'route', 'deployment', 'loadingMode', 'loadingBackend', 'hoyo'].some(key => Object.hasOwn(draft, key)))) disabled ||= !hoyoCoreReady();
       if (launching) label = '等待游戏…';
       return { action, label, disabled, pending, waiting, dirty: dirty(), busy, launching, readiness: launchReadiness(), readinessOrder };
     }
@@ -536,6 +558,7 @@
       else await resolveReadiness({ refresh: false });
     }
     async function prepare() {
+      if (hoyoCoreScope() && !hoyoCoreReady()) { message = '请重新选择当前米哈游路线可用的 Core；原草稿已保留。'; error = true; render(); return; }
       if (options.onPrepare && options.preparationRequired?.()) return options.onPrepare({ version: currentVersion(),
         ...(['native', 'feeder'].includes(draft.route) ? { route: draft.route } : {}) });
       Object.assign(draft, installRequest()); await preview();

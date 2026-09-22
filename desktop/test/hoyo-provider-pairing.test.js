@@ -172,6 +172,18 @@ test('real staged Provider pairing uses production HoYo and Feeder services with
 
   await t.test('DX11 pairs Unified5 with the exact D16-r3 HoYo adaptation, preserves INI on update and restores', async () => {
     const f = await mark('dx11.setup', () => gameFixture(staged, 'dx11')), before = snapshot(f.gameDir);
+    for (const version of ['0.3.7', '0.5-dline13']) {
+      await assert.rejects(f.service.previewHoYoDeployment(f.id, { ...f.request, version }), { code: 'HOYO_CORE_UNAVAILABLE' });
+      assert.deepEqual(snapshot(f.gameDir), before, `${version} refusal writes no game files`);
+    }
+    await assert.rejects(f.service.previewHoYoDeployment(f.id, { ...f.request, version: '0.4.7beta', route: 'feeder' }),
+      { code: 'HOYO_CORE_ROUTE_UNAVAILABLE' });
+    assert.deepEqual(snapshot(f.gameDir), before, '0.4.7 Feeder refusal writes no game files');
+    const native047 = await f.service.previewHoYoDeployment(f.id, { ...f.request, version: '0.4.7beta', route: 'native' });
+    assert.equal(native047.route, 'native'); assert.deepEqual(native047.blockers, []);
+    assert.ok(native047.changes.some(row => row.afterSha256 === '4656d9aac382a6f9b5c8488669aa5365283f03b5b94b2267f1c7f9b53927dc86'),
+      '0.4.7 native DX11 preview includes its exact Bridge companion');
+    assert.deepEqual(snapshot(f.gameDir), before, 'abandoned 0.4.7 native preview writes no game files');
     assert.equal(await f.service.resolveInputRoute(f.id, f.request), 'feeder');
     const cancelled = await mark('dx11.preview', () => f.service.previewHoYoDeployment(f.id, f.request));
     assert.deepEqual(snapshot(f.gameDir), before, 'preview and abandoning its token write no game files');
@@ -198,6 +210,9 @@ test('real staged Provider pairing uses production HoYo and Feeder services with
     await f.service.writeNrSettings(f.id, { Intensity: 1.234567 });
     fs.appendFileSync(ini, '\n; keep user NR comment\n'); fs.appendFileSync(feederConfig, '\n; keep user feeder comment\n');
     const nrBefore = fs.readFileSync(ini), cfgBefore = fs.readFileSync(feederConfig);
+    const repair = await f.service.previewRepair(f.id);
+    assert.equal(repair.repair, true); assert.equal(repair.version, receipt.recipe.providerPackageId);
+    assert.deepEqual(fs.readFileSync(ini), nrBefore); assert.deepEqual(fs.readFileSync(feederConfig), cfgBefore);
     const update = await f.service.previewHoYoDeployment(f.id, f.request);
     await mark('dx11.update', () => f.service.applyHoYoDeployment(update.planId, { confirm: true }));
     assert.deepEqual(fs.readFileSync(ini), nrBefore); assert.deepEqual(fs.readFileSync(feederConfig), cfgBefore);

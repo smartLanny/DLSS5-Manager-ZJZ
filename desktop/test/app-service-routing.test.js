@@ -758,14 +758,17 @@ test('HoYo native operation binds the launcher digest, then installs directly in
   const productionLoader = process.env.DLSS5_TEST_HOYO_LOADER || path.resolve(__dirname, '../payload/nr-before-sr/fixed/RTX50/ReShade64.dll');
   if (fs.existsSync(productionLoader)) for (const family of ['RTX40', 'RTX50'])
     fs.copyFileSync(productionLoader, path.join(f.payloadDir, 'fixed', family, 'ReShade64.dll'));
+  const hoyoCore = '0.4.7beta';
+  fs.cpSync(path.join(f.payloadDir, 'versions', DX11_COMPAT_VERSION), path.join(f.payloadDir, 'versions', hoyoCore), { recursive: true });
   fs.writeFileSync(path.join(f.payloadDir, 'bundle.json'), JSON.stringify(createCompactBundle(f.payloadDir,
-    [{ id: '0.3.3.5', label: 'stable' }, { id: DX11_COMPAT_VERSION, label: 'DX11 fixture', compatibility: 'dx11' }], '0.3.3.5')));
+    [{ id: '0.3.3.5', label: 'stable' }, { id: DX11_COMPAT_VERSION, label: 'DX11 fixture', compatibility: 'dx11' },
+      { id: hoyoCore, label: 'current HoYo DX11 fixture', compatibility: 'dx11' }], '0.3.3.5')));
   await f.service.addManualGame(f.gameDir); const id = (await f.service.boot()).games[0].id;
   const { createOperationPlans } = require('../src/product/operation-plan');
   const plans = createOperationPlans({ userData: path.join(f.root, 'operations'), service: f.service,
     settings: { assertReady: async () => {} }, components: {}, environment: { assertReady: async () => {} }, preparation: { assertReady: async () => {} },
     guards: { assertGameClosed: async () => {} } });
-  const request = { api: 'dx11', version: DX11_COMPAT_VERSION, route: 'native', loadingBackend: 'hoyoshade', hoyo: { family: 'genshin', channel: 'cn', launcher: { kind: 'hoyoplay', path: launcher } } };
+  const request = { api: 'dx11', version: hoyoCore, route: 'native', loadingBackend: 'hoyoshade', hoyo: { family: 'genshin', channel: 'cn', launcher: { kind: 'hoyoplay', path: launcher } } };
   const plan = await plans.preview(id, request); assert.equal(plan.blockers.length, 0); assert.equal(plan.resolved.loadingBackend, 'hoyoshade');
   assert.equal(plan.resolved.launcherSha256, sha256(launcher));
   assert.equal(fs.existsSync(path.join(path.dirname(exe), 'dxgi.dll')), false);
