@@ -4,7 +4,7 @@ function installMock(features, options = {}) {
   const { ipcRenderer } = require('electron');
   const clone = structuredClone, ok = value => ({ ok: true, value: clone(value) });
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-  features.notObservedSr = clone(features.unknownSr);
+  features.notObservedSr = clone(features.unknownSr || { evidence: {} });
   features.notObservedSr.evidence.support = { status: 'unknown', source: null, code: 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED' };
   features.notObservedSr.evidence.static = { api: 'dx11', coverage: { complete: true, skipped: [] } };
   const feederRecommendation = { api: 'dx11', route: 'feeder', status: 'ready', title: 'DirectX 11 · DLSS5 Feeder 路线',
