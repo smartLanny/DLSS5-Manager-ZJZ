@@ -3,7 +3,30 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path');
 const { fixture, peBytes, put, hashFile } = require('./helpers/operation-integration-fixture');
 const { readManifest } = require('../src/product/manifest');
+const { createDeferredOperations } = require('../src/product/deferred-operations');
+const { createWorkScheduler } = require('../src/product/work-scheduler');
 const confirm = plan => ({ confirm: true, fingerprint: plan.fingerprint });
+
+for (const mode of ['local', 'external']) test(`running ${mode} deployment detects existing NR conflicts before queue consent`, async t => {
+  const f = await fixture(t);
+  await f.apply({ version: 'fixture-core-1', deployment: mode });
+  const plugin = path.join(f.service.getLayout(f.id).addonDirectory || f.exeDir, 'running-generic.addon64');
+  put(plugin, peBytes('RenoDX Generic NR')); const original = hashFile(plugin);
+  const ini = path.join(f.service.getLayout(f.id).nrConfigDir || f.service.getLayout(f.id).runtimeDir || f.exeDir, 'nr_before_sr.ini');
+  const iniBefore = hashFile(ini), scheduler = createWorkScheduler(); let running = true;
+  f.guards.assertGameClosed = async () => { if (running) throw Object.assign(new Error('running'), { code: 'errGameRunning' }); };
+  const queue = createDeferredOperations({ userData: f.userData, service: f.service, operations: f.plans, run: scheduler.run,
+    assertClosed: f.guards.assertGameClosed });
+  const proposal = await queue.submit(f.id, { version: 'fixture-core-2' });
+  assert.equal(proposal.needsAttention, true); assert.equal(proposal.plan.waitingConfirmation, true);
+  assert.equal(proposal.plan.nrConflicts.required, true); assert.ok(proposal.plan.nrConflicts.files.some(row => row.path === plugin));
+  assert.equal(await queue.inspect(f.id), null, 'unconfirmed conflicts never create a waiting record');
+  assert.equal(hashFile(plugin), original); assert.equal(hashFile(ini), iniBefore); assert.equal((await f.plans.inspect(f.id)).pending, false);
+  const accepted = await queue.apply(f.id, proposal.plan.planId, confirm(proposal.plan)); assert.equal(accepted.waiting, true);
+  await queue.tick(); assert.equal(hashFile(plugin), original);
+  running = false; await queue.tick(); assert.equal((await queue.inspect(f.id)).status, 'complete');
+  assert.equal(hashFile(plugin), null); assert.equal(hashFile(ini), iniBefore);
+});
 
 test('unified external conflict preview, update, migration confirmation and uninstall preserve both generations of isolation', async t => {
   const f = await fixture(t), initial = path.join(f.exeDir, 'original-generic.addon64');

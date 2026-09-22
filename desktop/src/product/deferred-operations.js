@@ -108,11 +108,21 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
     await beforeApply(id);
     const plan = await operations.preview(id, request);
     if (attention(plan, request, consent)) {
-      return { needsAttention: true, plan, notice: '请处理本次列出的冲突或确认项。' };
+      const reasons = (plan.blockers || []).map(row => typeof row === 'string' ? row : row.message || row.code).filter(Boolean);
+      const files = (plan.nrConflicts?.files || []).map(row => row.name || path.basename(row.path));
+      return { needsAttention: true, plan, notice: reasons.length ? `请重新核对：${reasons.join('；')}` : files.length
+        ? `发现待确认的插件隔离或备份：${files.join('、')}。原选择已保留，请核对后重新应用。` : '请处理本次列出的冲突或确认项。' };
     }
     const result = await operations.apply(plan.planId, { confirm: true, fingerprint: plan.fingerprint,
       allowAntiCheat: consent.allowAntiCheat === true });
     return { ...result, notice: result.notice || '配置已应用。' };
+  }
+  async function finishPreviousReview(t) {
+    const row = await read(t);
+    if (!row || !['attention', 'changed'].includes(row.status)) return;
+    row.status = 'cancelled'; delete row.draftBackup;
+    row.message = '已完成本次应用；此前待核对的请求已结束，历史记录保留。';
+    await save(t, row);
   }
   async function submit(id, input, consent = {}) {
     if (!consent || typeof consent !== 'object' || Array.isArray(consent) || Object.keys(consent).some(k => k !== 'allowAntiCheat') ||
@@ -128,7 +138,7 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
         if (request.uninstall || request.repair) throw e;
         const before = await snapshot(id, t);
         const preparation = await (operations.prepareForWaiting ? operations.prepareForWaiting(id, request) : operations.preview(id, request));
-        if (preparation.requiresAdoptionConfirmation || preparation.nrConflicts?.required) {
+        if (preparation.requiresAdoptionConfirmation || preparation.nrConflicts?.required || preparation.deployment?.requiresAntiCheat && !consent.allowAntiCheat) {
           const plan = await operations.preview(id, request, { readOnlyWhileRunning: true });
           plan.waitingConfirmation = true;
           waitingPlans.set(plan.planId, { id, plan, before, expires: Date.now() + 10 * 60000 });
@@ -144,7 +154,9 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
         await save(t, row);
         return { waiting: !changed, ...publicState(row), notice: row.message };
       }
-      return execute(id, request, consent);
+      const result = await execute(id, request, consent);
+      if (!result.needsAttention) await finishPreviousReview(t);
+      return result;
     });
   }
   async function assertNoWaiting(id) {
@@ -162,7 +174,9 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
       const plan = await operations.loadPlan(planId, consent.fingerprint);
       if (plan.gameId !== id) fail('WAITING_TARGET', '该操作预览属于另一个游戏。');
       await beforeApply(id);
-      return operations.apply(plan.planId, consent);
+      const result = await operations.apply(plan.planId, consent);
+      await finishPreviousReview(target(id));
+      return result;
     });
     if (saved.id !== id || saved.expires < Date.now() || consent.confirm !== true || consent.fingerprint !== saved.plan.fingerprint)
       fail('WAITING_CONFIRM', '待应用接管确认已过期或身份不符，请重新预览。');
@@ -254,6 +268,7 @@ function createDeferredOperations({ userData, service, operations, assertClosed,
               await save(t, row);
               const result = await execute(row.gameId, row.request, row.consent);
               row.status = result.needsAttention ? 'attention' : 'complete'; row.message = result.notice;
+              if (result.needsAttention) row.draftBackup = row.request;
             } catch (e) { row.status = 'attention'; row.message = e.message; row.draftBackup = row.request;
               if (e.details?.recoveryRequired) { row.status = 'recovery-required'; row.recovery = { required: true, kind: 'operation', code: e.code }; } }
             try { await save(t, row); } finally { inFlight.delete(t.key); }

@@ -130,6 +130,18 @@ test('dynamic staging rejects explicit D13 and D14 Core selections before packag
   assert.deepEqual(require('../package.json').build.extraResources, []);
 });
 
+test('dynamic staging permits the exact D13 identity only as an additional historical choice', async t => {
+  const root = temporary(t), file = path.join(root, 'historical.json');
+  const manifest = { schemaVersion: 1, packageVersion: require('../package.json').version,
+    core: { version: '0.4.7beta', versions: ['0.4.7beta', '0.5-dline13'], payloadRoot: '.' } };
+  fs.writeFileSync(file, JSON.stringify(manifest));
+  assert.equal((await inspectManifest(file, 'base')).manifest.core.version, '0.4.7beta');
+  for (const id of ['0.5-dline14', 'beta0.5-dline13', '0.5-dline13-unverified']) {
+    manifest.core.versions[1] = id; fs.writeFileSync(file, JSON.stringify(manifest));
+    await assert.rejects(inspectManifest(file, 'base'), /D13\/D14/);
+  }
+});
+
 test('distribution staging retains every requested Core as an atomic Core plus chain while keeping 0.4.7 default', async t => {
   assert.equal(typeof buildPayload, 'function');
   const root = temporary(t), payloadRoot = path.join(root, 'payload'), stageRoot = path.join(root, 'stage');

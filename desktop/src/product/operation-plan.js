@@ -106,6 +106,17 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
       blockers.push(...blockerMessages(checked));
     }
     if (request.launchMode === 'steam' && !(await inspectLaunchMode(id)).steamAvailable) blockers.push('没有可验证的 Steam 安装身份。');
+    if (source.deployment === true && !['feeder', 'vulkan'].includes(source.route)) {
+      // Payload readiness cannot tell us whether an installed Add-on will be
+      // isolated. Compile the same read-only native/profile proposal used by
+      // Apply, without creating a journal or persisting an actionable plan.
+      // Legacy fixed-route owners still require a closed game for their full
+      // preview and retain their independently verified-source contract.
+      const prepared = await preview(id, request, { readOnlyWhileRunning: true, preparationOnly: true });
+      const allBlockers = [...new Set([...blockers, ...prepared.blockers])];
+      return { ...prepared, source, ready: !allBlockers.length, blockers: allBlockers,
+        preparationOnly: true, identity: prepared.fingerprint };
+    }
     const adoption = await service.inspectInstallationAdoption?.(id, request) || null;
     blockers.push(...blockerMessages(adoption));
     return { request, ready: !blockers.length, blockers: [...new Set(blockers)], source, adoption,
@@ -252,8 +263,11 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
       nrConflicts: require('./nr-conflict-summary').nrConflictSummary(request.uninstall ? null : deployment, { userData, exe: t.exe, game: t.game }),
       createdAt: Date.now(), expiresAt: Date.now() + 10 * 60000, changes, blockers: [...new Set(blockers.filter(Boolean))],
       steps, deployment, runtimeVerified: false, requiresConfirmation: true };
-    value.fingerprint = fingerprint(value); plans.set(value.planId, value);
-    await atomicJson(path.join(directory, `${value.planId}.preview.json`), value);
+    value.fingerprint = fingerprint(value);
+    if (internal.preparationOnly !== true) {
+      plans.set(value.planId, value);
+      await atomicJson(path.join(directory, `${value.planId}.preview.json`), value);
+    }
     return clone(value);
   }
   async function loadPlan(planId, expectedFingerprint) {

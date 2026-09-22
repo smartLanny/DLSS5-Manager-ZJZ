@@ -100,7 +100,7 @@ function readBundle(dir) {
   if (!legacy && !variants && !versions) {
     throw appError('ERR_PAYLOAD_HASH', { file: 'bundle.json' });
   }
-  return validateBundlePaths(bundle);
+  return require('./known-core-interfaces').reconcileBundle(validateBundlePaths(bundle));
 }
 
 function inspectFiles(dir, expectedFiles, digest = sha256, safetyRoot = dir) {

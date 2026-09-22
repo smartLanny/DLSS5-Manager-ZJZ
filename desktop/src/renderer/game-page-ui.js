@@ -22,7 +22,7 @@
   const hasFgComponents = assessment => ['installed', 'managed', 'receipt', 'needsRecovery', 'needsCleanup', 'fileRecoveryPending', 'fileOperationActive', 'migrationPending'].some(key => assessment?.enhancements?.fgComponents?.[key]);
   const TAB_SECTION = { overview: 'installation', nr: 'installation', enhance: 'enhancements' };
   const DETAIL_TAB = { overview: 'enhance', nr: 'graphics', enhance: 'advanced' };
-  const STANDARD_CORES = ['0.4.7beta', '0.5-dline21-unified5'];
+  const STANDARD_CORES = ['0.3.7', '0.4.2', '0.4.7beta', '0.5-dline13', '0.5-dline21-unified5'];
   const COMPARISON_VERSION = '0.4.7beta-bg3-bridge1411';
   const coreLabel = value => String(value || '').replace(/(?:beta\s*0\.4\.7|0\.4\.7(?:-?beta)?)(?![\d.])/gi, '0.4.7beta');
   function adoptionMarkup(plan, prefix = 'gp') {
@@ -59,11 +59,12 @@
     let id = null, data = null, draft = {}, fields = {}, invalidFields = {}, tab = 'overview', busy = false, launching = false, message = '', error = false,
       modal = null, generation = 0, session = null, unsubscribe = null, disposed = false, tabController = null, capturingHotkey = false, faceStrength = 1,
       readinessState = null, readinessEpoch = -1, readinessOrder = -1, assessmentOrder = 0, launchAttempt = 0,
-      apiSave = Promise.resolve(), draftBackup = null, waitingUnsubscribe = null, progressUnsubscribe = null, configChecking = false, resumeAfterImport = null, progress = null;
+      apiSave = Promise.resolve(), draftBackup = null, waitingUnsubscribe = null, progressUnsubscribe = null, configChecking = false, resumeAfterImport = null, progress = null, waitingBackupIdentity = null;
     const pageDrafts = new Map();
     const loaded = new Set(), sectionRequests = new Map(), sectionTokens = new Map(), sectionFailures = new Map();
     const draftCount = () => new Set([...Object.keys(draft), ...Object.keys(invalidFields)]).size;
     const dirty = () => draftCount() > 0;
+    const draftSignature = () => JSON.stringify({ draft, invalidFields });
     const act = (name, label, disabled = false, kind = '', title = '') => `<button type="button" class="button ${kind}" data-gp-action="${name}"${title ? ` title="${esc(title)}"` : ''}${disabled ? ' disabled' : ''}>${label}</button>`;
     const selected = (name, baseline) => draft[name] ?? baseline;
     const currentHardware = () => data.enhancements?.hardware || data.hardware || {};
@@ -159,7 +160,7 @@
       if (data.game.installed) return data.deployment?.version || data.game.addonVersion || data.defaults?.version || '';
       if (data.game.existingInstallation?.detected === true) return '';
       const available = (data.coreVersions || []).filter(row => row.ready !== false);
-      return (STANDARD_CORES.includes(data.defaults?.version) ? data.defaults.version : null) || available.find(row => STANDARD_CORES.includes(row.id))?.id || available[0]?.id || '';
+      return (STANDARD_CORES.includes(data.defaults?.version) ? data.defaults.version : null) || available.find(row => row.id === '0.4.7beta')?.id || available.find(row => STANDARD_CORES.includes(row.id))?.id || available[0]?.id || '';
     }
     function deploymentMode() { return selected('deployment', specialRoute() ? data.layout?.mode || (specialRoute() === 'vulkan' ? 'external' : 'local') : data.game.installed ? data.layout?.mode || 'local' : data.defaults?.deployment || 'local'); }
     function hasVersionUpdate() {
@@ -225,7 +226,7 @@
       const nr = { ...(data.nr || {}), ...(data.nr?.contract?.colourMemory && data.nr.effective?.ColorStrength != null ? { ColorStrength: data.nr.effective.ColorStrength } : {}), ...(draft.nr || {}) }, available = Boolean(data.game.installed && data.nr && data.nr.status !== 'error' && data.nr.readable !== false);
       if (data.nr?.capabilities?.Layer2Enabled === true) return uniformNrFields(nr, available);
       const primary = ['Intensity', 'LocalToneStrength', 'LocalStructureStrength'];
-      const controls = rows => rows.map(([key, label, min, max, step]) => {
+      const controls = rows => rows.filter(([key]) => data.nr?.capabilities?.[key] !== false).map(([key, label, min, max, step]) => {
           const capable = available && (!Object.hasOwn(data.nr?.capabilities || {}, key) || data.nr.capabilities[key] === true);
           if (NR_CHOICES[key]) return selectField('nr', key, label, NR_CHOICES[key].map((label, value) => option(value, label, nr[key] ?? 0)).join(''), !capable);
           const limits = data.nr?.limits?.[key] || {}, lower = limits.min === undefined ? key === 'SkinStructureStrength' ? 0 : min : Number(limits.min), upper = limits.max === undefined ? max : Number(limits.max);
@@ -236,6 +237,7 @@
         ${!available ? `<p class="gp-caption">${esc((data.nr?.error ? errorText(data.nr.error) : '') || (data.game.installed ? '当前配置或 Core 身份尚未核实，请重新检查。' : '安装后可调整画面增强。'))}</p>` : ''}
         ${effectiveApi() === 'dx9' ? '<p class="gp-caption">游戏内面板提供 NR 回填开关；完整参数在此调整，退出游戏后应用。</p>' : ''}
         <div class="gp-controls gp-nr-primary">${controls(NR.filter(([key]) => primary.includes(key)))}</div>
+        ${data.nr?.contract?.dualLayer ? `<div class="gp-controls gp-dual-layer">${selectField('nr', 'NRPasses', '增强层数', option(1, '单层', nr.NRPasses) + option(2, '双层', nr.NRPasses), !available)}<details class="gp-nr-details" data-gp-detail="dual-scale"><summary>第二层工作比例 · ${esc(nr.NRSecondScaleNumerator)} / ${esc(nr.NRSecondScaleDenominator)}</summary><div class="gp-controls">${controls([['NRSecondScaleNumerator', '分子', 1, 10000, 1], ['NRSecondScaleDenominator', '分母', 1, 10000, 1]])}</div><p class="gp-caption">比例范围 1/4–1；切回单层会保留此设置。</p></details></div>` : ''}
         <div class="gp-face-control"><label class="check-line gp-check"><input type="checkbox" data-gp-group="face" data-gp-field="enabled"${nr.AutoMask ? ' checked' : ''}${available && data.nr?.capabilities?.SkinStructureStrength !== false ? '' : ' disabled'}>人脸调节</label>${nr.AutoMask ? controls([['SkinStructureStrength', '人脸强度', 0, 2, .05]]) : '<small>关闭时保留上次强度。</small>'}</div>
         <details class="gp-nr-details" data-gp-detail="nr"><summary>更多 NR 参数</summary><div class="gp-controls">${controls(NR.filter(([key]) => !primary.includes(key) && key !== 'SkinStructureStrength' && (key !== 'CustomWorkScale' || Number(nr.WorkMode) === 5)))}</div></details></section>`;
     }
@@ -256,14 +258,17 @@
       const choice = (key, label, choices) => selectField('nr', key, label,
         (choices.some(([value]) => String(value) === String(nr[key])) ? '' : option(nr[key], `文件保存：${nr[key] ?? '未写入'}`, nr[key], true)) +
         choices.map(([value, text]) => option(value, text, nr[key])).join(''), !capable(key), note(key));
-      const model = (prefix, layer) => `<div class="gp-controls">${choice(prefix + 'Style', '画面风格', NR_CHOICES.Style.map((label, value) => [value, label]))}${number(prefix + 'Intensity', '模型强度')}${number(prefix + 'LocalToneStrength', '局部明暗')}${number(prefix + 'LocalStructureStrength', '局部结构')}${number(prefix + 'SkinStructureStrength', '皮肤强度', -1, 2)}</div><div class="gp-small-actions">${check(prefix + 'AutoMask', '原生皮肤遮罩')}${check(prefix + 'UICorrection', '文字 / UI 保护')}${act('nr-reset-layer-' + layer, '恢复本层默认', !available, 'subtle')}</div>`;
-      return `<section class="gp-section"><div class="gp-section-title"><h3>NR 画面增强 · 多层</h3>${check('Enabled', '开启')}</div><p class="gp-caption">${available ? '当前值来自游戏的活动 INI。减少层数会保留各层参数；实验项仍在游戏内调整。' : '配置暂不可编辑，请先检查安装或读取错误。'}</p>
+      const model = (prefix, layer) => `<div class="gp-controls">${choice(prefix + 'Style', '画面风格', NR_CHOICES.Style.map((label, value) => [value, label]))}${number(prefix + 'Intensity', '模型强度')}</div><details class="gp-nr-details" data-gp-detail="layer-${layer}"><summary>明暗、结构与保护</summary><div class="gp-controls">${number(prefix + 'LocalToneStrength', '局部明暗')}${number(prefix + 'LocalStructureStrength', '局部结构')}${number(prefix + 'SkinStructureStrength', '皮肤强度', -1, 2)}</div><div class="gp-small-actions">${check(prefix + 'AutoMask', '原生皮肤遮罩')}${check(prefix + 'UICorrection', '文字 / UI 保护')}${act('nr-reset-layer-' + layer, '恢复本层默认', !available, 'subtle')}</div></details>`;
+      return `<section class="gp-section"><div class="gp-section-title"><h3>NR 画面增强</h3>${check('Enabled', '开启')}</div>${available ? '' : '<p class="gp-caption">配置暂不可编辑，请检查安装或读取错误。</p>'}
         ${(data.nr?.warnings || []).map(row => `<p class="gp-caption">${esc(row.message)}</p>`).join('')}
-        <div class="gp-controls">${choice('ProcessingStart', '处理顺序', [['Before', '增强 → 放大'], ['After', '放大 → 增强'], ['Present', '自动兼容']])}
-        ${choice('WorkMode', '统一工作模式', NR_CHOICES.WorkMode.map((label, value) => [value, label]))}${Number(nr.WorkMode) === 5 ? number('CustomWorkScale', '前置统一工作比例', 0, 1) : ''}${number('PostWorkPercent', '后置工作比例 %', 0, 100, 1)}${number('CompatPostPercent', '兼容工作比例 %', 50, 100, 1)}${number('TransferStrength', '最终增强', 1, 4)}${number('ColorStrength', 'AI 色彩')}</div>
+        <div class="gp-controls">${number('TransferStrength', '最终增强', 1, 4)}${number('ColorStrength', 'AI 色彩')}</div>
+        <section class="gp-layer"><h4>第 1 层</h4>${model('', 1)}</section>
+        <details class="gp-nr-details" data-gp-detail="layers"><summary>多层增强 · 已启用 ${1 + [2, 3, 4, 5].filter(layer => nr['Layer' + layer + 'Enabled']).length} 层</summary><p class="gp-caption">停用某层会保留参数。</p>${[2, 3, 4, 5].map(layer => `<section class="gp-layer"><h4>${check('Layer' + layer + 'Enabled', '第 ' + layer + ' 层')}</h4>${nr['Layer' + layer + 'Enabled'] ? model('Layer' + layer, layer) : ''}</section>`).join('')}</details>
+        <details class="gp-nr-details" data-gp-detail="nr-work"><summary>处理顺序与性能</summary><div class="gp-controls">${choice('ProcessingStart', '处理顺序', [['Before', '增强 → 放大'], ['After', '放大 → 增强'], ['Present', '自动兼容']])}
+        ${choice('WorkMode', '统一工作模式', NR_CHOICES.WorkMode.map((label, value) => [value, label]))}${Number(nr.WorkMode) === 5 ? number('CustomWorkScale', '前置统一工作比例', 0, 1) : ''}${number('PostWorkPercent', '后置工作比例 %', 0, 100, 1)}${number('CompatPostPercent', '兼容工作比例 %', 50, 100, 1)}</div>
         ${capable('ColourLabMode') ? `<div class="gp-controls">${choice('ColourLabMode', '颜色策略', [[2, '保守 · 默认'], [1, '颜色优先 · 实验'], [0, '保留旧版许可设置']])}</div><p class="gp-caption">保守模式不放行未经确认的 HDR 颜色；颜色优先允许尝试。两种策略分别记住 AI 色彩强度，切换不会覆盖另一组。</p>` : ''}
         <p class="gp-caption">工作比例正常范围为 50–100%；自定义比例和后置比例设为 0 会停用增强。实际运行效果需在游戏内确认。</p>
-        <section class="gp-layer"><h4>第 1 层</h4>${model('', 1)}</section>${[2, 3, 4, 5].map(layer => `<section class="gp-layer"><h4>${check('Layer' + layer + 'Enabled', '第 ' + layer + ' 层')}</h4>${nr['Layer' + layer + 'Enabled'] ? model('Layer' + layer, layer) : '<small>未启用，保留此层已保存参数。</small>'}</section>`).join('')}
+        </details>
         <details class="gp-nr-details" data-gp-detail="nr-common"><summary>光照、细节与保护</summary><div class="gp-controls">${choice('NRInputFilter', '输入滤波', [[0, '关闭'], [1, '开启']])}${number('LightingLock', '亮度锁定', 0, 1)}${number('EdgeGuard', '边缘保护', 0, 1)}${number('DetailStability', '细节稳定', 0, 1)}${choice('LightControlMode', '光照控制', [[0, '分项光照'], [1, '整体明暗']])}${choice('LightPreset', '光照预设', [[0, '原始'], [1, '自然'], [2, '减少光晕'], [3, '自定义']])}${number('LightBroad', '整体光照')}${number('LightDark', '暗部光照')}${number('LightReflection', '反射')}${number('LightStructure', '光照结构')}${number('LightGlow', '光晕', 0, 1)}</div><div class="gp-small-actions">${check('HighStrengthProtection', '高强度保护')}${check('ColorProtection', '色彩保护')}</div></details></section>`;
     }
     function featurePanel(domain) {
@@ -275,7 +280,7 @@
       let controls;
       if (sr) {
         const model = scope.launchSettingsUi.recommendedPreset(currentHardware()), labels = scope.launchSettingsUi.SR_MODEL_LABELS;
-        controls = selectField('sr', 'preset', '超分模型', option('', '保持游戏原设置', f.preset) + ['M', 'K', 'L'].map(value => option(value, `${labels[value]}${model === value ? ' · 本机推荐' : ''}`, f.preset)).join('') + option('auto', 'NVIDIA 根据当前档位自动选择模型', f.preset), !active || f.quality === 'game', f.preset === 'L' ? '更偏向画质，通常也是三个模型中帧率最低的选择。' : f.preset === 'auto' ? `由 NVIDIA 推荐表按你选择的 DLSS 档位自动搭配${recommendedModel(f.quality) ? ` ${recommendedModel(f.quality)} 模型` : '；当前档位待确认'}。` : '只保持游戏当前的模型选择，不写入模型覆盖。') +
+        controls = selectField('sr', 'preset', '超分模型', option('', '保持游戏原设置', f.preset) + ['M', 'K', 'L'].map(value => option(value, `${labels[value]}${model === value ? ' · 本机推荐' : ''}`, f.preset)).join('') + option('auto', 'NVIDIA 自动选择', f.preset), !active || f.quality === 'game', f.quality === 'game' ? '应用后恢复游戏原设置。' : f.preset === 'L' ? '偏重画质，性能开销较高。' : f.preset === 'auto' ? '按 DLSS 档位自动搭配模型。' : f.preset ? `应用后使用 ${f.preset} 模型。` : '保持游戏当前模型。') +
           selectField('sr', 'quality', 'DLSS 档位', Object.entries({ preserve: '保持游戏档位，仅修改模型', game: '恢复游戏控制', dlaa: 'DLAA', quality: '质量', balanced: '平衡', performance: '性能', ultraPerformance: '超级性能', custom: '自定义比例' }).map(([key, label]) => option(key, label, f.quality, !active && key !== 'game')).join(''), !active && !allowRestore) +
           (f.quality === 'custom' ? `<label class="gp-field"><span>输入比例</span><input type="number" min="33" max="100" step="1" value="${esc(f.renderPercent)}" data-gp-group="sr" data-gp-field="renderPercent"${active ? '' : ' disabled'}><small>33–100%。</small></label>` : '');
       } else {
@@ -302,8 +307,8 @@
       return `<section class="gp-section"><div class="gp-section-title"><div><h3>${sr ? 'DLSS 超分' : f.backend === 'dlssg-sm86' ? 'RTX20/30 多帧生成 · 实验' : f.backend === 'mfgunlock' ? 'RTX40 补帧' : f.backend === 'nvidia' ? 'RTX50 帧生成' : '帧生成'}</h3></div>${badge(info.state || (active ? 'configurable' : 'unavailable'))}</div>
         ${reasons.length && reasons[0] !== activationText ? `<p class="gp-caption" title="${esc(reasons.join('；'))}">${esc(reasons[0])}</p>` : ''}${activationText ? `<p class="gp-caption" role="status">${esc(activationText)}</p>` : ''}${warnings.map(value => `<p class="gp-caption">${esc(value)}</p>`).join('')}
         ${domain === 'fg' && data.enhancements?.current?.fg?.source === 'active-ini' ? `<p class="gp-caption">已读取游戏内保存的当前设置${data.enhancements.current.fg.differsFromLastApplied ? '，与上次管理器请求不同' : ''}。${draft.fg ? '当前草稿保留，应用前会重新核对。' : ''}</p>` : ''}
-        <div class="gp-controls">${controls}</div>${!sr && f.backend === 'dlssg-sm86' ? `<p class="gp-caption gp-fg-evidence">文件${data.enhancements?.fgComponents?.ready ? '已准备' : '尚未准备'} · 组件加载待确认 · 实际帧生成待验证</p>` : ''}${!sr && f.backend === 'dlssg-sm86' ? '<p class="gp-caption">倍率是允许的上限，实际由游戏请求决定。默认优化档 1、最多 4×；修改后重启游戏。RTX20/30 实机尚待验证。</p>' : ''}${!sr && f.backend === 'mfgunlock' ? `<p class="gp-caption">游戏内菜单：ReShade → Add-ons → MFG Unlock。当前组件：${esc(data.enhancements?.fgComponents?.installedProviderDetails?.version || data.enhancements?.fgComponents?.catalog?.find(row => row.id === data.enhancements?.fgComponents?.defaultProvider)?.version || '1.0（推荐）')}；来源：mavismmg/MFGAdaUnlock-RenoDx。设置读回不等于生成帧已验证。</p><div class="gp-small-actions">${act('mfg-source', '查看开源项目', busy, 'subtle')}</div>` : ''}${unavailableOptions.length ? `<details class="gp-capability-details"><summary>未开放档位说明</summary>${unavailableOptions.map(row => `<p class="gp-caption"><strong>${esc(row.label)}</strong> · ${esc(row.message)}</p>`).join('')}</details>` : ''}<p class="gp-caption">${owned ? owned.readbackVerified ? '已应用，重启游戏后生效。' : '设置已变化，请重新预览。' : '尚未应用覆盖设置。'}</p>
-        <div class="gp-small-actions">${sr ? act('recommend-sr', '恢复推荐', busy || !active || !scope.launchSettingsUi.recommendedPreset(currentHardware()), 'subtle') + act('preview-sr', '预览当前超分设置', busy || data.operation?.pending || !apiReady() || !loaded.has('enhancements') || (!feature('sr').eligible && !(fields.sr.quality === 'game' && data.enhancements?.applied?.sr)), 'subtle') : ''}${allowRestore ? act(`restore-${domain}`, '恢复原设置', busy, 'subtle') : ''}${owned?.requiresReapply ? act('reapply', '重新预览', busy) : ''}</div></section>`;
+        <div class="gp-controls">${controls}</div>${!sr && f.backend === 'dlssg-sm86' ? `<p class="gp-caption gp-fg-evidence">文件${data.enhancements?.fgComponents?.ready ? '已准备' : '尚未准备'} · 组件加载待确认 · 实际帧生成待验证</p>` : ''}${!sr && f.backend === 'dlssg-sm86' ? '<p class="gp-caption">倍率是允许的上限，实际由游戏请求决定。默认优化档 1、最多 4×；修改后重启游戏。RTX20/30 实机尚待验证。</p>' : ''}${!sr && f.backend === 'mfgunlock' ? `<details class="gp-capability-details" data-gp-detail="mfg-source"><summary>组件与游戏内菜单</summary><p class="gp-caption">游戏内菜单：ReShade → Add-ons → MFG Unlock。当前组件：${esc(data.enhancements?.fgComponents?.installedProviderDetails?.version || data.enhancements?.fgComponents?.catalog?.find(row => row.id === data.enhancements?.fgComponents?.defaultProvider)?.version || '1.0（推荐）')}；来源：mavismmg/MFGAdaUnlock-RenoDx。设置读回不等于生成帧已验证。</p><div class="gp-small-actions">${act('mfg-source', '查看开源项目', busy, 'subtle')}</div></details>` : ''}${unavailableOptions.length ? `<details class="gp-capability-details"><summary>未开放档位说明</summary>${unavailableOptions.map(row => `<p class="gp-caption"><strong>${esc(row.label)}</strong> · ${esc(row.message)}</p>`).join('')}</details>` : ''}<p class="gp-caption">${owned ? owned.readbackVerified ? '已应用，重启游戏后生效。' : '设置已变化，请重新预览。' : '尚未应用覆盖设置。'}</p>
+        <div class="gp-small-actions">${sr ? act('recommend-sr', '使用推荐', busy || !active || !scope.launchSettingsUi.recommendedPreset(currentHardware()), 'subtle') : ''}${allowRestore ? act(`restore-${domain}`, '恢复原设置', busy, 'subtle') : ''}${owned?.requiresReapply ? act('reapply', '重新预览', busy) : ''}</div>${sr ? `<details class="gp-capability-details" data-gp-detail="sr-preview"><summary>查看当前设置的变更清单</summary>${act('preview-sr', '预览当前超分设置', busy || data.operation?.pending || !apiReady() || !loaded.has('enhancements') || (!feature('sr').eligible && !(fields.sr.quality === 'game' && data.enhancements?.applied?.sr)), 'subtle')}</details>` : ''}</section>`;
     }
     function componentStackOverview() {
       const saved = data.componentChoices?.stack;
@@ -329,8 +334,8 @@
         const picker = `<section class="gp-section"><div class="gp-controls">${selectField('route', 'version', 'AI 增强组件',
           (pickerRows.some(row => row.id === version) ? '' : option(version, `${coreLabel(version)} · 来源待检查`, version, true)) +
           pickerRows.map(row => option(row.id, coreLabel(row.label || row.id), version, row.ready === false)).join(''), busy || pending,
-          special ? '选择最新 0.5 后自动匹配输入组件（实验）；已有固定配套切换前先恢复，避免混装。' : versions.find(row => row.id === version)?.notes || '切换前会预览本次文件变更；保留此客户端的绑定和个人配置。')}</div></section>`;
-        return `<p class="gp-caption">当前 Core：${esc(coreLabel(current))} · 此客户端独立配置</p>${picker}${hotkeySection()}${rollbackVersions()}${maintenancePanel()}${options.maintenanceContent?.() || ''}`;
+          special ? '灰色版本暂无此路线的配套。' : '')}</div></section>`;
+        return `${picker}${options.installationContent?.() || ''}${runtimeImportControl()}<details class="gp-section" data-gp-detail="startup"><summary>启动与快捷键</summary>${hotkeySection()}</details>${rollbackVersions()}${maintenancePanel()}${options.maintenanceContent?.() || ''}`;
       }
       const attention = readinessNeedsAction(), readinessNotice = readinessNeedsNotice();
       const unresolved = !effective || ['mixed', 'unknown', 'auto'].includes(effective);
@@ -348,12 +353,16 @@
       return `<section class="gp-section gp-install-section"><div class="gp-controls">
         ${selectField('route', 'api', '游戏 API', option('auto', automaticLabel, api) + ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].map(key => option(key, API[key] || key.toUpperCase(), api)).join(''), busy)}
         ${selectField('route', 'version', 'AI 增强组件', (!visibleVersion ? option('', '请选择 AI 增强组件', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy)}</div>
-        ${visibleVersion === '0.5-dline21-unified5' ? '<p class="gp-caption">兼容输入自动匹配：原生可用时不加桥；需要时补齐接口匹配的 Bridge / Feeder。兼容路线属于实验支持，应用前会显示实际文件，不影响其他游戏。</p>' : ''}
-        ${manager.pickRuntimeDlc && (options.runtimeRequired?.(currentVersion()) || resumeAfterImport && error && /运行库|DLC|nvngx_dlssnr/i.test(message)) ? `<div class="gp-small-actions">${act('import-runtime', '导入运行库 DLC', busy, 'subtle')}<small>保留当前选择；导入成功后继续上次应用。</small></div>` : ''}
+        ${visibleVersion === '0.5-dline21-unified5' ? '<p class="gp-caption" title="自动核对并匹配当前图形接口需要的 Bridge / Feeder；运行效果需进游戏确认。">0.5 候选 · 兼容路线为实验支持</p>' : ''}
+        ${runtimeImportControl()}
         ${(data.failures || []).filter(row => ['operation', 'layout', 'defaults'].includes(row.section)).map(row => `<p class="gp-message error">检查未完成：${esc(errorText(row))}。处理后点击“重新检查”。</p>`).join('')}
-        <div class="gp-compatibility ${pending || readinessNotice || !apiReady() ? 'needs-attention' : ''}" role="status"><strong>兼容性</strong><span>${esc(status)}</span>${pending ? act('recover-operation', '恢复操作', busy, 'subtle') : attention && readinessActionName() !== 'resolve-readiness' ? act(readinessActionName(), readinessActionLabel(), busy, 'subtle') : ''}</div>
-        ${existing ? `<div class="gp-message"><strong>检测到已有未受管安装</strong><p>${esc(existingNames.join('、') || '已有插件文件')}。选择目标 Core 后点击应用，管理器会核实文件身份和配套；可确认的文件先备份再接管，未知文件会列出具体冲突。</p><p>原文件备份保留在 _DLSS5_Backup 中，可在维护页恢复。</p></div>` : ''}
-        ${hasVersionUpdate() ? `<p class="gp-caption">当前已安装 ${esc(data.deployment?.version || game.addonVersion)}；应用后才会更新所选配套。</p>` : existing ? '<p class="gp-caption">请选择目标 Core，确认备份与接管后应用。</p>' : ''}</section>${hoyoControls()}${startupFields()}${hotkeySection()}${rollbackVersions()}<details class="gp-section" data-gp-detail="technical"><summary>配套与高级加载设置</summary>${componentStackOverview()}${advanced()}</details>${maintenancePanel()}`;
+        ${pending || readinessNotice || !apiReady() || data.layout?.needsInputPreparation || !version ? `<div class="gp-compatibility needs-attention" role="status"><span>${esc(status)}</span>${pending ? act('recover-operation', '恢复操作', busy, 'subtle') : attention && readinessActionName() !== 'resolve-readiness' ? act(readinessActionName(), readinessActionLabel(), busy, 'subtle') : ''}</div>` : ''}
+        ${existing ? `<div class="gp-message"><strong>发现已有插件</strong><p>选择 Core 后应用，确认备份再替换。</p><details><summary>查看已有文件</summary><p>${esc(existingNames.join('、') || '已有插件文件')}。原件保留在 _DLSS5_Backup，未知文件会单独确认。</p></details></div>` : ''}
+        ${hasVersionUpdate() ? `<p class="gp-caption">已安装 ${esc(data.deployment?.version || game.addonVersion)}，应用后更新。</p>` : ''}${proxyEntryControl()}</section>${hoyoControls()}<details class="gp-section" data-gp-detail="startup"><summary>启动与快捷键</summary>${startupFields()}${hotkeySection()}</details>${rollbackVersions()}<details class="gp-section" data-gp-detail="technical"><summary>高级设置</summary>${componentStackOverview()}${advanced()}</details>${maintenancePanel()}`;
+    }
+    function runtimeImportControl() {
+      return manager.pickRuntimeDlc && (options.runtimeRequired?.(currentVersion()) || resumeAfterImport && error && /运行库|DLC|nvngx_dlssnr/i.test(message))
+        ? `<div class="gp-small-actions">${act('import-runtime', '导入运行库 DLC', busy, 'subtle')}<small>导入后可继续应用。</small></div>` : '';
     }
     function savedProxyEntry() {
       const sources = [data.defaults?.proxyEntry, data.deployment?.proxyEntry, data.layout?.proxyEntry,
@@ -375,7 +384,7 @@
     }
     function startupFields() {
       const layout = data.layout || {}, special = specialRoute(), mode = deploymentMode();
-      return `<section class="gp-section gp-startup"><h3>启动设置</h3><div class="gp-controls">${selectField('route', 'launchMode', '启动方式', option('auto', '自动 · 官方启动器优先', selected('launchMode', data.launch?.selected || 'auto')) + option('steam', '通过 Steam', selected('launchMode', data.launch?.selected || 'auto'), !data.launch?.steamAvailable) + option('exe', '直接启动游戏程序', selected('launchMode', data.launch?.selected || 'auto')), busy)}${selectField('route', 'deployment', '安装位置', special ? option(mode, '此路线使用独立配套目录', mode) : option('local', '游戏目录（默认）', mode) + option('external', '独立配套目录', mode), busy || Boolean(special))}${mode === 'external' ? selectField('route', 'loadingMode', '加载方式', option('proxy', '随游戏加载', selected('loadingMode', layout.loadingMode || 'proxy')) + option('helper', '通过加载助手', selected('loadingMode', layout.loadingMode || 'proxy'), !data.game.installed), busy || Boolean(special), !data.game.installed ? '首次安装完成后可切换加载助手。' : '') : ''}</div>${proxyEntryControl()}</section>`;
+      return `<section class="gp-section gp-startup"><h3>启动设置</h3><div class="gp-controls">${selectField('route', 'launchMode', '启动方式', option('auto', '自动 · 官方启动器优先', selected('launchMode', data.launch?.selected || 'auto')) + option('steam', '通过 Steam', selected('launchMode', data.launch?.selected || 'auto'), !data.launch?.steamAvailable) + option('exe', '直接启动游戏程序', selected('launchMode', data.launch?.selected || 'auto')), busy)}${selectField('route', 'deployment', '安装位置', special ? option(mode, '此路线使用独立配套目录', mode) : option('local', '游戏目录（默认）', mode) + option('external', '独立配套目录', mode), busy || Boolean(special))}${mode === 'external' ? selectField('route', 'loadingMode', '加载方式', option('proxy', '随游戏加载', selected('loadingMode', layout.loadingMode || 'proxy')) + option('helper', '通过加载助手', selected('loadingMode', layout.loadingMode || 'proxy'), !data.game.installed), busy || Boolean(special), !data.game.installed ? '首次安装完成后可切换加载助手。' : '') : ''}</div></section>`;
     }
     function enhancements() {
       const facts = scope.launchSettingsUi.hardwareFacts(currentHardware());
@@ -456,7 +465,7 @@
         else if (key === 'fg') rows.push(`补帧：${({ restore: '恢复原设置', follow: '跟随游戏', fixed: '设置倍率', off: '停用', dynamic: '动态目标' })[value.mode] || value.mode}${value.multiplier ? ' · ' + value.multiplier + '×' : ''}`);
         else rows.push(({ route: '更新输入路线', deployment: '更新安装位置', loadingMode: '更新加载方式', loadingBackend: '更新加载组件', components: '更新组件搭配', hotkeys: '更新快捷键', hoyo: '更新启动设置' })[key] || '更新其他设置');
       }
-      return rows.length ? `<details class="gp-draft-summary" data-gp-detail="draft-summary" open><summary>本次改动 · ${rows.length} 项</summary><ul>${rows.map(row => `<li>${esc(row)}</li>`).join('')}</ul></details>` : '';
+      return rows.length ? `<details class="gp-draft-summary" data-gp-detail="draft-summary"><summary>本次改动 · ${rows.length} 项</summary><ul>${rows.map(row => `<li>${esc(row)}</li>`).join('')}</ul></details>` : '';
     }
     function actionState() {
       const invalid = Object.keys(invalidFields).length > 0;
@@ -466,6 +475,13 @@
       let action = 'launch', label = '启动', disabled = locked;
       if (pending) { action = data.enhancements?.pending?.length ? 'recover-settings' : 'recover-operation'; label = '恢复未完成操作'; }
       else if (waiting) { action = 'cancel-waiting'; label = '取消等待'; }
+      else if (!dirty() && data.waiting?.requiresReview && data.waiting?.draftBackup && draftBackup) { action = 'restore-draft-backup'; label = '核对待应用修改'; }
+      else if (dirty() && Object.keys(draft).every(key => ['sr', 'fg', 'reapplyExternalChanges'].includes(key))) {
+        action = 'preview'; label = '应用'; disabled ||= invalid || apiBlocked();
+      }
+      else if (options.preparationRequired?.() && !Object.keys(draft).some(key => ['nr', 'sr', 'fg', 'hotkeys'].includes(key))) {
+        action = 'prepare'; label = '应用'; disabled ||= !loaded.has('installation') || !currentVersion();
+      }
       else if (!data.game.installed) {
         action = 'prepare'; label = '应用';
         disabled ||= !loaded.has('installation') || !apiReady() || !currentVersion() || versionRows().find(row => row.id === currentVersion())?.ready === false;
@@ -482,8 +498,8 @@
       const readinessNotice = readinessNeedsNotice();
       const phases = { deployment: '备份并更新组件', nr: '保存并回读画质设置', sr: '应用超分设置', fg: '准备并应用补帧', hotkeys: '保存快捷键', proxy: '切换加载入口', launch: '保存启动方式', 'restore-fg': '恢复旧补帧组件', repair: '修复组件', uninstall: '恢复文件' };
       const status = busy ? progress ? `${phases[progress.phase] || '正在处理'} · ${progress.completed + 1}/${progress.total}` : '正在检查本次修改…' : state.waiting ? '等待游戏退出' : invalid ? '请先修正输入' : dirty() ? `${draftCount()} 组修改待应用` : state.pending ? '有未完成操作' : readinessNeedsAction() ? '启动前需要处理' : readinessNotice ? '启动时检查设置' : LAUNCH[launch?.status] || (data.game.installed ? '设置已就绪' : data.game.existingInstallation?.detected ? '已有安装待确认' : '确认设置后应用');
-      const detail = (data.waiting?.message && (state.waiting || data.waiting.requiresReview) ? `<small>${esc(data.waiting.message)}</small>` : dirty() ? '<small>应用后保存设置；游戏运行中会等待退出。完成后可手动启动。</small>' : readinessNotice ? `<small>${esc(readinessMessage())}</small>` : launch?.status === 'waiting-launcher' && launch.launchInstruction ? `<small>${esc(launch.launchInstruction)}</small>` : '') + draftSummary();
-      return `<div class="gp-apply-bar${dirty() ? ' is-dirty' : readinessNotice ? ' needs-attention' : ''}" aria-label="当前游戏操作"><div role="status"><strong>${esc(status)}</strong>${detail}</div><div class="gp-main-actions">${dirty() ? act('discard', '放弃修改', busy, 'subtle') : act('refresh', '重新检查', busy, 'subtle')}${draftBackup ? act('restore-draft-backup', '恢复原草稿', busy, 'subtle') : ''}${act(state.action, state.label, state.disabled, 'primary')}${launching ? act('cancel-launch', '取消启动等待', false, 'subtle') : ''}${act('back', '收起', false, 'subtle')}</div></div>`;
+      const detail = (data.waiting?.message && (state.waiting || data.waiting.requiresReview) ? `<small>${esc(data.waiting.message)}</small>` : dirty() ? '' : readinessNotice ? `<small>${esc(readinessMessage())}</small>` : launch?.status === 'waiting-launcher' && launch.launchInstruction ? `<small>${esc(launch.launchInstruction)}</small>` : '') + draftSummary();
+      return `<div class="gp-apply-bar${dirty() ? ' is-dirty' : readinessNotice ? ' needs-attention' : ''}" aria-label="当前游戏操作"><div role="status"><strong>${esc(status)}</strong>${detail}</div><div class="gp-main-actions">${dirty() ? act('discard', '放弃修改', busy, 'subtle') : act('refresh', '重新检查', busy, 'subtle')}${draftBackup && state.action !== 'restore-draft-backup' ? act('restore-draft-backup', '恢复原草稿', busy, 'subtle') : ''}${act(state.action, state.label, state.disabled, 'primary')}${launching ? act('cancel-launch', '取消启动等待', false, 'subtle') : ''}${act('back', '收起', false, 'subtle')}</div></div>`;
     }
     function syncHeaderAction() {
       const card = host.closest('.game-card'), start = card?.querySelector('.unified-launch-btn'), state = actionState();
@@ -500,11 +516,16 @@
       await loadSection('installation', true);
       const state = actionState();
       if (state.disabled || state.waiting || state.pending) return;
-      if (state.action === 'prepare') { Object.assign(draft, installRequest()); await preview(); }
+      if (state.action === 'prepare') await prepare();
       else if (state.action === 'preview') await preview();
+      else if (state.action === 'restore-draft-backup') host.querySelector('[data-gp-action="restore-draft-backup"]')?.click();
       else if (state.action === 'repair-install') await preview({ repair: true });
       else if (state.action === 'launch') await launchGame();
       else await resolveReadiness({ refresh: false });
+    }
+    async function prepare() {
+      if (options.onPrepare && options.preparationRequired?.()) return options.onPrepare({ version: currentVersion() });
+      Object.assign(draft, installRequest()); await preview();
     }
     function render() {
       if (disposed) return;
@@ -558,6 +579,7 @@
       const nrChanged = value.nr && data.nr && signature(value.nr) !== signature(data.nr);
       const affectedNr = nrChanged ? Object.keys(draft.nr || {}).filter(key => value.nr.readable === false || JSON.stringify(value.nr.contract) !== JSON.stringify(data.nr.contract) || value.nr[key] !== data.nr[key]) : [];
       const fgChanged = value.enhancements?.current?.fg && data.enhancements?.current?.fg && JSON.stringify(value.enhancements.current.fg.request) !== JSON.stringify(data.enhancements.current.fg.request);
+      if (nrChanged || fgChanged) resumeAfterImport = null;
       if (affectedNr.length || fgChanged && draft.fg) {
         keepDraftBackup('外部配置已改变');
         for (const key of affectedNr) { delete draft.nr[key]; delete invalidFields['nr:' + key]; }
@@ -587,7 +609,9 @@
       }
       externalConfiguration(value);
       data = { ...data, ...value, ...(value.game ? { game: { ...data.game, ...value.game } } : {}) };
-      if (value.waiting?.draftBackup && !draftBackup) {
+      const waitingIdentity = value.waiting?.draftBackup ? JSON.stringify([value.waiting.acceptedAt, value.waiting.draftBackup]) : null;
+      if (waitingIdentity && waitingIdentity !== waitingBackupIdentity) {
+        waitingBackupIdentity = waitingIdentity;
         draftBackup = { draft: structuredClone(value.waiting.draftBackup), reason: value.waiting.message };
         try { scope.localStorage?.setItem('manager-draft-backup:' + id, JSON.stringify(draftBackup)); } catch {}
       }
@@ -668,7 +692,7 @@
         await apiSave;
         if (disposed || id !== gameId) return;
         request = structuredClone(request);
-        resumeAfterImport = { gameId, request };
+        resumeAfterImport = { gameId, request, draftSignature: draftSignature() };
         if (manager.requestOperation && !request.uninstall && !request.repair) {
           const result = unwrap(await manager.requestOperation(gameId, request, { allowAntiCheat: false }));
           if (disposed || id !== gameId) return;
@@ -700,7 +724,7 @@
     async function open(gameId, initialTab = 'overview', seed = {}) {
       if (id && dirty()) pageDrafts.set(id, { draft: structuredClone(draft), fields: structuredClone(fields), invalidFields: { ...invalidFields } });
       launchAttempt++; launching = false;
-      generation++; id = gameId; loaded.clear(); sectionTokens.clear(); sectionRequests.clear(); sectionFailures.clear(); draft = {}; invalidFields = {};
+      generation++; id = gameId; resumeAfterImport = null; waitingBackupIdentity = null; loaded.clear(); sectionTokens.clear(); sectionRequests.clear(); sectionFailures.clear(); draft = {}; invalidFields = {};
       tab = initialTab === 'maintenance' ? 'overview' : Object.hasOwn(TAB_SECTION, initialTab) ? initialTab : 'overview'; modal = null; message = ''; error = false; busy = false; launching = false; capturingHotkey = false; faceStrength = 1;
       readinessState = null; readinessEpoch = -1; readinessOrder = -1;
       const game = seed.game || { id: gameId, name: '游戏', installed: false };
@@ -863,14 +887,29 @@
         else if (action === 'recommend-sr') { fields.sr = scope.launchSettingsUi.initialSrFields({}, currentHardware()); draft.sr = scope.launchSettingsUi.createRequest('sr', fields.sr); delete invalidFields.sr; message = ''; error = false; render(); }
         else if (action === 'cancel-waiting') await work(() => manager.cancelWaitingOperation(id), '已取消等待。', true);
         else if (action === 'import-runtime') {
-          const gameId = id, resume = resumeAfterImport;
+          const gameId = id, epoch = generation, resume = resumeAfterImport;
           const result = unwrap(await manager.pickRuntimeDlc());
-          if (result && id === gameId) { modal = null; message = result.message || '运行库已准备。'; if (result.state) scope.dispatchEvent?.(new CustomEvent('manager-components-changed', { detail: result.state })); await refresh(true); await options.onChanged?.(id); if (resume?.gameId === gameId) await preview(resume.request); }
+          if (result && !disposed && id === gameId && generation === epoch) {
+            modal = null; message = result.message || '运行库已准备。';
+            if (result.state) scope.dispatchEvent?.(new CustomEvent('manager-components-changed', { detail: result.state }));
+            await refresh(true);
+            if (disposed || id !== gameId || generation !== epoch + 1) return;
+            await options.onComponentsChanged?.(result);
+            if (disposed || id !== gameId) return;
+            await options.onChanged?.(gameId);
+            if (!disposed && id === gameId && resume?.gameId === gameId && resumeAfterImport === resume && resume.draftSignature === draftSignature()) await preview(resume.request);
+          }
         }
-        else if (action === 'restore-draft-backup') { if (draftBackup) { draft = structuredClone(draftBackup.draft || {}); fields = { ...fields, ...draftBackup.fields }; message = '已恢复草稿；再次应用后才会写入。'; render(); } }
-        else if (action === 'discard') { draft = {}; invalidFields = {}; fields = initialFields(data); message = '已放弃尚未应用的修改。'; error = false; render(); }
+        else if (action === 'restore-draft-backup') { if (draftBackup) {
+          resumeAfterImport = null; draft = structuredClone(draftBackup.draft || {}); invalidFields = {};
+          fields = { ...initialFields(data), ...structuredClone(draftBackup.fields || {}) };
+          if (draft.sr) fields.sr = scope.launchSettingsUi.initialSrFields({ requests: { sr: { request: draft.sr } } }, currentHardware());
+          if (draft.fg) fields.fg = { backend: draft.fg.backend, mode: 'restore', multiplier: 2, targetFps: 0, ...draft.fg };
+          message = '已恢复草稿；再次应用后才会写入。'; error = false; render();
+        } }
+        else if (action === 'discard') { resumeAfterImport = null; draft = {}; invalidFields = {}; fields = initialFields(data); message = '已放弃尚未应用的修改。'; error = false; render(); }
         else if (action === 'switch-proxy') { if (!busy && proxySwitchVisible()) { draft.proxyEntry = (draft.proxyEntry || savedProxyEntry()) === 'd3d12' ? 'dxgi' : 'd3d12'; message = '加载入口已暂存，点击应用后生效。'; error = false; render(); } }
-        else if (action === 'prepare') { Object.assign(draft, installRequest()); await preview(); }
+        else if (action === 'prepare') await prepare();
         else if (action === 'resolve-readiness') await resolveReadiness();
         else if (action === 'pick-hoyo-launcher') {
           const file = unwrap(await manager.pickHoYoLauncher());
@@ -963,7 +1002,7 @@
     if (manager.onWaitingOperation) waitingUnsubscribe = manager.onWaitingOperation(value => { if (!disposed && value.gameId === id) { data.waiting = { ...data.waiting, ...value }; message = value.message; render(); void refresh(true); } });
     if (manager.onOperationProgress) progressUnsubscribe = manager.onOperationProgress(value => { if (!disposed && value.gameId === id) { progress = value; updateBar(); } });
     if (manager.onLaunchSession) unsubscribe = manager.onLaunchSession(value => { if (!disposed && value.gameId === id) { session = value; if (!modal) render(); } });
-    return { open, resume, refresh, selectTab, runPrimary, resolveReadiness, launchGame, requestLeave, updateLaunchReadiness, previewRepair: () => preview({ repair: true }), hasDraft: dirty, discard: () => { draft = {}; invalidFields = {}; }, getState: () => ({ id, data, action: data ? actionState() : null, draft: structuredClone(draft), fields: structuredClone(fields), tab, busy, launching, readiness: structuredClone(launchReadiness()), readinessOrder, assessmentOrder, loaded: [...loaded] }), dispose: () => { disposed = true; generation++; eventController.abort(); clearInterval(configTimer); waitingUnsubscribe?.(); progressUnsubscribe?.(); tabController?.dispose(); unsubscribe?.(); } };
+    return { open, resume, refresh, refreshView: () => { if (data) render(); }, selectTab, runPrimary, resolveReadiness, launchGame, requestLeave, updateLaunchReadiness, previewRepair: () => preview({ repair: true }), hasDraft: dirty, discard: () => { draft = {}; invalidFields = {}; }, getState: () => ({ id, data, action: data ? actionState() : null, draft: structuredClone(draft), fields: structuredClone(fields), tab, busy, launching, readiness: structuredClone(launchReadiness()), readinessOrder, assessmentOrder, loaded: [...loaded] }), dispose: () => { disposed = true; generation++; eventController.abort(); clearInterval(configTimer); waitingUnsubscribe?.(); progressUnsubscribe?.(); tabController?.dispose(); unsubscribe?.(); } };
   }
   const api = { mount, recommendedModel, initialFields, adoptionMarkup, nrConflictMarkup };
   if (typeof module === 'object' && module.exports) module.exports = api; else scope.GamePageUi = api;

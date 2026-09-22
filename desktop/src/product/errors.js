@@ -128,7 +128,7 @@ function normalizeError(error) {
     errBackendRecovery: 'ERR_BACKUP_INVALID'
   };
   const code = Object.hasOwn(codeMap, originalCode) ? codeMap[originalCode] : originalCode || 'ERR_INTERNAL';
-  const vulkanError = /^(VULKAN_|FEEDER_|SPECIAL_|GAME_LAUNCH_|GAME_API_|RDR2_|REGISTRY_|REF_|PREPARATION_|ENVIRONMENT_|DEPLOYMENT_|OPERATION_|LAUNCH_|HELPER_|ASSESSMENT_|LIBRARY_|WAITING_)[A-Z_]+$/.test(code);
+  const vulkanError = /^(VULKAN_|FEEDER_|LEGACY_|EXTERNAL_PROVIDER_|SPECIAL_|GAME_LAUNCH_|GAME_API_|RDR2_|REGISTRY_|REF_|PREPARATION_|ENVIRONMENT_|DEPLOYMENT_|OPERATION_|LAUNCH_|HELPER_|ASSESSMENT_|LIBRARY_|WAITING_)[A-Z_]+$/.test(code);
   const details = safeDetails(incoming.details || incoming.params || {});
   for (const field of ['phase', 'gameStarted', 'recoveryStateKnown', 'recoverableDomains']) {
     if (details[field] === undefined && incoming[field] !== undefined) Object.assign(details, safeDetails({ [field]: incoming[field] }));

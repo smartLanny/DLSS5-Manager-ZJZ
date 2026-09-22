@@ -212,6 +212,7 @@ function buildConfig({ stageRoot, flavor, outputRoot, portableOnly, unpackedZip 
     { from: path.join(stageRoot, 'resources', 'fg-mfgunlock'), to: 'fg-mfgunlock' },
     { from: path.join(stageRoot, 'resources', 'fg-sm86'), to: 'fg-sm86' },
     { from: path.join(stageRoot, 'resources', 'components'), to: 'components' },
+    { from: path.join(stageRoot, 'resources', 'legacy-runtime'), to: 'legacy-runtime' },
     { from: path.join(stageRoot, 'resources', 'bridge-dlc'), to: 'bridge-dlc' },
     { from: path.join(stageRoot, 'resources', 'hoyoshade'), to: 'hoyoshade' },
     { from: path.join(stageRoot, 'resources', 'loading-helper'), to: 'loading-helper' },

@@ -4,6 +4,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { appError, normalizeError } = require('../src/product/errors');
 
+test('Feeder package failures preserve their specific corrective action across IPC', () => {
+  for (const code of ['LEGACY_PACKAGE_MISSING', 'LEGACY_PACKAGE_UNTRUSTED', 'EXTERNAL_PROVIDER_CORE_INCOMPATIBLE']) {
+    const result = normalizeError({ code, message: '请检查完整配套；仅重复导入 NR 运行库无法补齐。', details: { file: 'legacy-runtime/manifest.json' } });
+    assert.equal(result.code, code); assert.match(result.message, /完整配套.*无法补齐/);
+    assert.match(result.message, /legacy-runtime\/manifest.json/); assert.doesNotMatch(result.message, /操作失败/);
+  }
+});
+
 test('library and waiting recovery exit errors preserve actionable instructions across IPC', () => {
   for (const code of ['LIBRARY_CONFIRM_REQUIRED', 'LIBRARY_RESTORE_FIRST', 'WAITING_OPERATION_ACTIVE']) {
     const result = normalizeError({ code, message: '请确认仅移出，原备份保留。' });

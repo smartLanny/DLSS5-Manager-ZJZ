@@ -169,6 +169,21 @@ function inspectText(text, input = '') {
     } else { effective.WorkMode = modeValue; effective.CustomWorkScale = scaleValue; }
   }
   let migration = null, layers = [];
+  if (contract.dualLayer) {
+    // D13 shares model parameters across its two passes; it has no Layer2/3 banks.
+    effective.NRPasses = nativeInt('NRPasses', 1) === 2 ? 2 : 1;
+    let numerator = nativeInt('NRSecondScaleNumerator', 1) >>> 0, denominator = nativeInt('NRSecondScaleDenominator', 2) >>> 0;
+    if (!numerator || !denominator || denominator > 10000 || numerator > denominator || numerator * 4 < denominator) {
+      numerator = 1; denominator = 2;
+    }
+    const gcd = (a, b) => b ? gcd(b, a % b) : a, divisor = gcd(numerator, denominator);
+    effective.NRSecondScaleNumerator = numerator / divisor; effective.NRSecondScaleDenominator = denominator / divisor;
+    for (let index = 1; index <= 2; index++) layers.push({ index, enabled: index <= effective.NRPasses,
+      active: index <= effective.NRPasses, configured: true, sharedModel: true,
+      values: Object.fromEntries(Object.keys(MODEL_DEFAULTS).map(key => [key, effective[key]])),
+      saved: Object.fromEntries(Object.keys(MODEL_DEFAULTS).filter(key => own(saved, key)).map(key => [key, saved[key]])),
+      modelSkinStructureStrength: effective.AutoMask ? Math.max(0, effective.SkinStructureStrength) : -1 });
+  }
   if (contract.uniform) {
     const originalMode = nativeInt('Mode', 2), pre = nativeFloat('TransferStrength', null), post = nativeFloat('PostTransferStrength', null);
     const preSelected = nativeInt('StrengthConfigVersion', 0) >= 1 || originalMode !== 1;
@@ -258,6 +273,13 @@ function normalizePatch(patch, input) {
 }
 function preparedPatch(text, patch, input) {
   const normalized = normalizePatch(patch || {}, input), contract = resolveContract(input);
+  if (contract.dualLayer && ['NRSecondScaleNumerator', 'NRSecondScaleDenominator'].some(key => own(normalized, key))) {
+    const current = inspectText(text, input).effective;
+    const numerator = normalized.NRSecondScaleNumerator ?? current.NRSecondScaleNumerator;
+    const denominator = normalized.NRSecondScaleDenominator ?? current.NRSecondScaleDenominator;
+    if (numerator > denominator || numerator * 4 < denominator) fail('ERR_BAD_REQUEST', 'D13 第二层比例须在 25%–100% 之间。');
+    normalized.NRSecondScaleNumerator = numerator; normalized.NRSecondScaleDenominator = denominator;
+  }
   if (!contract.uniform) return normalized;
   if (contract.colourMemory && ['ColourLabMode', 'AllowUnverifiedHdrColor', 'ColorStrength', 'ColourPriorityStrength', 'ColourConservativeStrength'].some(key => own(normalized, key))) {
     const current = inspectText(text, input).effective;
@@ -360,6 +382,7 @@ async function writeConfig(file, patch, input = '', options = {}) {
   try { return await task; } finally { if (writes.get(identity) === task) writes.delete(identity); }
 }
 function layerCountPatch(count, current, input = '') {
+  if (resolveContract(input).dualLayer && Number.isInteger(count) && count >= 1 && count <= 2) return { NRPasses: count };
   if (!resolveContract(input).uniform || !Number.isInteger(count) || count < 1 || count > 5) fail('ERR_BAD_REQUEST', '当前 Core 的模型层数须为 1–5。');
   const patch = { UniformChainVersion: 1 };
   for (let layer = 2; layer <= 5; layer++) { patch[`Layer${layer}Enabled`] = Number(layer <= count); if (layer <= count) patch[`Layer${layer}Configured`] = 1; }

@@ -200,6 +200,27 @@ test('a failed external update rolls new isolation back, and explicit DLL isolat
   await f.service.remove(f.game, 'restore'); assert.equal(fs.readFileSync(file, 'utf8'), 'RenoDX NR explicit plugin');
 });
 
+test('isolating an explicit NR DLL preserves the original absolute path of a retained external DLL', async t => {
+  const f = fixture(t); await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = f.service.getLayout(f.game).runtimeDir, nr = path.join(runtime, 'conflict.dll'), ini = path.join(runtime, 'ReShade.ini');
+  const personal = path.join(f.root, 'personal'), hdr = path.join(personal, 'HDR.dll'); fs.mkdirSync(personal);
+  fs.writeFileSync(nr, 'RenoDX NR explicit plugin'); fs.writeFileSync(hdr, 'ordinary external HDR plugin');
+  fs.appendFileSync(ini, '[ADDON]\nLoadFromDllMain=conflict.dll,' + hdr + '\n');
+  const snapshot = await require('../src/product/addon-loading-layout').snapshotAddonLoadingLayout({ exeDir: f.dir,
+    gameId: f.game.id, architecture: 64 });
+  const request = { ...f.request, keepAddons: [{ path: hdr, sha256: hash('ordinary external HDR plugin'),
+    configFingerprint: snapshot.configFingerprint }] };
+  const preview = await f.service.preview(f.game, request); await f.service.apply(preview.planId);
+  assert.equal(fs.existsSync(nr), false);
+  assert.equal(addonValues(fs.readFileSync(ini, 'utf8')).get('LoadFromDllMain')[0], hdr);
+  assert.equal(fs.existsSync(path.join(runtime, 'HDR.dll')), false, 'the retained external module was never migrated');
+  assert.equal(fs.readFileSync(hdr, 'utf8'), 'ordinary external HDR plugin');
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  await f.service.remove(f.game, 'restore');
+  assert.equal(fs.readFileSync(nr, 'utf8'), 'RenoDX NR explicit plugin');
+  assert.equal(fs.readFileSync(hdr, 'utf8'), 'ordinary external HDR plugin');
+});
+
 test('a legacy retained user addon matching a known renamed Core cannot become the selected active Core', async t => {
   const f = fixture(t); await f.service.apply((await f.service.preview(f.game, f.request)).planId);
   const runtime = f.service.getLayout(f.game).runtimeDir, file = path.join(runtime, 'renamed-old.addon64'), bytes = 'known historical Core';

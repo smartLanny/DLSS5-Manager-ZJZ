@@ -40,10 +40,13 @@ test('preview never writes and Apply executes deployment, NR, SR and FG exactly 
   assert.equal(result.applied, true); assert.deepEqual(f.calls, ['deployment', 'nr', 'sr', 'fg']); assert.equal((await f.plans.inspect('game')).pending, false);
 });
 
-test('waiting preparation validates sources and settings without a deployment preview or game transaction', async t => {
+test('waiting preparation validates sources and compiles a read-only proposal without a journal or persisted plan', async t => {
   const f = fixture(t), checked = [];
   f.service.validateWaitingComponents = async (_id, request) => { checked.push(request); return { ready: true, deployment: true, nrContract: { configContract: 'nr-uniform-v1' }, identity: 'verified-source' }; };
-  f.service.previewDeployment = async () => { throw Error('closed-game deployment preview must not run while preparing to wait'); };
+  f.service.previewDeployment = async (_id, request, internal) => {
+    assert.equal(internal.readOnlyWhileRunning, true);
+    return { version: request.version, nrContract: { configContract: 'nr-uniform-v1' }, changes: [], blockers: [] };
+  };
   const prepared = await f.plans.prepareForWaiting('game', { api: 'dx12', deployment: 'external', version: 'core1', nr: { ProcessingStart: 'After', Intensity: 1.23456789 } });
   assert.equal(prepared.ready, true); assert.equal(prepared.preparationOnly, true); assert.equal(checked.length, 1);
   assert.deepEqual(f.calls, []); assert.deepEqual(f.deploymentPreviews, []);

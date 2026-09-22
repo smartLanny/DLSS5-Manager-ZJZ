@@ -24,6 +24,9 @@ test('base and offline dynamic configs include only the five legacy FG metadata 
     const rows = config.extraResources.filter(row => expected.some(item => item.to === row.to));
     assert.deepEqual(rows, expected, flavor + ' legacy resource rows');
     assert.equal(rows.some(row => /\.(?:dll|exe|asi|addon(?:32|64)?)$/i.test(String(row.from) + '/' + row.to)), false);
+    assert.deepEqual(config.extraResources.find(row => row.to === 'legacy-runtime'),
+      { from: path.join(os.tmpdir(), 'manager-stage-' + flavor, 'resources', 'legacy-runtime'), to: 'legacy-runtime' },
+      'HoYo and old-API fixed pool must survive the dynamic package allow-list');
   }
 });
 

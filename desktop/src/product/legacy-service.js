@@ -398,7 +398,8 @@ function createLegacyService(options = {}) {
       const owned = previous ? previous.owned : before === null || isolatedByPath.has(key(file));
       rows.push({ base: spec.base, target: spec.target, path: file, role: spec.role, sha256: spec.sha256,
         installedHash: previous?.installedHash || after, mutable: spec.mutable, owned });
-      changes.push({ file, role: spec.role, before, after, mutable: spec.mutable || hostSaved, source: spec.content ? null : resolveFile(pkg.root, spec.source), content: spec.content || null });
+      changes.push({ file, role: spec.role, before, after, mutable: spec.mutable || hostSaved,
+        source: spec.content ? null : pkg.sources?.[spec.source] || resolveFile(pkg.root, spec.source), content: spec.content || null });
     }
     const sourceCopies = structuredClone(old?.sourceCopies || []), sourceBindings = structuredClone(old?.sourceBindings || []);
     for (const saved of sourceCopies) {

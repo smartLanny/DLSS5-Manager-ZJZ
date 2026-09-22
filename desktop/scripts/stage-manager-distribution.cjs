@@ -6,6 +6,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { assertHistoricalEntry } = require('./prepare-historical-core-catalog');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_MANIFEST = process.env.DLSS5_MANAGER_STAGING ||
@@ -27,6 +28,7 @@ const COMPONENT_MAX_TOTAL = 512 * 1024 * 1024;
 const BUNDLED_RESOURCE_TARGETS = new Set([
   'core-notices/unified5/LICENSES.txt',
   'core-notices/unified5/NVIDIA-NGX-LICENSE.txt',
+  'core-notices/d13/LICENSES.txt',
   'hoyoshade/component.json',
   'loading-helper/component.json',
   'loading-helper/dlss5-load-helper.exe',
@@ -168,11 +170,12 @@ function readPayloadBundle(payloadRoot) {
     if (!bundle.fixed[family]?.files || typeof bundle.fixed[family].files !== 'object') fail(`Core bundle 缺少 ${family} fixed 清单。`, { file });
     for (const name of FIXED_FILES) if (!HASH.test(String(bundle.fixed[family].files[name] || ''))) fail(`Core bundle 的 ${family}/${name} 哈希无效。`, { file });
   }
-  return bundle;
+  return require('../src/product/known-core-interfaces').reconcileBundle(bundle);
 }
 
 function assertPackageCoreEntry(entry, version) {
   if (!entry || typeof entry !== 'object' || !entry.files || typeof entry.files !== 'object') fail(`Core 版本没有文件清单：${version}`);
+  assertHistoricalEntry(version, entry);
   const names = Object.keys(entry.files);
   for (const name of names) {
     if (path.basename(name) !== name || !CORE_FILES.has(name)) {
@@ -207,8 +210,8 @@ async function buildPayload({ stageRoot, manifest, manifestFile, flavor }) {
   assertAllowedCoreEntry(entry, version);
   const versions = payloadSpec.versions === undefined ? [version] : payloadSpec.versions;
   if (!Array.isArray(versions) || versions.length < 1 || versions.length > 16 || !versions.includes(version) ||
-      new Set(versions).size !== versions.length || versions.some(id => typeof id !== 'string' || !COMPONENT_ID.test(id) || FORBIDDEN_CORE_VERSION.test(id))) {
-    fail('core.versions 必须是包含默认版本且不含 D13/D14 的唯一 Core ID 数组。', { version, versions });
+      new Set(versions).size !== versions.length || versions.some(id => typeof id !== 'string' || !COMPONENT_ID.test(id) || FORBIDDEN_CORE_VERSION.test(id) && id !== '0.5-dline13')) {
+    fail('core.versions 必须是包含默认版本的唯一 Core ID 数组；D13 仅允许精确历史身份，D14 不支持。', { version, versions });
   }
   for (const id of versions) assertPackageCoreEntry(sourceBundle.versions[id], id);
 
@@ -421,6 +424,41 @@ async function buildSmallComponents({ stageRoot, manifest, manifestFile, flavor 
   return { count: catalog.length, totalBytes, packages: catalog };
 }
 
+async function buildLegacyRuntime({ stageRoot, manifest, manifestFile }) {
+  const { fingerprint, resolveFile } = require('../src/product/feeder-runtime');
+  const { createLegacyRuntime } = require('../src/product/legacy-runtime');
+  const catalog = require('../src/product/legacy-runtime-catalog');
+  const sourceRoot = resolveInput(manifestFile, manifest.legacyRuntime?.root, 'legacyRuntime.root');
+  const runtime = createLegacyRuntime({ root: sourceRoot });
+  // Loading every supported recipe validates the immutable pool identity and
+  // yields its precise deployable allow-list, excluding private acceptance logs.
+  const assets = new Map();
+  for (const selection of catalog.list()) {
+    const recipe = runtime.load({ api: selection.gameApi, architecture: selection.architecture,
+      hardwareFamily: selection.hardwareFamily, loadingBackend: selection.loadingBackend }).recipe;
+    for (const asset of recipe.files) assets.set(asset.source, asset);
+  }
+  const targetRoot = path.join(stageRoot, 'resources', 'legacy-runtime'), files = [];
+  for (const asset of assets.values()) {
+    if (asset.role === 'nr-runtime') {
+      const family = asset.id === 'runtime-rtx40' ? 'RTX40' : asset.id === 'runtime-rtx50' ? 'RTX50' : null;
+      const shared = manifest.runtime?.families?.[family];
+      if (!family || shared?.sha256 !== asset.sha256 || shared.bytes !== asset.bytes)
+        fail(`legacy-runtime 的 ${asset.id} 与共享 NR DLC 身份不符。`);
+      continue;
+    }
+    const source = resolveFile(sourceRoot, asset.source), target = resolveFile(targetRoot, asset.source);
+    const checked = await verifyFile(source, asset, `legacy-runtime/${asset.source}`);
+    copyFile(source, target);
+    await verifyFile(target, asset, `legacy-runtime/${asset.source}`);
+    files.push({ path: `resources/legacy-runtime/${asset.source}`, bytes: checked.bytes, sha256: checked.sha256 });
+  }
+  const sourceManifest = path.join(sourceRoot, 'manifest.json'), pool = readJson(sourceManifest);
+  if (fingerprint(pool) !== runtime.lock.manifestFingerprint) fail('legacy-runtime 清单在复制期间发生变化。');
+  copyFile(sourceManifest, path.join(targetRoot, 'manifest.json'));
+  return { manifestFingerprint: runtime.lock.manifestFingerprint, files, runtime: 'shared-verified-nr-dlc' };
+}
+
 async function buildBundledResources({ stageRoot, manifest, manifestFile }) {
   const declared = manifest.resources || [];
   if (!Array.isArray(declared)) fail('staging.resources 必须是数组。');
@@ -491,11 +529,12 @@ function buildBridgeReservation({ stageRoot, manifest, components = null }) {
 async function inspectManifest(manifestFile, flavor = 'base') {
   const manifest = readJson(manifestFile);
   if (manifest.schemaVersion !== 1) fail('staging 清单 schemaVersion 必须为 1。');
-  if (!manifest.packageVersion || !/^0\.5\.0-beta\.[2345678]$/i.test(String(manifest.packageVersion))) fail('staging 清单 packageVersion 必须为已支持的 0.5.0-beta.2–8。');
+  if (!manifest.packageVersion || !/^0\.5\.0-beta\.[23456789]$/i.test(String(manifest.packageVersion))) fail('staging 清单 packageVersion 必须为已支持的 0.5.0-beta.2–9。');
   if (!['base', 'offline'].includes(flavor)) fail(`未知打包 flavor：${flavor}`);
   const payloadRoot = resolveInput(manifestFile, manifest.core?.payloadRoot, 'core.payloadRoot');
   const selectedCoreIds = [manifest.core?.version, ...(Array.isArray(manifest.core?.versions) ? manifest.core.versions : [])];
-  if (selectedCoreIds.some(id => FORBIDDEN_CORE_VERSION.test(String(id || '')))) fail('清单显式选择了 D13/D14 Core。');
+  if (FORBIDDEN_CORE_VERSION.test(String(manifest.core?.version || '')) ||
+      selectedCoreIds.some(id => FORBIDDEN_CORE_VERSION.test(String(id || '')) && id !== '0.5-dline13')) fail('D13/D14 不能作为默认 Core；额外 D13 必须使用精确历史身份。');
   return { manifest, manifestFile, flavor, payloadRoot };
 }
 
@@ -513,7 +552,8 @@ async function stageDistribution({ manifestFile = DEFAULT_MANIFEST, flavor = 'ba
       const sm86 = await buildSm86({ stageRoot: checkRoot, manifest: input.manifest, manifestFile });
       const components = await buildSmallComponents({ stageRoot: checkRoot, manifest: input.manifest, manifestFile, flavor });
       const resources = await buildBundledResources({ stageRoot: checkRoot, manifest: input.manifest, manifestFile });
-      return { ok: true, flavor, manifest: manifestFile, coreVersion: payload.version, coreVersions: payload.versions, sourcePackage: payload.sourcePackage, mfg, sm86, components, resources };
+      const legacyRuntime = await buildLegacyRuntime({ stageRoot: checkRoot, manifest: input.manifest, manifestFile });
+      return { ok: true, flavor, manifest: manifestFile, coreVersion: payload.version, coreVersions: payload.versions, sourcePackage: payload.sourcePackage, mfg, sm86, components, resources, legacyRuntime };
     } finally {
       fs.rmSync(checkRoot, { recursive: true, force: true });
     }
@@ -524,9 +564,10 @@ async function stageDistribution({ manifestFile = DEFAULT_MANIFEST, flavor = 'ba
   const sm86 = await buildSm86({ stageRoot: outputRoot, manifest: input.manifest, manifestFile });
   const components = await buildSmallComponents({ stageRoot: outputRoot, manifest: input.manifest, manifestFile, flavor });
   const resources = await buildBundledResources({ stageRoot: outputRoot, manifest: input.manifest, manifestFile });
+  const legacyRuntime = await buildLegacyRuntime({ stageRoot: outputRoot, manifest: input.manifest, manifestFile });
   const bridge = buildBridgeReservation({ stageRoot: outputRoot, manifest: input.manifest, components: components.packages });
   const report = { schemaVersion: 1, packageVersion: input.manifest.packageVersion, flavor, manifest: manifestFile,
-    stageRoot: path.resolve(outputRoot), coreVersion: payload.version, coreVersions: payload.versions, sourcePackage: payload.sourcePackage, mfg, sm86, components, resources, bridge,
+    stageRoot: path.resolve(outputRoot), coreVersion: payload.version, coreVersions: payload.versions, sourcePackage: payload.sourcePackage, mfg, sm86, components, resources, legacyRuntime, bridge,
     runtimeFiles: FAMILIES.map(family => path.join('payload', 'nr-before-sr', 'fixed', family, 'nvngx_dlssnr.dll')) };
   fs.writeFileSync(path.join(outputRoot, 'staging-report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   return report;
@@ -559,4 +600,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { stageDistribution, inspectManifest, parseArgs, prepareStageRoot, FAMILIES, FIXED_FILES, FORBIDDEN_CORE_VERSION, SMALL_COMPONENT_KINDS, buildPayload, buildSmallComponents, buildBundledResources };
+module.exports = { stageDistribution, inspectManifest, parseArgs, prepareStageRoot, FAMILIES, FIXED_FILES, FORBIDDEN_CORE_VERSION, SMALL_COMPONENT_KINDS, buildPayload, buildSmallComponents, buildBundledResources, buildLegacyRuntime };

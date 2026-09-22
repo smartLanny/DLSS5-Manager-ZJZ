@@ -125,6 +125,10 @@ function openGamePage(id, initialTab) {
   const entry = inlineGameDetails.get(id);
   if (initialTab) entry?.controller.selectTab(initialTab);
   if (reopen) void entry?.controller.refresh(true);
+  requestAnimationFrame(() => {
+    const card = entry?.host.closest('.game-card'), view = $('view-games');
+    if (card && state.expanded === id) view.scrollTop += card.getBoundingClientRect().top - view.getBoundingClientRect().top - 12;
+  });
   return entry?.controller;
 }
 
@@ -1742,7 +1746,7 @@ function renderGameSelection() {
   const candidates = selection.candidates || [];
   $('gamePickerPath').textContent = selection.root;
   $('gamePickerHint').textContent = candidates.length
-    ? '已自动找到可能的运行程序；默认根据路径结构、程序名、API 和 DLSS 关联选择本体，启动器/报告程序会标成辅助项。文件大小仅作参考，不作为硬性门槛。'
+    ? '已选中推荐程序，确认后添加。'
     : '这个目录没有检测到可用的图形程序，请返回后选择更上层的游戏目录或实际 EXE。';
   $('gameCandidateList').innerHTML = candidates.length ? candidates.map((candidate, index) => `
     <button type="button" class="game-candidate${candidate.path === selection.selectedPath ? ' selected' : ''}" data-index="${index}">

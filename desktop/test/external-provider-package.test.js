@@ -67,6 +67,22 @@ test('verified bundled Providers are usable and per-operation selection leaves g
   assert.equal(packages.inspect().packages[0].selectable, false);
 });
 
+test('a compatible Core never converts a local Provider route into an undeclared HoYo or helper route', t => {
+  const capabilities = ['same-frame-output', 'source-frame-claims', 'external-exact-fence-completion', 'present-color-depth-motion'];
+  const f = fixture(t, value => { value.interface.requiredCoreCapabilities = capabilities; return value; });
+  f.currentCore.capabilities = [...capabilities];
+  const selection = { api: 'dx11', architecture: 'x64', hardwareFamily: 'RTX50', loadingBackend: 'local' };
+  const before = fs.readFileSync(path.join(f.root, 'inventory.json'));
+  const pkg = f.packages.load({ id: 'provider-v1-fixture', selection });
+  assert.equal(pkg.recipe.loadingBackend, 'local');
+  for (const loadingBackend of ['hoyoshade', 'helper'])
+    assert.throws(() => f.packages.load({ id: 'provider-v1-fixture', selection: { ...selection, loadingBackend } }),
+      { code: 'EXTERNAL_PROVIDER_ROUTE_UNAVAILABLE' });
+  const forged = structuredClone(pkg.recipe); forged.selection.loadingBackend = forged.loadingBackend = 'hoyoshade';
+  assert.throws(() => f.packages.validateRecipe(forged));
+  assert.deepEqual(fs.readFileSync(path.join(f.root, 'inventory.json')), before);
+});
+
 test('an explicitly ABI-compatible Core carries only complete whitelisted resources; Feature1-only unified3 remains refused', async t => {
   const f = fixture(t), names = require('../src/product/payload-companions').NAMES;
   for (const name of names) {

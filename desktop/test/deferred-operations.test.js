@@ -72,7 +72,23 @@ test('an NR conflict discovered after exit stops waiting for explicit review wit
     nrConflicts: { required: true, backupDirectories: ['backup'], files: [{ name: 'renodx.addon64', path: path.join(f.dir, 'renodx.addon64'), action: 'backup-isolate' }] } });
   await f.queue.tick(); const state = await f.queue.inspect('game');
   assert.equal(state.status, 'attention'); assert.equal(state.requiresReview, true); assert.equal(state.pending, false);
+  assert.deepEqual(state.draftBackup, { nr: { Intensity: 1.5 } }, 'the exact deferred request remains available for explicit re-preview');
+  assert.match(state.message, /renodx\.addon64/, 'the user can identify the conflict that interrupted the queue');
   assert.equal(f.state.calls.includes('apply'), false); assert.match(state.message, /确认|冲突/);
+});
+
+for (const throughConfirmation of [false, true]) test(`successful explicit ${throughConfirmation ? 'confirmed' : 'direct'} application retires the earlier waiting review`, async t => {
+  const f = fixture(t), request = { nr: { Intensity: 1.5 } };
+  await f.queue.submit('game', request); f.state.running = false; f.state.blockers = ['new blocker']; await f.queue.tick();
+  assert.equal((await f.queue.inspect('game')).requiresReview, true);
+  f.state.blockers = [];
+  if (throughConfirmation) {
+    f.options.operations.loadPlan = async () => ({ gameId: 'game', planId: 'confirmed' });
+    await f.queue.apply('game', 'confirmed', { confirm: true, fingerprint: 'fp' });
+  } else await f.queue.submit('game', { nr: { Intensity: 1.8 } });
+  const state = await f.queue.inspect('game');
+  assert.equal(state.requiresReview, false); assert.equal(state.pending, false); assert.equal(state.draftBackup, null);
+  assert.deepEqual(state.request, request, 'retain the historical request without claiming the new value was its original intent');
 });
 
 test('a running-game NR confirmation binds the reviewed file hashes and applies once after exit', async t => {

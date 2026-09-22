@@ -646,7 +646,7 @@ function createExternalRuntime(options) {
     if (!policy?.isolated.some(row => row.explicit)) return config;
     const isolated = new Set(policy.isolated.map(row => key(row.path)));
     return externalConfig(config, t.runtimeDir, options.environment || process.env, {
-      directLoads: policy.snapshot.profile.directLoads.filter(row => !isolated.has(key(row.path))).map(row => path.basename(row.path)) });
+      directLoads: policy.snapshot.profile.directLoads.filter(row => !isolated.has(key(row.path))).map(row => row.path) });
   }
   async function transferIsolation(t, records, manifest, operations, change) {
     const transfers = [];

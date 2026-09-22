@@ -71,6 +71,7 @@ app.whenReady().then(async () => {
     webPreferences: { preload, sandbox: true, contextIsolation: false, nodeIntegration: false, backgroundThrottling: false, offscreen: !demoMode } });
   try {
     await win.loadFile(path.resolve(__dirname, '../src/renderer/index.html'));
+    if (process.env.GAME_UI_ZOOM) win.webContents.setZoomFactor(Number(process.env.GAME_UI_ZOOM));
     if (runtimeRequiredMode) {
       const result = await win.webContents.executeJavaScript(`(async () => {
         const until = async (predicate, label) => {
@@ -304,12 +305,12 @@ app.whenReady().then(async () => {
       console.log(JSON.stringify({ ok: true, sandbox: win.webContents.getLastWebPreferences().sandbox, ...result }, null, 2)); win.destroy(); app.exit(0); return;
     }
     const selectedTab = process.env.GAME_UI_TAB || 'overview';
-    if (!['overview', 'enhance', 'maintenance'].includes(selectedTab)) throw Error('Unknown screenshot tab');
+    if (!['overview', 'nr', 'enhance', 'maintenance'].includes(selectedTab)) throw Error('Unknown screenshot tab');
     const captureArgs = { tab: selectedTab, diagnostics: process.env.GAME_UI_DIAGNOSTICS === '1', dirty: process.env.GAME_UI_DIRTY === '1', readiness: process.env.GAME_UI_READINESS_STATE || 'blocked', hoyoCapture: process.env.GAME_UI_HOYO_CAPTURE === '1' };
     const runner = versionMode ? smokeVersionContract : targetedMode ? hoyoMode ? smokeTargetedHoYo : smokeTargeted : hoyoReadinessMode ? captureHoYoReadiness : readinessMode ? captureReadiness : hoyoMode ? smokeHoYo : captureOnly ? captureBaseline : smoke;
     const result = await win.webContents.executeJavaScript(`(${runner.toString()})(${JSON.stringify(captureArgs)})`);
     if (!captureOnly && process.env.GAME_UI_TAB) {
-      const selected = process.env.GAME_UI_TAB; if (!['overview', 'enhance', 'maintenance'].includes(selected)) throw Error('Unknown screenshot tab');
+      const selected = process.env.GAME_UI_TAB; if (!['overview', 'nr', 'enhance', 'maintenance'].includes(selected)) throw Error('Unknown screenshot tab');
       await win.webContents.executeJavaScript(`document.querySelector('.game-card.expanded [data-gp-tab="${selected}"]').click()`);
     }
     await new Promise(resolve => setTimeout(resolve, 150));
@@ -317,7 +318,7 @@ app.whenReady().then(async () => {
     console.log(JSON.stringify({ ok: true, sandbox: win.webContents.getLastWebPreferences().sandbox, ...result }, null, 2)); win.destroy(); app.exit(0);
   } catch (error) {
     console.error(error.stack || error);
-    try { console.error(await win.webContents.executeJavaScript(`JSON.stringify({ active: document.querySelector('.game-card.expanded')?.dataset.id, text: document.querySelector('.game-card.expanded .game-detail')?.innerText, calls: window.__gpMock?.calls.slice(-12) })`)); } catch {}
+    try { console.error(await win.webContents.executeJavaScript(`JSON.stringify({ active: document.querySelector('.game-card.expanded')?.dataset.id, text: document.querySelector('.game-card.expanded .game-detail')?.innerText, calls: window.__gpMock?.calls.slice(-12), hoyo: window.__hoyoMock && { flow: window.__hoyoMock.flow, calls: window.__hoyoMock.calls.slice(-12) } })`)); } catch {}
     win.destroy(); app.exit(1);
   }
 });

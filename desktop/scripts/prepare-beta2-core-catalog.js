@@ -110,7 +110,7 @@ async function add047(sourceRoot, targetRoot, bridgeFile) {
     label: '0.4.7beta（标准版 · 默认）',
     notes: '标准 0.4.7 中文 Core；不是 Corefix8。D3D12 原生路线不使用 Bridge；DX11 自动配套固定适配版 DLSS5 Bridge 1.4.12。具体游戏仍需实机验收。',
     source: 'vulkan-provider-047@4ecc6d02ca6058cb1ebb0faae5aa49b34b0614ad (0.4.7 base 6a0ad7684683993328a7a98a9bea83ac76b01a64)',
-    compatibility: null, ota: true, supportsPresent: true, inputInterfaces: ['NGX-D3D12-Feature1'],
+    compatibility: null, ota: true, supportsPresent: true, inputInterfaces: ['NGX-D3D12-Feature1', 'NRExternalProviderV1'],
     capabilities: ['same-frame-output', 'external-provider-v1'], files: FILES047
   };
   bundle.defaultVersion = '0.4.7beta';

@@ -242,7 +242,7 @@ async function smoke() {
   assert(card('fixture-unmanaged').textContent.includes('已有插件待确认') && card('fixture-unmanaged').textContent.includes('检查已有安装'), 'unmanaged Core is disclosed on the collapsed card');
   await open('fixture-unmanaged'); await until(() => state().loaded.includes('installation'), 'unmanaged installation assessment');
   assert(field('route', 'version').value === '', 'unmanaged Core does not inherit the new-install default');
-  assert(host().textContent.includes('检测到已有未受管安装') && host().textContent.includes('确认备份与接管后应用'), 'existing files and ownership boundary are explained');
+  assert(host().textContent.includes('发现已有插件') && host().textContent.includes('确认备份再替换') && host().textContent.includes('_DLSS5_Backup'), 'existing files and backup boundary are explained');
   assert(button('prepare')?.disabled && button('prepare')?.textContent === '应用', 'preview waits for an explicit replacement target');
   set('route', 'version', '0.4.7beta'); await preview();
   assert(mock.plan.request.version === '0.4.7beta', 'explicit replacement target reaches the operation preview');
@@ -266,7 +266,7 @@ async function smoke() {
   assert(host().querySelectorAll('.gp-nr-primary input[type="number"]').length === 3 && !host().querySelector('.gp-nr-details').open && field('nr', 'WorkMode').closest('details') === host().querySelector('.gp-nr-details'), 'advanced NR starts collapsed below three precise numeric controls');
   await tab('overview'); assert(![...field('route', 'version').options].some(row => row.value.includes('bridge1411')), 'bridge comparison is absent from basic Core choices');
   for (const id of ['0.5-dline13', '0.4.7beta-corefix.8']) {
-    const candidate = host().querySelector('[data-gp-detail="rollback"] option[value="' + id + '"]');
+    const candidate = host().querySelector('[data-gp-field="version"] option[value="' + id + '"]');
     assert(candidate && !candidate.disabled, id + ' core-update candidate is visible and selectable');
   }
   set('route', 'version', '0.5-dline13'); assert(state().draft.version === '0.5-dline13', 'ordinary Core dropdown accepts the D13 candidate'); discard();
@@ -553,7 +553,7 @@ async function smoke() {
     value.nr.capabilities.LocalToneStrength = value.nr.capabilities.LocalStructureStrength = value.nr.capabilities.SkinStructureStrength = false;
     delete value.nr.LocalToneStrength; delete value.nr.LocalStructureStrength;
   }); await tab('nr');
-  assert(field('nr', 'LocalToneStrength').disabled && field('nr', 'LocalStructureStrength').disabled && field('face', 'enabled').disabled, 'absent Core capabilities stay disabled instead of fabricated by fixture defaults');
+  assert(!field('nr', 'LocalToneStrength') && !field('nr', 'LocalStructureStrength') && field('face', 'enabled').disabled, 'unsupported Core parameters are not offered or fabricated by fixture defaults');
   await scenario('能力结果缺失 · UI fixture', value => { delete value.enhancements.featureStates.sr; }); await tab('enhance');
   assert(field('sr', 'preset').disabled && button('preview-sr').disabled && !button('confirm-sr'), 'missing automatic feature evidence cannot inherit old boolean support flags');
 
