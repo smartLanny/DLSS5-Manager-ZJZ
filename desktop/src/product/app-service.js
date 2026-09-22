@@ -11,7 +11,7 @@ const { createStore } = require('./state-store');
 const { createLibraryWorkerClient } = require('./library-worker-client');
 const { createPayloadInspectionCache } = require('./payload-inspection-cache');
 const { createInstaller } = require('./installer');
-const { payloadRoot, readBundle, requirePayload, sha256 } = require('./payload');
+const { payloadRoot, readBundle, requirePayload, safePayloadPath, sha256 } = require('./payload');
 const { readConfig, writeConfig, defaultPatch } = require('./nr-config');
 const { readReShadeHotkey, writeReShadeHotkey } = require('./hotkeys');
 const { readManifest, assertManifestExecutable, manifestPath } = require('./manifest');
@@ -643,13 +643,13 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     }
     if (['dx9', 'dx10'].includes(selected.effectiveApi)) return 'feeder';
     if (readManifest(game.dir) || externalOwned(game)) return 'native';
-    if (selected.effectiveApi === 'dx12') {
-      const currentCore = coreVersionCatalog().find(row => row.id === (request.version || selectedVersionForGame(game)));
-      if (currentCore?.supportsPresent === true) return 'native';
-    }
     if (typeof overrides.getFeatureEvidence !== 'function') return 'native';
-    const evidence = await overrides.getFeatureEvidence(id, 'sr');
-    return evidence?.support?.status === 'supported' ? 'native' : 'feeder';
+    const evidence = await overrides.getFeatureEvidence(id, 'sr', { api: selected.effectiveApi });
+    if (evidence?.support?.status === 'supported') return 'native';
+    if (evidence?.support?.code === 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED') return 'feeder';
+    throw Object.assign(new Error('尚未确认本次 API 的原生 DLSS 输入。请在输入方式中选择原生 DLSS 或 Feeder；证据不足不代表游戏没有 DLSS。'),
+      { code: 'INPUT_ROUTE_UNCONFIRMED', details: { api: selected.effectiveApi, support: evidence?.support || null,
+        coverage: evidence?.staticEvidence?.coverage || null } });
   }
 
   async function previewProxyEntry(id, entry, { deployment } = {}) {
@@ -686,9 +686,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const version = inputRoute === 'native'
       ? request.version || gameLayout(game).version || readManifest(game.dir)?.payloadVersion || readBundle(payloadDir).defaultVersion
       : null;
-    const nativePayload = inputRoute === 'native' && externalOwned(game) && addonUpdate(version)
+    const nativePayload = inputRoute === 'feeder' ? profileLoaderPayload() : externalOwned(game) && addonUpdate(version)
       ? await externalPayload(routed, version, request.components)
-      : selectedPayload(routed, inputRoute === 'native' ? version : null, request.components);
+      : selectedPayload(routed, version, request.components);
     const payload = inputRoute === 'native' ? nativePayload : { reshade: nativePayload.reshade };
     const profile = await hoyo.preview(routed, { hoyo: request.hoyo, inputRoute, api, version: inputRoute === 'native' ? version : undefined,
       payload, addonKeep: request.addonKeep, adoption, ...internal });
@@ -798,6 +798,19 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   async function nativeAddonPolicy(game, payload, addonKeep, preserveOwned = false) {
     const knownComponents = [...knownComponentCatalog(), ...(typeof overrides.getKnownComponents === 'function' ? await overrides.getKnownComponents(game.id) : [])];
     return require('./native-addon-policy').compileNativeAddonPolicy({ game, payloadDir, payload, manifest: readManifest(game.dir), addonKeep, knownComponents, preserveOwned });
+  }
+
+  function profileLoaderPayload() {
+    assertSourceIdentity();
+    const family = deploymentHardware().family, bundle = readBundle(payloadDir);
+    if (bundle.version !== 4) return { reshade: requirePayload(payloadDir, family, bundle.defaultVersion).reshade };
+    const name = 'ReShade64.dll', expected = bundle.fixed?.[family]?.files?.[name];
+    if (!expected) throw appError('ERR_PAYLOAD_MISSING', { file: `fixed/${family}/${name}` });
+    const file = safePayloadPath(payloadDir, path.join(payloadDir, 'fixed', family, name));
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw appError('ERR_PAYLOAD_MISSING', { file });
+    const actual = sha256(file);
+    if (actual !== expected) throw appError('ERR_PAYLOAD_HASH', { file });
+    return { reshade: { kind: 'reshade', name, file, exists: true, expected, actual, valid: true } };
   }
 
   function selectedPayload(game, requestedVersion = null, components = {}) {

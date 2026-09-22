@@ -209,12 +209,14 @@ function createExternalProviderPackages(options = {}) {
     }
     return manifest;
   }
-  function definition(data, row) {
+  function definition(data, row, originalOnly = false) {
     const { byName, manifest } = packageFiles(data, row);
     validateManifest(manifest);
     for (const route of manifest.routes) for (const item of route.files)
       if (!byName.has(item.file.toLowerCase())) fail('EXTERNAL_PROVIDER_ROUTE', `Provider 路线缺少文件 ${item.file}。`);
-    return { row, byName, manifest };
+    const adapted = originalOnly ? { manifest, byName, adaptations: {} } : require('./provider-profile-adapter').adaptProfile({ row, byName, manifest, inventory: data });
+    validateManifest(adapted.manifest);
+    return { row, ...adapted };
   }
   function interfaceMatch(currentCore, requirement) {
     const declared = Array.isArray(currentCore?.inputInterfaces) ? currentCore.inputInterfaces : [];
@@ -276,9 +278,11 @@ function createExternalProviderPackages(options = {}) {
     if (!route) fail('EXTERNAL_PROVIDER_ROUTE_UNAVAILABLE', '所选 Provider 没有匹配 API、位数、显卡与加载方式的路线。');
     return route;
   }
-  function build(data, row, selection, supplied = {}) {
+  function build(data, row, selection, supplied = {}, originalOnly = false) {
     if (row.validation === 'blocked') fail('EXTERNAL_PROVIDER_BLOCKED', '所选 Provider 配套已被标记为阻止使用。');
-    const item = definition(data, row), route = routeFor(item.manifest, selection), proxy = selection.proxyEntry || 'auto';
+    const item = definition(data, row, originalOnly);
+    if (item.dependencyUnavailable) fail('EXTERNAL_PROVIDER_PROFILE_MISSING', item.dependencyUnavailable);
+    const route = routeFor(item.manifest, selection), proxy = selection.proxyEntry || 'auto';
     const currentCore = contextValue('currentCore', supplied.currentCore);
     const currentRuntime = contextValue('currentRuntime', supplied.currentRuntime);
     if (currentRuntime?.family !== selection.hardwareFamily)
@@ -338,7 +342,8 @@ function createExternalProviderPackages(options = {}) {
       files, defaults: copy(item.manifest.defaults), externalProvider: { schema: CONTRACT.recipeSchema, packageId: row.id,
         routeId: route.id, definition: { source: item.byName.get(MANIFEST_NAME).source,
           sha256: item.byName.get(MANIFEST_NAME).sha256, bytes: item.byName.get(MANIFEST_NAME).bytes },
-        validation: 'candidate', runtimeVerified: false }
+        validation: 'candidate', runtimeVerified: false,
+        ...(item.adaptations[route.id] ? { managerAdaptation: copy(item.adaptations[route.id]) } : {}) }
     };
     return { root, recipe, fingerprint: fingerprint(recipe) };
   }
@@ -394,7 +399,7 @@ function createExternalProviderPackages(options = {}) {
         config: { role: 'core-config', name: selectedConfig.name, file: selectedConfig.source,
           sha256: selectedConfig.sha256, bytes: selectedConfig.bytes } },
       currentRuntime: { file: runtime.source, sha256: runtime.sha256, bytes: runtime.bytes, family: recipe.hardwareFamily }
-    }).recipe;
+    }, !recipe.externalProvider.managerAdaptation).recipe;
     if (fingerprint(expected) !== fingerprint(recipe))
       fail('EXTERNAL_PROVIDER_RECEIPT', '外部 Provider 收据与已认可 schema 或库存文件不一致。');
     return recipe;
@@ -405,6 +410,7 @@ function createExternalProviderPackages(options = {}) {
     const packages = providerRows(data).map(row => {
       try {
         const item = definition(data, row), core = contextValue('currentCore', supplied.currentCore);
+        if (item.dependencyUnavailable) fail('EXTERNAL_PROVIDER_PROFILE_MISSING', item.dependencyUnavailable);
         let compatible = false;
         if (core) { coreSources(data, core, item.manifest.interface); compatible = true; }
         const selectedRouteKeys = Object.keys(routeSelections).filter(key => routeSelections[key] === row.id);
@@ -416,7 +422,8 @@ function createExternalProviderPackages(options = {}) {
           routeDescriptors: item.manifest.routes.map(route => ({ id: route.id, api: route.api,
             architecture: route.architecture, hardwareFamilies: [...route.hardwareFamilies],
             loadingBackend: route.loadingBackend, proxyEntries: [...route.proxyEntries],
-            hostRequired: route.hostRequired, transport: route.transport, selectionKey: routeKey(route) })),
+            hostRequired: route.hostRequired, transport: route.transport, selectionKey: routeKey(route),
+            ...(item.adaptations[route.id] ? { managerAdaptation: copy(item.adaptations[route.id]) } : {}) })),
           selected: selectedApis.length > 0, selectedApis, selectedRouteKeys, compatible, selectable: row.validation !== 'blocked' && compatible,
           runtimeVerified: false, reason: row.validation === 'blocked' ? '配套已被标记为阻止使用。' :
             compatible ? null : '当前 Core 未声明所需 NRExternalProviderV1 能力。' };

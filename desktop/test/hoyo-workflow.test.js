@@ -164,6 +164,12 @@ test('unknown API requires an explicit supported API before preview and no launc
   await assert.rejects(flow.bind('client-zzz', { api: 'dx9' }), { code: 'HOYO_API' });
   assert.equal((await flow.bind('client-zzz', { api: 'dx12' })).phase, 'install');
   assert.equal((await flow.preview('client-zzz')).request.api, 'dx12');
+  for (const route of ['native', 'feeder']) {
+    const chosen = await flow.preview('client-zzz', 'install', { version: '0.4.7beta', route });
+    assert.equal(chosen.request.route, route); assert.equal(chosen.request.version, '0.4.7beta');
+    assert.equal(chosen.request.api, 'dx12');
+  }
+  await assert.rejects(flow.preview('client-zzz', 'install', { route: 'arbitrary' }), { code: 'HOYO_ACTION' });
 });
 
 test('installation errors and deployment inspection failures never yield ready; explicit recheck clears a transient apply error', async t => {

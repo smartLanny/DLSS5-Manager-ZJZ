@@ -132,7 +132,7 @@
     const operationApi = api => scope.ManagerOperationApi.resolveOperationApi({ ...data.game,
       operationApi:{ ...data.game.operationApi, detectedApi:data.api?.detectedApi || data.game.operationApi?.detectedApi } }, {api});
     const detectedApi = () => operationApi('auto').detectedApi;
-    const effectiveApi = () => operationApi(selected('api', data.game.apiOverride || data.defaults?.api || 'auto')).effectiveApi;
+    const effectiveApi = () => operationApi(selected('api', options.selectedApi?.() || data.game.apiOverride || data.defaults?.api || 'auto')).effectiveApi;
     const apiReady = () => ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].includes(effectiveApi());
     const isComparison = row => row.comparisonOnly === true || row.id === COMPARISON_VERSION;
     function specialInfo(route = specialRoute()) {
@@ -162,15 +162,21 @@
       const available = (data.coreVersions || []).filter(row => row.ready !== false);
       return (STANDARD_CORES.includes(data.defaults?.version) ? data.defaults.version : null) || available.find(row => row.id === '0.4.7beta')?.id || available.find(row => STANDARD_CORES.includes(row.id))?.id || available[0]?.id || '';
     }
-    function deploymentMode() { return selected('deployment', specialRoute() ? data.layout?.mode || (specialRoute() === 'vulkan' ? 'external' : 'local') : data.game.installed ? data.layout?.mode || 'local' : data.defaults?.deployment || 'local'); }
+    function hoyoLoading() { return options.hoyoSettingsOnly === true || selected('loadingBackend', data.layout?.loadingBackend || 'local') === 'hoyoshade'; }
+    function deploymentMode() { return hoyoLoading() ? 'external' : selected('deployment', specialRoute() ? data.layout?.mode || (specialRoute() === 'vulkan' ? 'external' : 'local') : data.game.installed ? data.layout?.mode || 'local' : data.defaults?.deployment || 'local'); }
     function hasVersionUpdate() {
       const installed = data.deployment?.version || data.game.addonVersion;
       return !specialRoute() && data.game.installed && installed && currentVersion() && installed !== currentVersion();
     }
     function installRequest() {
       const route = specialRoute();
-      return { ...draft, version: currentVersion(), api: selected('api', data.game.apiOverride || data.defaults?.api || 'auto'), ...(route ? { route } : {
+      const request = { ...draft, version: currentVersion(), api: selected('api', data.game.apiOverride || data.defaults?.api || 'auto'), ...(route ? { route } : {
         deployment: deploymentMode(), ...(deploymentMode() === 'external' ? { loadingMode: selected('loadingMode', data.layout?.loadingMode || data.defaults?.loadingMode || 'proxy') } : {}) }) };
+      if (hoyoLoading()) {
+        Object.assign(request, { loadingBackend: 'hoyoshade', deployment: 'external', loadingMode: 'helper' });
+        delete request.proxyEntry;
+      }
+      return request;
     }
     function apiBlocked(request = draft) {
       if (request.repair === true) return false;
@@ -187,10 +193,7 @@
       if (data.layout?.inputRoute === 'feeder' || data.game.feeder?.installed || data.layout?.source === 'feeder') return 'feeder';
       if (api === 'vulkan' && data.game.vulkanRouteOwner === 'external-provider') return 'vulkan';
       if (data.layout?.source === 'vulkan' || api === 'vulkan') return 'vulkan';
-      const coreId = draft.version || data.deployment?.version || data.game.addonVersion || data.defaults?.version;
-      const present = (data.coreVersions || []).find(row => row.id === coreId)?.supportsPresent ?? data.game.coreCapabilities?.supportsPresent;
-      if (['dx9', 'dx10'].includes(api) || Number(data.game.chosen?.bitness) === 32 && data.game.feeder?.selections?.[api]?.available ||
-          data.game.nativeDlssAvailable === false && (api === 'dx11' || api === 'dx12' && !present)) return 'feeder';
+      if (['dx9', 'dx10'].includes(api) || Number(data.game.chosen?.bitness) === 32 && data.game.feeder?.selections?.[api]?.available) return 'feeder';
       return null;
     }
     function feature(domain) { return data?.enhancements?.featureStates?.[domain] || { eligible: false, blockers: [{ message: '尚未确认此功能的支持条件。' }] }; }
@@ -322,6 +325,14 @@
         : input === 'DLSS5 Feeder' ? `${input} + 专用 Core / 运行库` : input === 'Vulkan 专用配套' ? input : `${coreLabel(version || '待选 Core')} + ${input} + 显卡运行库`;
       return `<div class="gp-component-stack needs-attention"><div><small>修改后的预期搭配</small><strong>${esc(apiLabel(api))} · ${esc(input)}</strong><span>${esc(combination)}</span></div><p>预览时会重新校验 Core、接口与组件摘要；不匹配时不会写入游戏。</p></div>`;
     }
+    function inputRouteControl() {
+      const uncertain = (data.failures || []).some(row => row.code === 'INPUT_ROUTE_UNCONFIRMED') ||
+        /INPUT_ROUTE_UNCONFIRMED/.test(message) || options.inputRouteUnconfirmed?.();
+      if ((!uncertain && !draft.route) || !['dx11', 'dx12'].includes(effectiveApi())) return '';
+      return `<section class="gp-section gp-input-choice"><h3>选择输入方式</h3><p class="gp-caption">${draft.route
+        ? `已选择${draft.route === 'native' ? '原生 DLSS' : 'Feeder'}，将与当前 Core、API 一起应用。`
+        : '尚未确认原生 DLSS 集成。游戏内有 DLSS 选项可选原生路线，也可使用 Feeder。'}</p><div class="gp-small-actions">${act('input-native', '使用原生 DLSS', busy, draft.route === 'native' ? 'primary' : 'subtle')}${act('input-feeder', '使用 Feeder', busy, draft.route === 'feeder' ? 'primary' : 'subtle')}</div></section>`;
+    }
     function installation() {
       const game = data.game, api = selected('api', game.apiOverride || data.defaults?.api || 'auto'), effective = effectiveApi(), special = specialRoute();
       const existing = !game.installed && game.existingInstallation?.detected === true ? game.existingInstallation : null;
@@ -335,7 +346,7 @@
           (pickerRows.some(row => row.id === version) ? '' : option(version, `${coreLabel(version)} · 来源待检查`, version, true)) +
           pickerRows.map(row => option(row.id, coreLabel(row.label || row.id), version, row.ready === false)).join(''), busy || pending,
           special ? '灰色版本暂无此路线的配套。' : '')}</div></section>`;
-        return `${picker}${options.installationContent?.() || ''}${runtimeImportControl()}<details class="gp-section" data-gp-detail="startup"><summary>启动与快捷键</summary>${hotkeySection()}</details>${rollbackVersions()}${maintenancePanel()}${options.maintenanceContent?.() || ''}`;
+        return `${picker}${inputRouteControl()}${options.installationContent?.() || ''}${runtimeImportControl()}<details class="gp-section" data-gp-detail="startup"><summary>启动与快捷键</summary>${startupFields()}${hotkeySection()}</details>${rollbackVersions()}${maintenancePanel()}${options.maintenanceContent?.() || ''}`;
       }
       const attention = readinessNeedsAction(), readinessNotice = readinessNeedsNotice();
       const unresolved = !effective || ['mixed', 'unknown', 'auto'].includes(effective);
@@ -354,7 +365,7 @@
         ${selectField('route', 'api', '游戏 API', option('auto', automaticLabel, api) + ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].map(key => option(key, API[key] || key.toUpperCase(), api)).join(''), busy)}
         ${selectField('route', 'version', 'AI 增强组件', (!visibleVersion ? option('', '请选择 AI 增强组件', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy)}</div>
         ${visibleVersion === '0.5-dline21-unified5' ? '<p class="gp-caption" title="自动核对并匹配当前图形接口需要的 Bridge / Feeder；运行效果需进游戏确认。">0.5 候选 · 兼容路线为实验支持</p>' : ''}
-        ${runtimeImportControl()}
+        ${runtimeImportControl()}${inputRouteControl()}
         ${(data.failures || []).filter(row => ['operation', 'layout', 'defaults'].includes(row.section)).map(row => `<p class="gp-message error">检查未完成：${esc(errorText(row))}。处理后点击“重新检查”。</p>`).join('')}
         ${pending || readinessNotice || !apiReady() || data.layout?.needsInputPreparation || !version ? `<div class="gp-compatibility needs-attention" role="status"><span>${esc(status)}</span>${pending ? act('recover-operation', '恢复操作', busy, 'subtle') : attention && readinessActionName() !== 'resolve-readiness' ? act(readinessActionName(), readinessActionLabel(), busy, 'subtle') : ''}</div>` : ''}
         ${existing ? `<div class="gp-message"><strong>发现已有插件</strong><p>选择 Core 后应用，确认备份再替换。</p><details><summary>查看已有文件</summary><p>${esc(existingNames.join('、') || '已有插件文件')}。原件保留在 _DLSS5_Backup，未知文件会单独确认。</p></details></div>` : ''}
@@ -374,7 +385,7 @@
       return 'dxgi';
     }
     function proxySwitchVisible() {
-      return loaded.has('installation') && effectiveApi() === 'dx12' && selected('loadingBackend', data.layout?.loadingBackend || 'local') === 'local' &&
+      return loaded.has('installation') && effectiveApi() === 'dx12' && !hoyoLoading() &&
         selected('loadingMode', data.layout?.loadingMode || data.defaults?.loadingMode || 'proxy') !== 'helper';
     }
     function proxyEntryControl() {
@@ -383,6 +394,7 @@
       return `<div class="gp-small-actions gp-proxy-entry"><span>加载入口：<strong>${entry.toUpperCase()}</strong></span><button type="button" class="button subtle" data-gp-action="switch-proxy" title="遇到 DXGI 冲突时可切换加载入口；点击应用后生效。"${busy ? ' disabled' : ''}>改用 ${next}</button></div>`;
     }
     function startupFields() {
+      if (hoyoLoading()) return `<section class="gp-section gp-startup"><h3>启动设置</h3><div class="gp-controls">${selectField('route', 'deployment', '安装位置', option('external', '独立配套目录', 'external'), true)}${selectField('route', 'loadingMode', '加载方式', option('helper', '通过加载助手', 'helper'), true)}</div><p class="gp-caption">米哈游模式使用独立配套目录，由绑定的启动器和加载助手启动。</p></section>`;
       const layout = data.layout || {}, special = specialRoute(), mode = deploymentMode();
       return `<section class="gp-section gp-startup"><h3>启动设置</h3><div class="gp-controls">${selectField('route', 'launchMode', '启动方式', option('auto', '自动 · 官方启动器优先', selected('launchMode', data.launch?.selected || 'auto')) + option('steam', '通过 Steam', selected('launchMode', data.launch?.selected || 'auto'), !data.launch?.steamAvailable) + option('exe', '直接启动游戏程序', selected('launchMode', data.launch?.selected || 'auto')), busy)}${selectField('route', 'deployment', '安装位置', special ? option(mode, '此路线使用独立配套目录', mode) : option('local', '游戏目录（默认）', mode) + option('external', '独立配套目录', mode), busy || Boolean(special))}${mode === 'external' ? selectField('route', 'loadingMode', '加载方式', option('proxy', '随游戏加载', selected('loadingMode', layout.loadingMode || 'proxy')) + option('helper', '通过加载助手', selected('loadingMode', layout.loadingMode || 'proxy'), !data.game.installed), busy || Boolean(special), !data.game.installed ? '首次安装完成后可切换加载助手。' : '') : ''}</div></section>`;
     }
@@ -408,7 +420,7 @@
       const bridges = data.componentChoices?.bridges || [], bridge = draft.components?.bridge || data.componentChoices?.selected?.bridge;
       const userAddons = data.componentChoices?.addons || [];
       return `<section class="gp-section"><h3>高级加载</h3><div class="gp-controls">
-        ${selectField('input-route', 'route', 'NR 输入方式', option('auto', '自动核对并匹配配套', draft.route || 'auto') + option('native', '原生 DLSS 输入', draft.route || 'auto', ['dx9', 'dx10'].includes(effectiveApi())) + option('feeder', 'Feeder · 无原生 DLSS', draft.route || 'auto', effectiveApi() === 'vulkan'), busy, '检测依据绑定所选游戏程序；仅有 DLSS DLL 不代表原生集成。')}
+        ${selectField('input-route', 'route', 'NR 输入方式', option('auto', '自动核对并匹配配套', draft.route || 'auto') + option('native', '原生 DLSS 输入', draft.route || 'auto', ['dx9', 'dx10'].includes(effectiveApi())) + option('feeder', 'Feeder 提供输入', draft.route || 'auto', effectiveApi() === 'vulkan'), busy, '检测依据绑定所选游戏程序与本次 API；证据不足时可手动选择输入方式。')}
         ${effectiveApi() === 'dx11' && !special && bridges.length ? selectField('component', 'bridge', 'DX11 桥接器', bridges.map(row => option(row.id, row.label, bridge, !row.ready || !row.compatible)).join(''), busy, '独立选择适配桥接器，保持 Core 版本。') : '<p class="gp-caption">当前路线无需可单独选择的 DX11 桥接器。</p>'}</div></section>
         <section class="gp-section"><h3>用户 Add-on</h3><p class="gp-caption">从组件管理导入任意 64 位 .addon64 后，可在这里按游戏加载。管理器只删除自己部署且摘要未变化的文件。</p><div class="gp-module-list">${userAddons.length ? userAddons.map(row => `<div><strong>${esc(row.label)}</strong><small>${esc(row.name)}${row.classification && row.classification !== 'unknown' ? ` · ${esc(row.classification)}` : ''}</small><small>${row.installed ? '已由管理器加载' : row.present ? '游戏中已有同名文件' : '尚未加载'}</small><button type="button" class="button ${row.installed ? 'subtle' : ''}" data-gp-action="user-addon" data-gp-component="${esc(row.id)}" data-gp-enable="${row.installed ? 'false' : 'true'}"${busy || !row.canApply || row.present && !row.installed ? ' disabled' : ''}>${row.installed ? '移除' : row.present ? '已存在' : '加载到游戏'}</button></div>`).join('') : '<p class="gp-caption">尚未导入用户 Add-on。可到“组件管理”导入 .addon64；导入不会立即修改游戏。</p>'}</div></section>
         <section class="gp-section"><h3>游戏条目</h3><p class="gp-caption">这里只修改管理器中的显示名称，不会改动游戏文件。</p><div class="gp-actions">${act('rename-game', '修改游戏名称', busy)}</div></section>`;
@@ -524,7 +536,8 @@
       else await resolveReadiness({ refresh: false });
     }
     async function prepare() {
-      if (options.onPrepare && options.preparationRequired?.()) return options.onPrepare({ version: currentVersion() });
+      if (options.onPrepare && options.preparationRequired?.()) return options.onPrepare({ version: currentVersion(),
+        ...(['native', 'feeder'].includes(draft.route) ? { route: draft.route } : {}) });
       Object.assign(draft, installRequest()); await preview();
     }
     function render() {
@@ -820,8 +833,9 @@
         if (key === 'channel') draft.hoyo.channel = value;
         if (key === 'kind') { draft.hoyo.launcher.kind = value; draft.hoyo.launcher.path = ''; }
       } else if (group === 'input-route') {
+        const version = currentVersion();
         if (value === 'auto') delete draft.route; else draft.route = value;
-        delete draft.version;
+        if (version) draft.version = version;
       } else if (group === 'route') {
         draft[key] = value;
         if (key === 'deployment' && value === 'local') delete draft.loadingMode;
@@ -909,6 +923,12 @@
         } }
         else if (action === 'discard') { resumeAfterImport = null; draft = {}; invalidFields = {}; fields = initialFields(data); message = '已放弃尚未应用的修改。'; error = false; render(); }
         else if (action === 'switch-proxy') { if (!busy && proxySwitchVisible()) { draft.proxyEntry = (draft.proxyEntry || savedProxyEntry()) === 'd3d12' ? 'dxgi' : 'd3d12'; message = '加载入口已暂存，点击应用后生效。'; error = false; render(); } }
+        else if (action === 'input-native' || action === 'input-feeder') {
+          const version = currentVersion();
+          if (version) draft.version = version;
+          draft.route = action === 'input-native' ? 'native' : 'feeder';
+          message = '输入方式已暂存，点击应用后一起生效。'; error = false; render();
+        }
         else if (action === 'prepare') await prepare();
         else if (action === 'resolve-readiness') await resolveReadiness();
         else if (action === 'pick-hoyo-launcher') {

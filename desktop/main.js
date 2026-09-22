@@ -719,7 +719,7 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       version: app.getVersion(),
       overrides: { applicationDir:app.isPackaged ? path.dirname(process.execPath) : null,
         portableExecutable:process.env.PORTABLE_EXECUTABLE_FILE || null,
-        getFeatureEvidence: (id, domain) => featureProbe.inspect(id, domain), getKnownComponents: async id => fgComponents ? [
+        getFeatureEvidence: (id, domain, context) => featureProbe.inspect(id, domain, context), getKnownComponents: async id => fgComponents ? [
         ...await fgComponents.ownedModuleManifest(id).then(rows => rows.map(row => ({ ...row, owned: true, compatibility: 'compatible' }))),
         ...(typeof fgComponents.catalog === 'function' ? fgComponents.catalog() : []).map(row => ({ sha256: row.sha256, role: 'mfgunlock', compatibility: 'compatible' }))
       ] : [] }

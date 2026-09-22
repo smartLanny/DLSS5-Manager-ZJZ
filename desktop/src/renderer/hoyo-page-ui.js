@@ -143,11 +143,13 @@
       }
     }
     async function previewInstall(input = {}) {
-      const clientId = selectedId, request = { ...(input.version ? { version: input.version } : {}) };
+      const clientId = selectedId, request = { ...(input.version ? { version: input.version } : {}),
+        ...(['native', 'feeder'].includes(input.route) ? { route: input.route } : {}) };
       const result = await run(() => api.hoyoPreview(clientId, 'install', request), false, '正在检查安装…');
       if (selectedId !== clientId) return;
       if (result) { resumeInstall = null; editor()?.controller.refreshView(); plan = result; previewAction = 'install'; renderPlan(); }
       else if (/DLC|运行库|nvngx_dlssnr/i.test(error)) { resumeInstall = { clientId, request, draft: JSON.stringify(editor()?.controller.getState().draft || {}) }; editor()?.controller.refreshView(); render(); }
+      else if (/INPUT_ROUTE_UNCONFIRMED/.test(error)) { editor()?.controller.refreshView(); render(); }
     }
     function phaseLabel(row) {
       const readiness = row.id === selectedId ? launchReadiness() : row.launchReadiness;
@@ -250,6 +252,8 @@
         const id = flow.id, gameId = flow.gameId, controller = scope.GamePageUi.mount(element, api, { hoyoSettingsOnly: true, compatibilityFeedbackOwned: Boolean(feedback), onBack: closeSettings, onRemoved: removedGame,
           preparationRequired: () => flow?.id === id && flow.nextAction === 'preview-install',
           onPrepare: input => previewInstall(input),
+          selectedApi: () => flow?.id === id ? flow.api?.api : null,
+          inputRouteUnconfirmed: () => /INPUT_ROUTE_UNCONFIRMED/.test(error),
           runtimeRequired: () => resumeInstall?.clientId === id,
           onComponentsChanged: async () => {
             const saved = resumeInstall; resumeInstall = null;

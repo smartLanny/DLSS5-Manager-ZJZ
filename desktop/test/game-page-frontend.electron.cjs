@@ -38,11 +38,12 @@ const versionMode = process.env.GAME_UI_VERSION_CONTRACT === '1';
 const targetedMode = process.env.GAME_UI_TARGETED === '1';
 const maintenanceSwitchMode = process.env.GAME_UI_MAINTENANCE_SWITCH === '1';
 const runtimeRequiredMode = process.env.GAME_UI_RUNTIME_REQUIRED === '1';
+const inputRouteMode = process.env.GAME_UI_INPUT_ROUTE === '1';
 const demoMode = process.argv.includes('--demo');
 const captureArtworkUrl = process.env.GAME_UI_CAPTURE_ARTWORK
   ? `file:///${encodeURI(path.resolve(process.env.GAME_UI_CAPTURE_ARTWORK).replace(/\\/g, '/'))}`
   : '';
-const preload = path.join(temporary, 'preload.cjs'); fs.writeFileSync(preload, `(${installMock.toString()})(${JSON.stringify(features)},${JSON.stringify({ captureOnly: captureOnly || hoyoMode || versionMode || readinessMode || hoyoReadinessMode || targetedMode || maintenanceSwitchMode || runtimeRequiredMode || demoMode, runtimeRequired: runtimeRequiredMode, demo: demoMode, paths: addonPolicyFixture.paths })});${hoyoMode || hoyoReadinessMode ? `(${installHoYoMock.toString()})();` : ''}`);
+const preload = path.join(temporary, 'preload.cjs'); fs.writeFileSync(preload, `(${installMock.toString()})(${JSON.stringify(features)},${JSON.stringify({ captureOnly: captureOnly || hoyoMode || versionMode || readinessMode || hoyoReadinessMode || targetedMode || maintenanceSwitchMode || runtimeRequiredMode || inputRouteMode || demoMode, runtimeRequired: runtimeRequiredMode, demo: demoMode, paths: addonPolicyFixture.paths })});${hoyoMode || hoyoReadinessMode ? `(${installHoYoMock.toString()})();` : ''}`);
 let win;
 ipcMain.on('game-page-fixture-window', (event, action) => {
   if (!demoMode || event.sender !== win?.webContents) return;
@@ -72,6 +73,47 @@ app.whenReady().then(async () => {
   try {
     await win.loadFile(path.resolve(__dirname, '../src/renderer/index.html'));
     if (process.env.GAME_UI_ZOOM) win.webContents.setZoomFactor(Number(process.env.GAME_UI_ZOOM));
+    if (inputRouteMode) {
+      const result = await win.webContents.executeJavaScript(`(async () => {
+        const until = async (predicate, label) => {
+          const deadline = Date.now() + 5000;
+          while (!predicate()) { if (Date.now() > deadline) throw Error('timeout: ' + label); await new Promise(resolve => setTimeout(resolve, 10)); }
+        };
+        await until(() => window.GamePageUi && window.__gpMock, 'renderer');
+        const fixture = window.__gpMock.assessments.fixture;
+        fixture.coreVersions.push({ id: '0.5-dline21-unified5', label: '0.5 Unified5 · fixture', ready: true });
+        fixture.game.installed = false; fixture.game.nativeDlssAvailable = false;
+        fixture.game.apiOverride = 'auto'; fixture.game.chosen.apiResolution = { api: 'unknown' };
+        fixture.api.effectiveApi = 'unknown'; fixture.api.detectedApi = 'unknown';
+        fixture.layout = { mode: 'local' }; fixture.deployment = { installed: false };
+        fixture.defaults = { api: 'auto', version: '0.4.7beta' };
+        let uncertain = true, prepared = null;
+        const view = document.createElement('div'); view.className = 'view active'; document.body.append(view);
+        const host = document.createElement('div'); view.append(host);
+        const controller = window.GamePageUi.mount(host, window.manager, { hoyoSettingsOnly: true,
+          selectedApi: () => 'dx12', inputRouteUnconfirmed: () => uncertain,
+          preparationRequired: () => true, onPrepare: request => { prepared = request; } });
+        await controller.open('fixture', 'overview');
+        await until(() => host.querySelector('[data-gp-action="input-native"]'), 'reachable input choice');
+        const picker = host.querySelector('[data-gp-group="route"][data-gp-field="version"]');
+        picker.value = '0.5-dline21-unified5'; picker.dispatchEvent(new Event('change', { bubbles: true }));
+        host.querySelector('[data-gp-action="input-native"]').click();
+        if (controller.getState().draft.version !== '0.5-dline21-unified5') throw Error('native choice discarded Core draft');
+        await controller.runPrimary();
+        if (prepared?.route !== 'native' || prepared.version !== '0.5-dline21-unified5') throw Error('native preparation lost draft: ' + JSON.stringify(prepared));
+        host.querySelector('[data-gp-action="input-feeder"]').click(); prepared = null;
+        await controller.runPrimary();
+        if (prepared?.route !== 'feeder' || prepared.version !== '0.5-dline21-unified5') throw Error('Feeder preparation lost draft');
+        controller.discard(); uncertain = false; prepared = null; controller.refreshView();
+        await controller.runPrimary();
+        if (prepared?.route !== undefined || prepared.version !== '0.4.7beta') throw Error('static absence forced a route: ' + JSON.stringify(prepared));
+        if (window.__gpMock.calls.some(row => row[0] === 'apply')) throw Error('input choice wrote before unified apply');
+        controller.dispose(); view.remove();
+        return { assertions: 6, preservedCoreAndApi: true, implicitFeeder: false, writes: 0 };
+      })()`);
+      console.log(JSON.stringify({ ok: true, scope: 'input-route-choice', ...result }, null, 2));
+      win.destroy(); app.exit(0); return;
+    }
     if (runtimeRequiredMode) {
       const result = await win.webContents.executeJavaScript(`(async () => {
         const until = async (predicate, label) => {

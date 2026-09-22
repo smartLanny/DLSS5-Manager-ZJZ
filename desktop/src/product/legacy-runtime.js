@@ -28,7 +28,7 @@ function createLegacyRuntime(options = {}) {
   });
   function pool() {
     const manifest = regularJson(path.join(root, 'manifest.json'), 512 * 1024);
-    if (!manifest) fail('LEGACY_PACKAGE_MISSING', '当前管理器缺少旧版 Feeder 固定配套。请更新完整管理器，并选用其配套 Core 与 Feeder；仅重复导入 NR 运行库无法补齐。', { file: 'legacy-runtime/manifest.json' });
+    if (!manifest) fail('LEGACY_PACKAGE_MISSING', '当前 Core 的旧 Feeder 配套未内置。可选择 0.5 Unified5 使用新版 Feeder，或在游戏确有 DLSS 时使用原生路线；重复导入 NR 运行库无法补齐旧 Feeder。', { file: 'legacy-runtime/manifest.json' });
     if (!manifest || manifest.schema !== 1 || !HASH.test(lock.manifestFingerprint || '') || fingerprint(manifest) !== lock.manifestFingerprint ||
         manifest.upstream?.commit !== catalog.UPSTREAM.commit || manifest.coreInterface !== 'NRExternalProviderV1' ||
         !Array.isArray(manifest.assets) || manifest.assets.length < 10 || manifest.assets.length > 128)

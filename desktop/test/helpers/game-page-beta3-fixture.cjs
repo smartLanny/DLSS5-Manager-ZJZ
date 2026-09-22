@@ -4,6 +4,11 @@ function installMock(features, options = {}) {
   const { ipcRenderer } = require('electron');
   const clone = structuredClone, ok = value => ({ ok: true, value: clone(value) });
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  features.notObservedSr = clone(features.unknownSr);
+  features.notObservedSr.evidence.support = { status: 'unknown', source: null, code: 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED' };
+  features.notObservedSr.evidence.static = { api: 'dx11', coverage: { complete: true, skipped: [] } };
+  const feederRecommendation = { api: 'dx11', route: 'feeder', status: 'ready', title: 'DirectX 11 · DLSS5 Feeder 路线',
+    summary: '已有经过核验的 Feeder 配套。', reason: '已完成范围内检查，未观察到原生 DLSS 集成线索。', items: [] };
   const game = { id: 'fixture', name: '博德之门 3 · 界面测试', dir: 'C:\\UI-fixture\\Baldurs Gate 3', installed: true, supported: true, launcher: 'Steam',
     addonVersion: '0.4.7beta', apiOverride: 'auto', nativeDlssAvailable: true, nativeFgAvailable: true,
     chosen: { path: 'C:\\UI-fixture\\Baldurs Gate 3\\bin\\bg3_dx11.exe', bitness: 64, apiResolution: { api: 'dx11', source: 'entry' } } };
@@ -54,7 +59,7 @@ function installMock(features, options = {}) {
   ] };
   unmanaged.deployment = { mode: 'local', version: null, inspection: 'summary', verified: false, needsRecovery: false }; unmanaged.nr = null;
   const mock = window.__gpMock = { calls: [], plans: new Map(), assessments: { fixture: assessment, 'fixture-two': second, 'fixture-hoyo': hoyo, 'fixture-dx9': dx9, 'fixture-unmanaged': unmanaged },
-    baseline: clone(assessment), secondBaseline: clone(second), features, removed: new Set(), delays: options.captureOnly ? {} : { 'fixture:installation': 5000 }, pending: 0,
+    baseline: clone(assessment), secondBaseline: clone(second), features, feederRecommendation, removed: new Set(), delays: options.captureOnly ? {} : { 'fixture:installation': 5000 }, pending: 0,
     failApply: false, listeners: new Set(), mounts: new Map(), plan: null, policyEnabled: false, policyApplied: 0,
     settings: { animationsEnabled: true, theme: process.env.GAME_UI_THEME || 'system', scanDrives: false, addonVersion: null },
     selectedLauncher: 'C:\\UI-fixture\\HoYoPlay\\launcher.exe',
@@ -600,20 +605,29 @@ async function smoke() {
   set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview'); set('route', 'api', 'dx12');
   assert(!state().draft.components?.bridge && state().draft.api === 'dx12', 'moving from DX11 to DX12 clears only the inapplicable bridge draft'); discard();
 
-  await scenario('Feeder 随 API 选择完整配套', value => {
+  await scenario('原生集成证据交由后端选择 Feeder', value => {
     value.game.installed = false; value.game.nativeDlssAvailable = false;
+    value.enhancements.featureStates.sr = structuredClone(mock.features.notObservedSr);
+    value.componentChoices.stack = structuredClone(mock.feederRecommendation);
     value.game.feeder = { installed: false, available: true, selections: {
       dx11: { api: 'dx11', available: true, packageId: 'fixture-feeder-dx11', coreVersion: '0.4.7beta' },
       dx12: { api: 'dx12', available: true, packageId: 'fixture-feeder-dx12', coreVersion: '0.4.7beta' },
       dx10: { api: 'dx10', available: true, packageId: 'fixture-feeder-dx10', coreVersion: '0.4.7beta' }
     } };
   }); await tab('overview');
-  assert(field('route', 'version').value === 'fixture-feeder-dx11', 'automatic DX11 selects its complete Feeder package');
+  assert(state().data.enhancements.featureStates.sr.evidence.support.code === 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED' && state().data.enhancements.featureStates.sr.evidence.static.coverage.complete && host().textContent.includes('DirectX 11 · DLSS5 Feeder 路线'), 'a complete backend assessment supplies the Feeder recommendation independently of the static DLL flag');
+  assert(field('route', 'version').value === '0.4.7beta', 'automatic DX11 keeps the selected Core while the backend chooses its matching input package');
+  await preview('prepare');
+  assert(!Object.hasOwn(mock.plan.request, 'route') && mock.plan.request.api === 'auto' && mock.plan.request.version === '0.4.7beta', 'automatic DX11 submits the API and Core without forcing a route from a static DLL flag'); click('modal-cancel'); discard();
+  set('route', 'api', 'dx12'); await preview();
+  assert(!Object.hasOwn(mock.plan.request, 'route') && mock.plan.request.api === 'dx12' && mock.plan.request.version === '0.4.7beta', 'DX12 preserves the Core and leaves native-versus-Feeder selection to current API evidence'); click('modal-cancel'); discard();
   set('route', 'api', 'dx10'); assert(field('route', 'version').value === 'fixture-feeder-dx10', 'DX10 selection changes only to a matching Feeder package');
   await preview(); assert(mock.plan.request.route === 'feeder' && mock.plan.request.api === 'dx10' && mock.plan.request.version === 'fixture-feeder-dx10', 'matching Feeder selection submits the displayed API-specific package'); click('modal-cancel'); discard();
   await tab('maintenance'); set('input-route', 'route', 'native'); await preview();
   assert(mock.plan.request.route === 'native' && mock.plan.request.version === '0.4.7beta', 'explicit native input binds the displayed Core for production eligibility to validate'); click('modal-cancel'); discard();
 
+  mock.assessments['fixture-hoyo'].enhancements.featureStates.sr = structuredClone(mock.features.notObservedSr);
+  mock.assessments['fixture-hoyo'].componentChoices.stack = structuredClone(mock.feederRecommendation);
   await open('fixture-hoyo'); await until(() => state().loaded.includes('installation'), 'HoYo client assessment');
   assert(field('route', 'loadingBackend').value === 'local' && !field('hoyo', 'channel'), 'HoYo clients retain ordinary loading as the initial visible choice');
   set('route', 'loadingBackend', 'hoyoshade');
@@ -623,9 +637,18 @@ async function smoke() {
   set('hoyo', 'kind', 'starward'); assert(!state().draft.hoyo.launcher.path, 'changing launcher type clears the previous program identity');
   mock.selectedLauncher = 'C:\\UI-fixture\\Starward\\Starward.exe'; click('pick-hoyo-launcher'); await until(() => state().draft.hoyo?.launcher.path === mock.selectedLauncher, 'Starward path binding');
   await tab('maintenance');
-  assert(field('route', 'deployment').disabled && field('route', 'deployment').value === 'external' && field('route', 'loadingMode').disabled && field('route', 'loadingMode').value === 'helper' && !field('route', 'proxyEntry'), 'HoYo external helper controls do not expose a conflicting proxy entry');
+  assert(field('route', 'deployment').disabled && field('route', 'deployment').value === 'external' && field('route', 'deployment').options.length === 1 && field('route', 'loadingMode').disabled && field('route', 'loadingMode').value === 'helper' && field('route', 'loadingMode').options.length === 1 && !button('switch-proxy'), 'an automatic HoYo input route keeps its owner-bound external/helper controls fixed and exposes no local proxy switch');
   await preview();
-  assert(mock.plan.request.loadingBackend === 'hoyoshade' && mock.plan.request.route === 'feeder' && mock.plan.request.version === 'fixture-feeder-dx11-x64' && JSON.stringify(mock.plan.request.hoyo) === JSON.stringify({ family: 'starrail', channel: 'bilibili', launcher: { kind: 'starward', path: mock.selectedLauncher } }), 'HoYo preview preserves family, public channel, launcher type and program path');
+  assert(mock.plan.request.loadingBackend === 'hoyoshade' && mock.plan.request.deployment === 'external' && mock.plan.request.loadingMode === 'helper' && !Object.hasOwn(mock.plan.request, 'route') && mock.plan.request.version === '0.4.7beta' && JSON.stringify(mock.plan.request.hoyo) === JSON.stringify({ family: 'starrail', channel: 'bilibili', launcher: { kind: 'starward', path: mock.selectedLauncher } }), 'HoYo preview preserves external/helper loading, Core, family, public channel and launcher identity while leaving automatic input selection to backend evidence');
+  click('modal-cancel');
+  set('input-route', 'route', 'native');
+  assert(field('route', 'deployment').disabled && field('route', 'deployment').value === 'external' && field('route', 'loadingMode').disabled && field('route', 'loadingMode').value === 'helper', 'an explicit native input route cannot unlock HoYo installation or loading ownership');
+  await preview(); assert(mock.plan.request.route === 'native' && mock.plan.request.deployment === 'external' && mock.plan.request.loadingMode === 'helper' && mock.plan.request.loadingBackend === 'hoyoshade' && !mock.plan.request.proxyEntry, 'explicit native HoYo preview retains the same owner-bound loading request');
+  click('modal-cancel');
+  set('route', 'loadingBackend', 'local');
+  assert(!field('route', 'deployment').disabled && field('route', 'loadingBackend').value === 'local' && !field('hoyo', 'kind'), 'switching the independent loading backend back to local restores ordinary installation choices');
+  set('route', 'deployment', 'local'); await preview();
+  assert(mock.plan.request.loadingBackend === 'local' && mock.plan.request.deployment === 'local' && !mock.plan.request.loadingMode && !mock.plan.request.hoyo, 'the explicit local switch does not retain HoYo helper or launcher parameters');
   click('modal-cancel'); discard(); await tab('overview');
   assert(field('route', 'loadingBackend').value === 'local' && !field('hoyo', 'kind'), 'discard restores the ordinary HoYo loading choice');
   await open('fixture');
@@ -883,10 +906,16 @@ async function smokeTargetedHoYo() {
   const version = () => settings()?.querySelector('[data-gp-group="route"][data-gp-field="version"]');
   controller().selectTab('overview'); await until(() => controller().getState().tab === 'overview' && version(), 'HoYo Core picker tab');
   const candidates = ['0.5-dline13', '0.4.7beta-corefix.8'];
-  for (const id of candidates) {
-    const option = [...(version()?.options || [])].find(row => row.value === id);
-    assert(option && !option.disabled, id + ' is visible and selectable in the HoYo Core picker');
-  }
+  const standardOption = [...(version()?.options || [])].find(row => row.value === candidates[0]);
+  assert(standardOption && !standardOption.disabled, candidates[0] + ' is visible and selectable in the HoYo Core picker');
+  const history = settings().querySelector('[data-gp-detail="rollback"]');
+  assert(history && history.querySelector('summary')?.textContent.includes('历史版本与回退'), 'HoYo exposes the historical Core rollback entry');
+  history.open = true;
+  const historicalVersion = history.querySelector('[data-gp-group="route"][data-gp-field="version"]');
+  const historicalOption = [...(historicalVersion?.options || [])].find(row => row.value === candidates[1]);
+  assert(historicalOption && !historicalOption.disabled, candidates[1] + ' is selectable in the historical rollback picker');
+  historicalVersion.value = candidates[1]; historicalVersion.dispatchEvent(new Event('change', { bubbles: true }));
+  await until(() => controller().getState().draft.version === candidates[1], 'HoYo historical Core draft');
   const selected = version(); selected.value = candidates[0]; selected.dispatchEvent(new Event('change', { bubbles: true }));
   await until(() => controller().getState().draft.version === candidates[0], 'HoYo Core draft');
   const previewBefore = gp.calls.filter(row => row[0] === 'preview').length;

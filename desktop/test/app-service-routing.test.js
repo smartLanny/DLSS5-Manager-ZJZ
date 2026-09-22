@@ -681,11 +681,28 @@ test('exact repair restores a missing renamed proxy in place while keeping origi
   assert.equal(fs.readFileSync(plugin, 'utf8'), 'unknown active addon');
 });
 
-test('automatic input selection requires executable integration evidence rather than a DLSS file candidate', async t => {
+test('automatic input selection distinguishes an unconfirmed candidate from a complete search without DLSS', async t => {
   let supported = false;
-  const f = makeService(t, { getFeatureEvidence: async () => ({ support: { status: supported ? 'supported' : 'unknown' } }) });
+  let code = 'SETTINGS_GAME_SUPPORT_UNKNOWN';
+  let evidenceCalls = 0;
+  const f = makeService(t, { getFeatureEvidence: async () => {
+    evidenceCalls++;
+    return { support: { status: supported ? 'supported' : 'unknown', code } };
+  } });
+  const bundleFile = path.join(f.payloadDir, 'bundle.json'), bundle = JSON.parse(fs.readFileSync(bundleFile));
+  bundle.versions['0.3.3.5'].supportsPresent = true;
+  fs.writeFileSync(bundleFile, JSON.stringify(bundle));
   await f.service.addManualGame(f.gameDir); const id = (await f.service.boot()).games[0].id;
-  assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12' }), 'feeder');
+  assert.equal(f.service.coreVersionCatalog().find(row => row.id === '0.3.3.5').supportsPresent, true);
+  await assert.rejects(f.service.resolveInputRoute(id, { api: 'dx12', version: '0.3.3.5' }), { code: 'INPUT_ROUTE_UNCONFIRMED' });
+  const beforeExplicit = evidenceCalls;
+  assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', route: 'native' }), 'native');
+  assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', route: 'feeder' }), 'feeder');
+  assert.equal(evidenceCalls, beforeExplicit, 'a manual input route is preserved without inventing native integration evidence');
+  assert.equal(supported, false);
+  code = 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED';
+  assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', version: '0.3.3.5' }), 'feeder', 'Present capability does not replace Feeder when native integration was not observed');
+  assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', route: 'native' }), 'native', 'an explicit native choice remains available without claiming native SR support');
   supported = true; assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12' }), 'native');
   assert.equal(await f.service.resolveInputRoute(id, { api: 'dx9' }), 'feeder');
   assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', route: 'feeder' }), 'feeder');
@@ -693,7 +710,7 @@ test('automatic input selection requires executable integration evidence rather 
 
 test('component choices explain the same API and input route used by installation', async t => {
   let supported = false;
-  const f = makeService(t, { getFeatureEvidence: async () => ({ support: { status: supported ? 'supported' : 'unknown' } }) });
+  const f = makeService(t, { getFeatureEvidence: async () => ({ support: { status: supported ? 'supported' : 'unknown', code: 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED' } }) });
   await f.service.addManualGame(f.gameDir); const id = (await f.service.boot()).games[0].id;
   await f.service.setGameApi(id, 'dx12');
   let choices = await f.service.componentChoices(id);
@@ -707,6 +724,28 @@ test('component choices explain the same API and input route used by installatio
   assert.equal(choices.stack.manualBridge, true);
 });
 
+test('HoYo request API reaches the real native integration probe before the preference is saved', async t => {
+  let probe;
+  const f = makeService(t, { getFeatureEvidence: (id, domain, context) => probe.inspect(id, domain, context) });
+  const dlss = path.join(f.gameDir, 'nvngx_dlss.dll'); fs.writeFileSync(dlss, 'signed test DLSS');
+  probe = require('../src/product/native-enhancement-probe').createNativeEnhancementProbe({
+    gameDirectory: id => f.service.gameDirectory(id), gameExecutable: id => f.service.gameExecutable(id),
+    scan: id => f.service.gameScan(id), verifySignature: async () => ({ valid: true }),
+    pe: { getBitness: () => 64, getImports: () => [],
+      findMarkers: (file, requested) => file === f.exe && requested.includes('nvngx_dlss.dll') ? new Set(['nvngx_dlss.dll']) : new Set() }
+  });
+  await f.service.addManualGame(f.gameDir); const game = (await f.service.boot()).games[0], id = game.id;
+  assert.equal(require('../src/product/operation-api').resolveOperationApi({ scan: f.service.gameScan(id) }).requiresManualSelection, true);
+  for (const api of ['dx11', 'dx12']) {
+    assert.equal(await f.service.resolveInputRoute(id, { api, loadingBackend: 'hoyoshade' }), 'native');
+    const evidence = await probe.inspect(id, 'sr', { api });
+    assert.equal(evidence.support.source, 'native-integration');
+    assert.equal(evidence.gameSetting.state, 'unknown', 'game setting readability does not decide the input route');
+  }
+  assert.equal(f.service.assessmentSeed(id).apiOverride || 'auto', 'auto');
+  assert.equal(normalizeError(Object.assign(new Error('unconfirmed'), { code: 'INPUT_ROUTE_UNCONFIRMED' })).message.includes('使用 Feeder'), true);
+});
+
 test('HoYo native operation binds the launcher digest, then installs directly into the dedicated profile without a game proxy', async t => {
   const f = makeService(t, { assertGameClosed: async () => {},
     externalDeploymentOptions: { guards: { assertGameClosed: async () => {}, antiCheatPresent: () => false }, pe: { getImports: () => [] } } });
@@ -716,7 +755,7 @@ test('HoYo native operation binds the launcher digest, then installs directly in
   for (const row of [f.scan.chosen, ...f.scan.exeCandidates]) { row.path = exe; row.name = 'YuanShen.exe'; row.rel = path.relative(f.gameDir, exe); }
   const launcher = path.join(f.root, 'HYP.exe'); fs.writeFileSync(launcher, pe('launcher'));
   fs.cpSync(path.resolve(__dirname, '../resources/hoyoshade'), path.join(f.root, 'resources/hoyoshade'), { recursive: true });
-  const productionLoader = path.resolve(__dirname, '../payload/nr-before-sr/fixed/RTX50/ReShade64.dll');
+  const productionLoader = process.env.DLSS5_TEST_HOYO_LOADER || path.resolve(__dirname, '../payload/nr-before-sr/fixed/RTX50/ReShade64.dll');
   if (fs.existsSync(productionLoader)) for (const family of ['RTX40', 'RTX50'])
     fs.copyFileSync(productionLoader, path.join(f.payloadDir, 'fixed', family, 'ReShade64.dll'));
   fs.writeFileSync(path.join(f.payloadDir, 'bundle.json'), JSON.stringify(createCompactBundle(f.payloadDir,

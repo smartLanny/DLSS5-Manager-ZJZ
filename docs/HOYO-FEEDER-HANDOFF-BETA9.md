@@ -1,12 +1,20 @@
-# 给另一个任务：米哈游 Feeder 配套
+# 米哈游输入路线与 Feeder 接入交接
 
-状态（2026-09-22）：用户确认没有新的 HoYo Feeder 成品。Beta8 绝区零反馈中的两次 `LEGACY_PACKAGE_UNTRUSTED` 对应缺失的固定旧配套；NR DLC 就绪不能补齐它。Beta9 打包尝试因 `legacyRuntime.root 缺失。` 被拒绝，未交付新 EXE，真实绝区零安装与完整包验收仍未完成。当前管理器修复没有修改或修复 Core / Bridge / Feeder。
+状态（2026-09-22）：Manager 已完成现有新版 Feeder 的 HoYo 布局接入，无需等待另一份 Feeder 成品或另写 HoYo 适配。最终包与启动检查以交付目录的验证记录为准，本文不代表通过游戏实测。历史 0.4.8-beta.3 是 Manager 版本，其 Core 为 0.4.7beta。当前 staging 包含八个精确 Core 身份，默认仍为 0.4.7beta。
 
-1. 以现有累计 0.5 Core / Feeder 为基础，验证 **HoYoShade 加载的 ReShade** 能正确找到 Provider、配置和资源；不要只验证游戏目录里的 dxgi 代理。
-2. 返回具有独立 ID / 版本的完整组件包，沿用 `dlss5-component-v1` 和 `dlss5-external-provider-package-v1` 合同，真实声明 `loadingBackend=hoyoshade`、已验证的架构、DX11 / DX12、显卡范围和实际需要的 Core 能力。文件放在绑定客户端的 addon/runtime 目录；ReShade 由 HoYo 配置管理，不能要求覆盖游戏 dxgi.dll。
-3. 验证应用、更新保留 INI、API 切换、取消零写入、失败回退、卸载恢复和应用后不自动启动；分别记录受控软件测试与真实游戏测试。管理器现有模拟 IPC / 合成游戏测试不能代替这些实际配套验收。
-4. 返回配套目录、源码身份、配置模板、逐文件大小/SHA-256 和许可。管理器任务负责接入与打包，不修改 Core / Bridge / Feeder。
+用户选择的 API 已贯穿原生 DLSS 检测及缓存。未知 API 不再被误判为应装 Feeder，页面保留手动选择入口。识别到原生 DLSS 时优先采用原生输入，DX11 配匹配的 Bridge；需要 Feeder 时再核对其输入路线和 Core 能力。不会自动用 Core Present 兼容模式替换 Feeder，已有安装继续遵循原路线与收据。
 
-现有 D16-r3 仅声明本地代理路线，不能改个标签就当米哈游配套；Unified5 满足其 Core 能力要求也不会产生未声明的 HoYo 路线。标准 0.4.7beta 的 V1 导出不能冒充新版 Core 的附加能力。保留管理器完整性和路线检查。
+已实现的固定配套为 Unified5 与现有 D16-r3 / stable-r3 Feeder。Manager 适配记录绑定具体组件身份，原包 ID、清单、摘要及二进制保持不变。HoYoShade 继续拥有加载器，Provider、配置和着色器进入已绑定外置配置的 addon/runtime 目录，不向游戏目录安装本地代理。D16 缺少的着色器从现有固定 SHA-256 组件补齐，未重新编译或改写 Feeder。
 
-也可找回旧池清单 `desktop/resources/legacy-runtime/manifest.json` 中原本固定的四项：`provider-x64`、`provider-x86`、`provider-relay-x64`、`host-x64`。必须逐项符合原摘要；官方未打补丁的同版本包不等同于这些文件。
+旧 Feeder 池是可选打包输入：未声明时报告未内置且不就绪；声明后仍须完整通过固定身份核验。旧收据按原规则修复和恢复，不隐式换代。尚未找回的四项历史 provider/host 不再卡住当前支持路线的整包，但相应历史配方仍不能假称可安装。普通 NR DLC 也不等于旧 Feeder 池。
+
+用户已确认现有新 Feeder 的兼容性，记录为所有者确认。三条生产服务用例已通过：使用真实配套文件和模拟游戏验证 DX11 Feeder 安装、保留配置更新与卸载还原，以及 DX12 原生路线、缺少原生输入时仍使用 Feeder、旧收据和着色器完整性。这些测试、打包检查及真实游戏验证分别记录。本轮没有运行游戏，也未修改 Core / Bridge / Feeder 源码或二进制。标准 0.4.7beta 的 V1 导出不能冒充新版 Core 的附加能力。
+
+后续组件交接仅需四步：
+
+1. 冻结待验证 Core / Bridge / Feeder 的源码、文件摘要、依赖与输入合同，保留各自版本号。
+2. 用该组合核对原生 DLSS、DX11 Bridge 和 Feeder 所需的输入、完成回执及切换恢复；分别记录 CPU、WARP 和硬件结果。
+3. 在对应游戏和实际 API 下验证持续处理、画面、退出重启、FG 共存与性能；没有完成的项目保持未验证。
+4. 返回精确组件身份、依赖清单和验证结论，由 Manager 复用现有适配器完成配套选择及最终安装/恢复回归；只在实际合同变化时更新适配记录，无需重新提出整套 HoYo 接入。
+
+游戏官方支持、第三方原神超分桥接与 Core Present 的区别见 [输入路线说明](HOYO-INPUT-ROUTES.md)。

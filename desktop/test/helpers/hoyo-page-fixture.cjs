@@ -70,6 +70,9 @@ async function smokeHoYo(options = {}) {
   assert(!host().querySelector('[data-hoyo-field]') && primary().length === 1, 'completed choices collapse into the next single operation');
   const initialEditor = host().querySelector('.hoyo-settings-host');
   assert([...initialEditor.querySelectorAll('[role="tab"]')].map(row => row.textContent).join('|') === '安装与启动|NR 画面增强|DLSS 超分与补帧', 'first installation already exposes the same three pages');
+  const ownerFields = [...initialEditor.querySelectorAll('[data-gp-field="deployment"],[data-gp-field="loadingMode"]')];
+  assert(gp.assessments['fixture-hoyo'].layout.loadingBackend === 'local' && ownerFields.length === 2 && ownerFields.every(row => row.disabled && row.options.length === 1) && ownerFields.map(row => row.value).join('|') === 'external|helper', 'the dedicated HoYo editor fixes external/helper ownership even before its first deployment updates the stored layout');
+  assert(!initialEditor.querySelector('[data-gp-field="launchMode"],[data-gp-action="switch-proxy"]'), 'the dedicated HoYo owner has no conflicting launch or proxy choice');
   initialEditor.querySelector('[data-gp-tab="enhance"]').click();
   await until(() => initialEditor.querySelector('[data-gp-group="sr"][data-gp-field="quality"]:not([disabled])'), 'independent SR before Core installation');
   const srQuality = initialEditor.querySelector('[data-gp-group="sr"][data-gp-field="quality"]');

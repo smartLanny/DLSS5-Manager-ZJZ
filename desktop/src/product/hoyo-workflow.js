@@ -209,9 +209,10 @@ function createHoYoWorkflow({ userData, service, operations, launches, verificat
     row.binding = { ...row.binding, launcher, confirmed: false }; await persist(row); return inspect(id);
   }
   async function preview(id, action = 'install', options = {}) {
-    if (!options || Array.isArray(options) || Object.keys(options).some(key => !['adoption', 'version'].includes(key)) ||
+    if (!options || Array.isArray(options) || Object.keys(options).some(key => !['adoption', 'version', 'route'].includes(key)) ||
         action !== 'install' && Object.keys(options).length || options.version !== undefined &&
-        (typeof options.version !== 'string' || !/^[a-zA-Z0-9._-]{1,100}$/.test(options.version)))
+        (typeof options.version !== 'string' || !/^[a-zA-Z0-9._-]{1,100}$/.test(options.version)) ||
+        options.route !== undefined && !['native', 'feeder'].includes(options.route))
       fail('ACTION', '接管选项仅用于安装预览。');
     require('./installation-adoption').validateAdoptionChoice(options.adoption);
     const row = target(id); await assertIdle(row); const flow = await inspect(id, { force: true });
@@ -221,7 +222,8 @@ function createHoYoWorkflow({ userData, service, operations, launches, verificat
     const request = action === 'restore' ? { uninstall: 'restore' } : action === 'repair' ? { repair: true } : {
       loadingBackend: 'hoyoshade', deployment: 'external', loadingMode: 'helper', api: flow.api.api,
       hoyo: { family: row.family, channel: row.binding.channel, launcher: { kind: row.binding.launcher.kind, path: row.binding.launcher.path } },
-      ...(options.adoption ? { adoption: options.adoption } : {}), ...(options.version ? { version: options.version } : {}) };
+      ...(options.adoption ? { adoption: options.adoption } : {}), ...(options.version ? { version: options.version } : {}),
+      ...(options.route ? { route: options.route } : {}) };
     const plan = await operations.preview(row.gameId, request);
     return { ...plan, requiresElevation: await requiresElevation(plan), flow };
   }

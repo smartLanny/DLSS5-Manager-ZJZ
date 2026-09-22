@@ -425,6 +425,12 @@ async function buildSmallComponents({ stageRoot, manifest, manifestFile, flavor 
 }
 
 async function buildLegacyRuntime({ stageRoot, manifest, manifestFile }) {
+  // Native HoYo loads the normal Core through its own profile and helper. Only
+  // legacy Feeder routes depend on this pool; an explicit declaration is strict.
+  if (!Object.hasOwn(manifest, 'legacyRuntime')) return {
+    declared: false, bundled: false, ready: false, status: 'not-bundled', files: [],
+    reason: '未配置可选旧版 Feeder 资源池；依赖该池的路线不可用，普通和原生 HoYo 路线不依赖此池。'
+  };
   const { fingerprint, resolveFile } = require('../src/product/feeder-runtime');
   const { createLegacyRuntime } = require('../src/product/legacy-runtime');
   const catalog = require('../src/product/legacy-runtime-catalog');
@@ -456,7 +462,8 @@ async function buildLegacyRuntime({ stageRoot, manifest, manifestFile }) {
   const sourceManifest = path.join(sourceRoot, 'manifest.json'), pool = readJson(sourceManifest);
   if (fingerprint(pool) !== runtime.lock.manifestFingerprint) fail('legacy-runtime 清单在复制期间发生变化。');
   copyFile(sourceManifest, path.join(targetRoot, 'manifest.json'));
-  return { manifestFingerprint: runtime.lock.manifestFingerprint, files, runtime: 'shared-verified-nr-dlc' };
+  return { declared: true, bundled: true, status: 'bundled', manifestFingerprint: runtime.lock.manifestFingerprint,
+    files, runtime: 'shared-verified-nr-dlc' };
 }
 
 async function buildBundledResources({ stageRoot, manifest, manifestFile }) {
