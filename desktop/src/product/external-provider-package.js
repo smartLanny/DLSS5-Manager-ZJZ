@@ -14,7 +14,8 @@ const ARCHITECTURES = Object.freeze(['x86', 'x64']);
 const HARDWARE = Object.freeze(['RTX40', 'RTX50']);
 const BACKENDS = Object.freeze(['local', 'hoyoshade', 'vulkan-profile']);
 const BASES = Object.freeze(['game', 'runtime', 'addon']);
-const RESERVED_ROLES = new Set(['core', 'core-chain', 'core-config', 'nr-runtime']);
+const RESERVED_ROLES = new Set(['core', 'core-chain', 'core-config', 'core-resource', 'nr-runtime']);
+const companionPolicy = require('./payload-companions');
 const ID = /^[a-z0-9][a-z0-9._+-]{0,127}$/i;
 
 function exactKeys(value, allowed, code, message) {
@@ -117,7 +118,8 @@ function createExternalProviderPackages(options = {}) {
   function packageFiles(data, row) {
     if (!ID.test(row?.id || '') || typeof row.version !== 'string' || !row.version || row.version.length > 100 ||
         !['x86', 'x64', 'mixed'].includes(row.architecture) || row.interface !== CONTRACT.interface ||
-        !['catalog', 'user-imported'].includes(row.source) || !['candidate', 'blocked'].includes(row.validation) ||
+        !['catalog', 'user-imported', 'bundled'].includes(row.source) || !['candidate', 'blocked'].includes(row.validation) ||
+        row.source === 'bundled' && (row.verifiedSource !== true || row.immutable !== true) ||
         !Array.isArray(row.files) || !row.files.length || row.files.length > 128)
       fail('EXTERNAL_PROVIDER_PACKAGE', '外部 Provider 库存条目不完整。');
     const byName = new Map();
@@ -207,12 +209,14 @@ function createExternalProviderPackages(options = {}) {
     }
     return manifest;
   }
-  function definition(data, row) {
+  function definition(data, row, originalOnly = false) {
     const { byName, manifest } = packageFiles(data, row);
     validateManifest(manifest);
     for (const route of manifest.routes) for (const item of route.files)
       if (!byName.has(item.file.toLowerCase())) fail('EXTERNAL_PROVIDER_ROUTE', `Provider 路线缺少文件 ${item.file}。`);
-    return { row, byName, manifest };
+    const adapted = originalOnly ? { manifest, byName, adaptations: {} } : require('./provider-profile-adapter').adaptProfile({ row, byName, manifest, inventory: data });
+    validateManifest(adapted.manifest);
+    return { row, ...adapted };
   }
   function interfaceMatch(currentCore, requirement) {
     const declared = Array.isArray(currentCore?.inputInterfaces) ? currentCore.inputInterfaces : [];
@@ -226,9 +230,9 @@ function createExternalProviderPackages(options = {}) {
         currentCore.version.length > 100 || currentCore.architecture !== 'x64' || !HASH.test(currentCore.sha256 || '') ||
         !interfaceMatch(currentCore, requirement))
       fail('EXTERNAL_PROVIDER_CORE_INCOMPATIBLE', '当前 Core 未声明这套 NRExternalProviderV1 能力，未回退到旧 Core。');
-    if (!Array.isArray(currentCore.companions) || currentCore.companions.length !== 1)
+    if (!Array.isArray(currentCore.companions) || ![1, 1 + companionPolicy.NAMES.length].includes(currentCore.companions.length))
       fail('EXTERNAL_PROVIDER_CORE_INCOMPATIBLE', '当前 Core 缺少唯一同源 nrchain_nvngx.dll。');
-    const companion = currentCore.companions[0];
+    const companion = currentCore.companions.find(row => row?.role === 'core-chain');
     if (!companion || companion.role !== 'core-chain' || companion.name !== 'nrchain_nvngx.dll' ||
         !relative(companion.file) || !HASH.test(companion.sha256 || '') ||
         !Number.isSafeInteger(companion.bytes) || companion.bytes < 1)
@@ -244,17 +248,26 @@ function createExternalProviderPackages(options = {}) {
     if (!/\.addon64$/i.test(core.name) || chain.name !== companion.name || chain.bytes !== companion.bytes ||
         !/\.dll$/i.test(chain.name) || configSource.name !== config.name || configSource.bytes !== config.bytes)
       fail('EXTERNAL_PROVIDER_SOURCE', '当前 Core、同源 NR chain 或配置文件身份无效。');
-    return { core, chain, config: configSource };
+    const resources = currentCore.companions.filter(row => row !== companion);
+    companionPolicy.validateMap(resources.length ? Object.fromEntries(resources.map(row => [row.name, row.sha256])) : undefined, currentCore.id);
+    const verifiedResources = resources.map(row => {
+      if (row.role !== 'core-resource' || !companionPolicy.isCompanionName(row.name) || !relative(row.file) ||
+          !Number.isSafeInteger(row.bytes) || row.bytes < 1) fail('EXTERNAL_PROVIDER_CORE_INCOMPATIBLE', '当前 Core 附属资源身份无效。');
+      const source = inventoryFileRow(data, row.file, row.sha256, '当前 Core 附属资源');
+      if (source.name !== row.name || source.bytes !== row.bytes) fail('EXTERNAL_PROVIDER_SOURCE', '当前 Core 附属资源索引不符。');
+      return source;
+    });
+    return { core, chain, config: configSource, resources: verifiedResources };
   }
   function sourceContext(data, currentCore, currentRuntime, route, requirement) {
-    const { core, chain, config } = coreSources(data, currentCore, requirement);
+    const { core, chain, config, resources } = coreSources(data, currentCore, requirement);
     if (!currentRuntime || !HASH.test(currentRuntime.sha256 || '') || !Number.isSafeInteger(currentRuntime.bytes) ||
         currentRuntime.bytes < 1 || !route.hardwareFamilies.includes(currentRuntime.family))
       fail('EXTERNAL_PROVIDER_RUNTIME_INCOMPATIBLE', '当前共享 NR Runtime 与所选路线或显卡系列不匹配。');
     const runtime = inventoryFileRow(data, currentRuntime.file, currentRuntime.sha256, '当前 NR Runtime');
     if (!/\.dll$/i.test(runtime.name) || runtime.bytes !== currentRuntime.bytes)
       fail('EXTERNAL_PROVIDER_SOURCE', '当前 NR Runtime 文件身份无效。');
-    return { core, chain, config, runtime };
+    return { core, chain, config, resources, runtime };
   }
   function routeFor(manifest, selection) {
     const proxy = selection.proxyEntry || 'auto';
@@ -265,9 +278,11 @@ function createExternalProviderPackages(options = {}) {
     if (!route) fail('EXTERNAL_PROVIDER_ROUTE_UNAVAILABLE', '所选 Provider 没有匹配 API、位数、显卡与加载方式的路线。');
     return route;
   }
-  function build(data, row, selection, supplied = {}) {
+  function build(data, row, selection, supplied = {}, originalOnly = false) {
     if (row.validation === 'blocked') fail('EXTERNAL_PROVIDER_BLOCKED', '所选 Provider 配套已被标记为阻止使用。');
-    const item = definition(data, row), route = routeFor(item.manifest, selection), proxy = selection.proxyEntry || 'auto';
+    const item = definition(data, row, originalOnly);
+    if (item.dependencyUnavailable) fail('EXTERNAL_PROVIDER_PROFILE_MISSING', item.dependencyUnavailable);
+    const route = routeFor(item.manifest, selection), proxy = selection.proxyEntry || 'auto';
     const currentCore = contextValue('currentCore', supplied.currentCore);
     const currentRuntime = contextValue('currentRuntime', supplied.currentRuntime);
     if (currentRuntime?.family !== selection.hardwareFamily)
@@ -288,6 +303,9 @@ function createExternalProviderPackages(options = {}) {
     files.push({ id: `${row.id}:current-core-config`, source: injected.config.source, role: 'core-config', base: 'addon',
       target: `${directory(route.coreDirectory)}${injected.config.name}`, architecture: null, mutable: true,
       sha256: injected.config.sha256, bytes: injected.config.bytes });
+    for (const resource of injected.resources) files.push({ id: `${row.id}:current-core-resource:${resource.name}`, source: resource.source,
+      role: 'core-resource', base: 'addon', target: `${directory(route.coreDirectory)}${resource.name}`,
+      architecture: /\.dll$/i.test(resource.name) ? 'x64' : null, mutable: false, sha256: resource.sha256, bytes: resource.bytes });
     files.push({ id: `${row.id}:current-runtime`, source: injected.runtime.source, role: 'nr-runtime', base: 'addon',
       target: `${directory(route.runtimeDirectory)}nvngx_dlssnr.dll`, architecture: 'x64', mutable: false,
       sha256: injected.runtime.sha256, bytes: injected.runtime.bytes });
@@ -313,7 +331,8 @@ function createExternalProviderPackages(options = {}) {
         requiredCapabilities: [...item.manifest.interface.requiredCoreCapabilities], genericCoreInterchangeable: true,
         selected: { id: currentCore.id, sha256: currentCore.sha256,
           companions: [{ role: 'core-chain', name: injected.chain.name, source: injected.chain.source,
-            sha256: injected.chain.sha256, bytes: injected.chain.bytes }],
+            sha256: injected.chain.sha256, bytes: injected.chain.bytes }, ...injected.resources.map(resource => ({ role: 'core-resource',
+            name: resource.name, source: resource.source, sha256: resource.sha256, bytes: resource.bytes }))],
           config: { role: 'core-config', name: injected.config.name, source: injected.config.source,
             sha256: injected.config.sha256, bytes: injected.config.bytes } } },
       provenance: item.manifest.contract.provenance, scope: item.manifest.contract.scope,
@@ -323,14 +342,15 @@ function createExternalProviderPackages(options = {}) {
       files, defaults: copy(item.manifest.defaults), externalProvider: { schema: CONTRACT.recipeSchema, packageId: row.id,
         routeId: route.id, definition: { source: item.byName.get(MANIFEST_NAME).source,
           sha256: item.byName.get(MANIFEST_NAME).sha256, bytes: item.byName.get(MANIFEST_NAME).bytes },
-        validation: 'candidate', runtimeVerified: false }
+        validation: 'candidate', runtimeVerified: false,
+        ...(item.adaptations[route.id] ? { managerAdaptation: copy(item.adaptations[route.id]) } : {}) }
     };
     return { root, recipe, fingerprint: fingerprint(recipe) };
   }
   function load(input = {}) {
     const data = inventory(), selection = input.selection || input;
     const selected = input.id || input.providerId || (selection.api || input.gameApi
-      ? selectedFor(data, { ...selection, api: selection.api || input.gameApi }) : data.selected.externalProvider);
+      ? selectedId({ ...selection, api: selection.api || input.gameApi }) : selectedId());
     if (!selected) fail('EXTERNAL_PROVIDER_NOT_SELECTED', '尚未选择外部 Provider 配套。');
     const row = providerRows(data).find(value => value.id === selected);
     if (!row) fail('EXTERNAL_PROVIDER_SELECTION_INVALID', '已选 Provider 不在组件库存中，未回退到旧 Core。');
@@ -345,7 +365,7 @@ function createExternalProviderPackages(options = {}) {
         recipe.acceptance?.status !== 'candidate' || recipe.externalProvider.runtimeVerified !== false ||
         !relative(recipe.externalProvider.definition?.source) || !HASH.test(recipe.externalProvider.definition?.sha256 || '') ||
         !Number.isSafeInteger(recipe.externalProvider.definition?.bytes) || recipe.externalProvider.definition.bytes < 1 ||
-        !Array.isArray(recipe.files) || recipe.files.length < 5 || recipe.files.length > 132 ||
+        !Array.isArray(recipe.files) || recipe.files.length < 5 || recipe.files.length > 139 ||
         recipe.files.filter(row => row.role === 'core').length !== 1 || recipe.files.filter(row => row.role === 'nr-runtime').length !== 1 ||
         recipe.files.filter(row => row.role === 'core-chain').length !== 1 || recipe.files.filter(row => row.role === 'core-config').length !== 1 ||
         recipe.files.some(row => !BASES.includes(row.base) || !relative(row.source) || !relative(row.target) || !HASH.test(row.sha256 || '') ||
@@ -362,7 +382,7 @@ function createExternalProviderPackages(options = {}) {
     const config = recipe.files.find(value => value.role === 'core-config');
     const runtime = recipe.files.find(value => value.role === 'nr-runtime');
     const companion = recipe.coreVariant?.selected?.companions;
-    if (!Array.isArray(companion) || companion.length !== 1 || companion[0]?.role !== 'core-chain' ||
+    if (!Array.isArray(companion) || ![1, 1 + companionPolicy.NAMES.length].includes(companion.length) || companion[0]?.role !== 'core-chain' ||
         companion[0].name !== 'nrchain_nvngx.dll' || companion[0].source !== chain.source ||
         companion[0].sha256 !== chain.sha256 || companion[0].bytes !== chain.bytes)
       fail('EXTERNAL_PROVIDER_RECEIPT', '外部 Provider 收据的 Core NR chain 身份无效。');
@@ -374,12 +394,12 @@ function createExternalProviderPackages(options = {}) {
       currentCore: { id: recipe.coreVariant?.selected?.id, version: recipe.coreVersion, file: core.source,
         sha256: core.sha256, architecture: 'x64', inputInterfaces: [CONTRACT.interface],
         capabilities: recipe.coreVariant?.requiredCapabilities,
-        companions: [{ role: 'core-chain', name: companion[0].name, file: companion[0].source,
-          sha256: companion[0].sha256, bytes: companion[0].bytes }],
+        companions: companion.map(item => ({ role: item.role, name: item.name, file: item.source,
+          sha256: item.sha256, bytes: item.bytes })),
         config: { role: 'core-config', name: selectedConfig.name, file: selectedConfig.source,
           sha256: selectedConfig.sha256, bytes: selectedConfig.bytes } },
       currentRuntime: { file: runtime.source, sha256: runtime.sha256, bytes: runtime.bytes, family: recipe.hardwareFamily }
-    }).recipe;
+    }, !recipe.externalProvider.managerAdaptation).recipe;
     if (fingerprint(expected) !== fingerprint(recipe))
       fail('EXTERNAL_PROVIDER_RECEIPT', '外部 Provider 收据与已认可 schema 或库存文件不一致。');
     return recipe;
@@ -390,6 +410,7 @@ function createExternalProviderPackages(options = {}) {
     const packages = providerRows(data).map(row => {
       try {
         const item = definition(data, row), core = contextValue('currentCore', supplied.currentCore);
+        if (item.dependencyUnavailable) fail('EXTERNAL_PROVIDER_PROFILE_MISSING', item.dependencyUnavailable);
         let compatible = false;
         if (core) { coreSources(data, core, item.manifest.interface); compatible = true; }
         const selectedRouteKeys = Object.keys(routeSelections).filter(key => routeSelections[key] === row.id);
@@ -401,7 +422,8 @@ function createExternalProviderPackages(options = {}) {
           routeDescriptors: item.manifest.routes.map(route => ({ id: route.id, api: route.api,
             architecture: route.architecture, hardwareFamilies: [...route.hardwareFamilies],
             loadingBackend: route.loadingBackend, proxyEntries: [...route.proxyEntries],
-            hostRequired: route.hostRequired, transport: route.transport, selectionKey: routeKey(route) })),
+            hostRequired: route.hostRequired, transport: route.transport, selectionKey: routeKey(route),
+            ...(item.adaptations[route.id] ? { managerAdaptation: copy(item.adaptations[route.id]) } : {}) })),
           selected: selectedApis.length > 0, selectedApis, selectedRouteKeys, compatible, selectable: row.validation !== 'blocked' && compatible,
           runtimeVerified: false, reason: row.validation === 'blocked' ? '配套已被标记为阻止使用。' :
             compatible ? null : '当前 Core 未声明所需 NRExternalProviderV1 能力。' };
@@ -446,6 +468,8 @@ function createExternalProviderPackages(options = {}) {
     return task;
   }
   function selectedId(selection) {
+    const candidate = options.selectCandidate?.(selection);
+    if (candidate !== undefined) return candidate;
     const data = inventory();
     if (selection && typeof selection === 'object') return selectedFor(data, selection);
     return selection ? selectedByApi(data)[selection] || null : data.selected.externalProvider || Object.values(selectedByApi(data))[0] || null;

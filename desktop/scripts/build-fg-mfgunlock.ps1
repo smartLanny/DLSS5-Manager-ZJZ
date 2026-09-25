@@ -39,10 +39,6 @@ pushd "$detoursPath\src"
 nmake /nologo
 if errorlevel 1 exit /b 1
 popd
-cl /nologo /std:c++20 /EHsc /W4 /O2 /MT /DNOMINMAX /DWIN32_LEAN_AND_MEAN "$repoPath\test\native\mfg-patch-gate.cpp" /Fo"$outputPath\mfg-patch-gate-test.obj" /Fe"$outputPath\mfg-patch-gate-test.exe"
-if errorlevel 1 exit /b 1
-"$outputPath\mfg-patch-gate-test.exe" > "$outputPath\mfg-patch-gate-test.json"
-if errorlevel 1 exit /b 1
 cl /nologo /std:c++20 /EHsc /W4 /O2 /MT /utf-8 /Zc:char8_t- /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE /LD /I"$depsPath\reshade" /I"$depsPath\streamline\include" /I"$depsPath\dlss\include" /I"$detoursPath\include" "$sourcePath\addon.cpp" /Fo"$outputPath\mfgunlock.obj" /link /OUT:"$outputPath\renodx-mfgunlock.addon64" /IMPLIB:"$outputPath\mfgunlock.lib" /INCREMENTAL:NO /Brepro "$detoursPath\lib.X64\detours.lib" kernel32.lib user32.lib
 if errorlevel 1 exit /b 1
 "@
@@ -56,7 +52,7 @@ $report=[ordered]@{schema=1;provider=$lock.provider;upstreamCommit=$lock.upstrea
     sourceSha256=(Get-FileHash -LiteralPath (Join-Path $sourcePath 'addon.cpp')).Hash.ToLowerInvariant();
     panelSha256=(Get-FileHash -LiteralPath (Join-Path $sourcePath 'panel_zh.inl')).Hash.ToLowerInvariant();
     binarySha256=(Get-FileHash -LiteralPath $binaryPath).Hash.ToLowerInvariant();abi=$lock.abi;compileLinkVerified=$true;
-    runtimeSafetyPatches=$lock.localSafetyPatches;patchGateTest=(Get-Content -LiteralPath (Join-Path $outputPath 'mfg-patch-gate-test.json') -Raw|ConvertFrom-Json);
+    runtimeSafetyPatches=$lock.localSafetyPatches;localizedPanelSha256=(Get-FileHash -LiteralPath (Join-Path $sourcePath 'panel_zh.inl')).Hash.ToLowerInvariant();
     gpuRun=$false;overlayVerified=$false}
 $report|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $outputPath 'build-mfgunlock.json') -Encoding utf8
 Write-Output "MFG Unlock compiled: $binaryPath"

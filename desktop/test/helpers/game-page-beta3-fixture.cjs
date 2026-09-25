@@ -4,6 +4,11 @@ function installMock(features, options = {}) {
   const { ipcRenderer } = require('electron');
   const clone = structuredClone, ok = value => ({ ok: true, value: clone(value) });
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  features.notObservedSr = clone(features.unknownSr || { evidence: {} });
+  features.notObservedSr.evidence.support = { status: 'unknown', source: null, code: 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED' };
+  features.notObservedSr.evidence.static = { api: 'dx11', coverage: { complete: true, skipped: [] } };
+  const feederRecommendation = { api: 'dx11', route: 'feeder', status: 'ready', title: 'DirectX 11 · DLSS5 Feeder 路线',
+    summary: '已有经过核验的 Feeder 配套。', reason: '已完成范围内检查，未观察到原生 DLSS 集成线索。', items: [] };
   const game = { id: 'fixture', name: '博德之门 3 · 界面测试', dir: 'C:\\UI-fixture\\Baldurs Gate 3', installed: true, supported: true, launcher: 'Steam',
     addonVersion: '0.4.7beta', apiOverride: 'auto', nativeDlssAvailable: true, nativeFgAvailable: true,
     chosen: { path: 'C:\\UI-fixture\\Baldurs Gate 3\\bin\\bg3_dx11.exe', bitness: 64, apiResolution: { api: 'dx11', source: 'entry' } } };
@@ -16,10 +21,9 @@ function installMock(features, options = {}) {
     layout: { mode: 'local', loadingBackend: 'local', loadingMode: 'proxy', activeConfigPath: options.paths.ini, runtimeDir: options.paths.gameDir + '\\bin' },
     deployment: { mode: 'local', loadingMode: 'proxy', version: '0.4.7beta', verified: true, needsRecovery: false },
     enhancements: { hardware, featureStates: clone(features.on40), requests: {}, applied: {}, pending: [],
-      fgComponents: { backend: 'mfgunlock', installed: false, defaultProvider: 'mfgunlock-0.7-zh-CN', installedProvider: null,
-        catalog: [{ id: 'mfgunlock-0.7-zh-CN', label: 'MFG Unlock 0.7 · 中文面板', ready: true },
-          { id: 'mfgunlock-0.7', label: 'MFG Unlock 0.7 · 原版', ready: true },
-          { id: 'mfgunlock-0.6.1', label: 'MFG Unlock 0.6.1 · 回退', ready: true }] } },
+      fgComponents: { backend: 'mfgunlock', installed: false, defaultProvider: 'mfgunlock-0.9-zh-CN', installedProvider: null,
+        catalog: [{ id: 'mfgunlock-0.9-zh-CN', label: 'MFG Unlock 0.9 · 中文面板（推荐）', ready: true },
+          { id: 'mfgunlock-0.9', label: 'MFG Unlock 0.9 · 官方原版', ready: true }] } },
     nr: { Enabled: 1, Intensity: 1, LocalToneStrength: 1, LocalStructureStrength: 1, WorkMode: 0, CustomWorkScale: 1, Style: 0, AutoMask: 0, ColorStrength: .75, SkinStructureStrength: -1, TransferStrength: 1, PostTransferStrength: 1,
       capabilities: { Intensity: true, LocalToneStrength: true, LocalStructureStrength: true, AutoMask: true, WorkMode: true, Style: true, CustomWorkScale: true, ColorStrength: true, SkinStructureStrength: true, TransferStrength: true, PostTransferStrength: true } },
     hotkeys: { nr: { label: 'F6 开关' }, reshade: { key: 36, ctrl: false, shift: false, alt: false } },
@@ -41,6 +45,7 @@ function installMock(features, options = {}) {
   hoyo.game.dir = 'C:\\UI-fixture\\StarRail'; hoyo.game.chosen.path = hoyo.game.dir + '\\StarRail.exe';
   hoyo.game.installed = false; hoyo.game.nativeDlssAvailable = false; hoyo.nr = null;
   hoyo.game.hoyo = { profileOptions: clone(features.hoyoProfiles), selected: null };
+  hoyo.coreVersions.push({ id: '0.5-dline21-unified5', label: '0.5 Unified5 · verified fixture', ready: true, supportsPresent: true });
   hoyo.game.feeder = { installed: false, available: true, packageId: 'fixture-feeder-dx11-x64', coreVersion: '0.4.7beta',
     selections: { dx11: { api: 'dx11', available: true, packageId: 'fixture-feeder-dx11-x64', coreVersion: '0.4.7beta' } } };
   const dx9 = clone(assessment); dx9.gameId = dx9.game.id = 'fixture-dx9'; dx9.game.name = 'DX9 x86 · Feeder 入口测试';
@@ -48,8 +53,14 @@ function installMock(features, options = {}) {
   dx9.game.supported = false; dx9.game.installed = false; dx9.game.nativeDlssAvailable = false; dx9.game.nativeFgAvailable = false;
   dx9.game.chosen.apiResolution.api = dx9.api.effectiveApi = 'dx9'; dx9.api.capabilities = ['dx9']; dx9.nr = null;
   dx9.game.feeder = { installed: false, available: true, selections: { dx9: { api: 'dx9', architecture: 'x86', available: true, packageId: 'fixture-dx9-x86-on12', coreVersion: '0.4.7beta' } } };
-  const mock = window.__gpMock = { calls: [], plans: new Map(), assessments: { fixture: assessment, 'fixture-two': second, 'fixture-hoyo': hoyo, 'fixture-dx9': dx9 },
-    baseline: clone(assessment), secondBaseline: clone(second), features, removed: new Set(), delays: options.captureOnly ? {} : { 'fixture:installation': 5000 }, pending: 0,
+  const unmanaged = clone(assessment); unmanaged.gameId = unmanaged.game.id = 'fixture-unmanaged'; unmanaged.game.name = '已有 0.5 文件 · 未受管安装测试';
+  unmanaged.game.dir = 'C:\\UI-fixture\\Existing'; unmanaged.game.chosen.path = unmanaged.game.dir + '\\Game.exe'; unmanaged.game.installed = false; unmanaged.game.addonVersion = null;
+  unmanaged.game.existingInstallation = { detected: true, managed: false, version: null, versionStatus: 'unverified', files: [
+    { name: 'nr-before-sr.zh-CN.addon64', kind: 'addon' }, { name: 'nrchain_nvngx.dll', kind: 'bridge' }, { name: 'nr_before_sr.ini', kind: 'config' }
+  ] };
+  unmanaged.deployment = { mode: 'local', version: null, inspection: 'summary', verified: false, needsRecovery: false }; unmanaged.nr = null;
+  const mock = window.__gpMock = { calls: [], plans: new Map(), assessments: { fixture: assessment, 'fixture-two': second, 'fixture-hoyo': hoyo, 'fixture-dx9': dx9, 'fixture-unmanaged': unmanaged },
+    baseline: clone(assessment), secondBaseline: clone(second), features, feederRecommendation, removed: new Set(), delays: options.captureOnly ? {} : { 'fixture:installation': 5000 }, pending: 0,
     failApply: false, listeners: new Set(), mounts: new Map(), plan: null, policyEnabled: false, policyApplied: 0,
     settings: { animationsEnabled: true, theme: process.env.GAME_UI_THEME || 'system', scanDrives: false, addonVersion: null },
     selectedLauncher: 'C:\\UI-fixture\\HoYoPlay\\launcher.exe',
@@ -73,11 +84,15 @@ function installMock(features, options = {}) {
       if (originalFactory) { const id = host.dataset.gameDetail; mock.mounts.set(id, (mock.mounts.get(id) || 0) + 1); }
       return controller; };
   } });
-  const payload = { ready: true, selectedVersion: '0.4.7beta', versions: { '0.4.7beta': { label: 'beta0.4.7', variants: { RTX40: { ready: true, files: [] } } } }, source: { mode: 'bundled', path: 'C:\\UI-fixture\\payload', ready: true } };
+  const runtimeRequired = options.runtimeRequired === true;
+  const payload = { ready: !runtimeRequired, selectedVersion: '0.4.7beta', versions: { '0.4.7beta': { label: 'beta0.4.7', variants: { RTX40: {
+    ready: !runtimeRequired, files: [], missing: runtimeRequired ? ['D:\\CodexTemp\\internal-build\\fixed\\RTX40\\nvngx_dlssnr.dll'] : [], invalid: [] } } } },
+    missing: runtimeRequired ? ['D:\\CodexTemp\\internal-build\\fixed\\RTX40\\nvngx_dlssnr.dll'] : [], invalid: [],
+    source: { mode: 'bundled', path: 'D:\\CodexTemp\\internal-build', ready: !runtimeRequired, runtimeDlcRequired: runtimeRequired, requiredHardwareFamily: runtimeRequired ? 'RTX40' : null, error: null } };
   const games = () => Object.values(mock.assessments).filter(row => !mock.removed.has(row.gameId)).map(row => row.game);
   const componentCatalog = [
     ['mfg', '0.9'], ['bridge', '1.4.13-pre7'], ['bridge', '1.4.13-pre8'], ['bridge', '1.4.13-pre6'],
-    ['feeder', '1.16.0-beta.1'], ['feeder', '0.15.1'], ['feeder', '0.15.0'], ['mfg', '0.8'], ['mfg', '0.7']
+    ['feeder', '1.16.0-beta.1'], ['feeder', '0.15.1'], ['feeder', '0.15.0']
   ].map(([kind, version], index) => ({ id: `fixture-component-${index}`, kind, version, variant: index % 2 ? 'x64' : '', downloadUrl: `https://github.com/fixture/component-${index}` }));
   const empty = async () => ok(null);
   const forbidden = name => async (...args) => { mock.calls.push([name, ...args]); throw Error('unexpected direct mutation: ' + name); };
@@ -97,11 +112,27 @@ function installMock(features, options = {}) {
     },
     readPayloadSource: async () => ok({ settings: {}, payload, addons: assessment.coreVersions }), getStartupContext: async () => ok({ mode: 'normal', sandbox: true, privilege: 'standard', operation: {} }),
     getGameIcon: empty, fetchGameArt: empty, listAddons: async () => ok([]), onAddonImported() {}, onSrModelApplied() {}, onLaunchSettingsApplied() {},
-    listComponents: async () => ok({ warnings: ['尚未导入运行库，请选择与显卡对应的组件。'], packages: [], catalog: { checkedAt: new Date().toISOString(), packages: componentCatalog } }),
+    listComponents: async () => ok({ warnings: runtimeRequired ? ['尚未导入运行库，请选择与显卡对应的组件。'] : [], packages: [],
+      runtimeSetup: { hardwareFamily:'RTX40', ready:!runtimeRequired, runtimeDlcRequired:runtimeRequired, selectedRuntimeId:null },
+      storage:{root:'D:\\DLSS5-Components',cDrive:false}, catalog: { checkedAt: new Date().toISOString(), packages: componentCatalog } }),
     checkComponentUpdates: async () => ok([]), downloadComponent: async () => ok({ changedGames: false }),
     inspectComponentProviders: async () => ok({ packages: [], selectedId: null, selectedByRoute: {}, reason: '尚未导入输入桥配套。' }),
-    componentChoices: async () => ok({ bridges: [] }), pickComponent: empty,
-    activateComponentRuntime: empty, activateComponentCore: empty, selectComponentProvider: empty, applyBridgeComponent: empty,
+    componentChoices: async id => {
+      const game = games().find(row => row.id === id), api = game?.operationApi?.effectiveApi || game?.chosen?.apiResolution?.api || 'dx12';
+      const dx11 = api === 'dx11';
+      return ok({ bridges: [], stack: { api, apiLabel:dx11 ? 'DirectX 11' : 'DirectX 12', route:'native', status:'ready', missingCount:0,
+        title:dx11 ? 'DirectX 11 · DLSS5 Bridge 路线' : 'DirectX 12 · 原生 DLSS 路线',
+        summary:dx11 ? 'AI Core 与一份接口匹配的 DLSS5 Bridge 搭配，再使用对应显卡运行库。' : '游戏直接向 AI Core 提供 DLSS 输入，只需要 Core、输入链和对应显卡运行库。',
+        reason:dx11 ? 'DX11 需要 Bridge 把输入交给 Core；管理器只启用一个已验证匹配的版本。' : '此路线不需要 DLSS5 Bridge，也不安装 DLSS5 Feeder。',
+        manualBridge:dx11, items:[
+          {key:'api',label:'游戏 API',value:dx11 ? 'DirectX 11' : 'DirectX 12',status:'ready',detail:'由游戏程序识别。'},
+          {key:'core',label:'AI 增强 Core',value:'0.4.7（默认）',status:'ready',detail:'按游戏保存版本。'},
+          {key:'input',label:'输入适配',value:dx11 ? 'DLSS5 Bridge · 1.4.12' : '游戏原生 DLSS 输入',status:'ready',detail:dx11 ? '按 Core 接口自动选择。' : '无需额外 Bridge / Feeder。'},
+          {key:'runtime',label:'显卡运行库',value:'RTX 40 系 NR 运行库',status:'ready',detail:'已校验。'}
+        ] } });
+    }, pickComponent: empty,
+    pickRuntimeDlc: async () => { mock.calls.push(['pick-runtime-dlc']); return ok(null); },
+    activateComponentRuntime: empty, activateComponentCore: empty, moveComponentLibrary: empty, selectComponentProvider: empty, applyBridgeComponent: empty,
     startupReady() {}, startupFailed: message => { mock.calls.push(['startup-failed', message]); },
     minimize() { if (options.demo) ipcRenderer.send('game-page-fixture-window', 'minimize'); },
     maximize() { if (options.demo) ipcRenderer.send('game-page-fixture-window', 'maximize'); },
@@ -169,7 +200,9 @@ function installMock(features, options = {}) {
     removeGame: async id => { mock.calls.push(['remove-game', id]); mock.removed.add(id); return ok({ removed: true }); },
     writeGameHotkey: forbidden('direct-hotkey-write'), uninstall: forbidden('direct-uninstall'), updateLaunchSettings: forbidden('direct-launch-settings-write'),
     saveParameters: forbidden('direct-parameter-write'), writeConfig: forbidden('direct-config-write'),
-    exportFeedback: async () => ok('fixture.txt'), openFolder: empty, openExternal: async key => { mock.calls.push(['external', key]); return ok(true); },
+    exportFeedback: async id => { mock.calls.push(['feedback', id]); return ok('fixture.txt'); },
+    openFolder: async id => { mock.calls.push(['open-folder', id]); return ok(null); },
+    openExternal: async key => { mock.calls.push(['external', key]); return ok(true); },
     launch: async id => { mock.calls.push(['launch', id]); return ok({ launched: { gameId: id, status: 'waiting-enhancement' } }); }, cancelLaunch: async id => { mock.calls.push(['cancel-launch', id]); return ok({ cancelled: true }); }
   };
 }
@@ -189,28 +222,37 @@ async function smoke() {
     const closed = []; for (let parent = item.parentElement; parent && parent !== host(); parent = parent.parentElement) if (parent.tagName === 'DETAILS' && !parent.open) closed.push(parent);
     for (const details of closed.reverse()) details.querySelector(':scope > summary').click();
     assert(item.getClientRects().length > 0, 'action is visible after opening its details: ' + action); item.click(); };
-  const set = (group, key, value) => { const input = field(group, key); assert(input && !input.disabled, 'field unavailable: ' + group + '.' + key);
+  const set = (group, key, value) => { if (group === 'nr' && !field(group, key)) host().__gpController.selectTab('nr');
+    let input = field(group, key); if (group === 'route' && key === 'version' && ![...input.options].some(row => row.value === value)) input = host().querySelector('[data-gp-detail="rollback"] select'); assert(input && !input.disabled, 'field unavailable: ' + group + '.' + key);
     const closed = []; for (let parent = input.parentElement; parent && parent !== host(); parent = parent.parentElement) if (parent.tagName === 'DETAILS' && !parent.open) closed.push(parent);
     for (const details of closed.reverse()) details.querySelector(':scope > summary').click();
     assert(input.getClientRects().length > 0, 'field is visible: ' + group + '.' + key);
     if (input.type === 'checkbox') input.checked = Boolean(value); else input.value = value;
     input.dispatchEvent(new Event(input.type === 'range' || input.type === 'number' ? 'input' : 'change', { bubbles: true })); };
-  const tab = async key => { const item = host()?.querySelector(`[data-gp-tab="${key}"]`); assert(item, 'tab exists: ' + key); item.click();
+  const tab = async key => { if (key === 'maintenance') { host().__gpController.selectTab('maintenance'); return; } const item = host()?.querySelector(`[data-gp-tab="${key}"]`); assert(item, 'tab exists: ' + key); item.click();
     await until(() => host()?.querySelector(`[data-gp-tab="${key}"]`)?.getAttribute('aria-selected') === 'true', 'tab ' + key); };
   const open = async id => { const item = card(id)?.querySelector('.open-game-page-btn'); assert(item, 'card can open: ' + id); item.click();
     await until(() => host()?.dataset.gameDetail === id, 'inline card ' + id, 1000); };
   const fold = async selector => { await until(() => host()?.querySelector(selector), 'details ' + selector); const details = host().querySelector(selector);
     if (!details.open) details.querySelector('summary').click(); assert(details.open, 'details can open: ' + selector); };
   const maintenance = async () => { await tab('maintenance'); await until(() => state().loaded.includes('diagnostics') && state().loaded.includes('enhancements'), 'advanced sections'); await fold('.gp-maintenance-details'); };
-  const diagnostics = async () => { await tab('maintenance'); await until(() => state().loaded.includes('diagnostics') && state().loaded.includes('enhancements'), 'diagnostic sections'); await fold('.gp-diagnostics-details'); };
+  const diagnostics = async () => { await tab('maintenance'); await until(() => state().loaded.includes('diagnostics') && state().loaded.includes('enhancements'), 'diagnostic sections'); await fold('.gp-maintenance-details'); };
   const settled = async () => until(() => !state()?.busy && !host()?.querySelector('.gp-modal'), 'operation settled');
-  const preview = async (action = 'preview') => { click(action); await until(() => host()?.querySelector('.gp-modal [data-gp-action="modal-apply"]'), 'preview dialog'); };
+  const preview = async (action = 'preview') => { click(button(action) ? action : 'prepare'); await until(() => host()?.querySelector('.gp-modal [data-gp-action="modal-apply"]'), 'preview dialog'); };
   const discard = () => { if (button('discard')) click('discard'); };
   const scenario = async (label, change) => {
     discard(); mock.policyEnabled = false; mock.assessment = structuredClone(mock.baseline); mock.assessment.game.name = label; change?.(mock.assessment);
     await maintenance(); click('refresh'); await until(() => state().data.game.name === label && mock.pending === 0, 'fresh scenario ' + label); await settled();
   };
   await until(() => card()?.querySelector('.open-game-page-btn') && card('fixture-two'), 'library cards');
+  assert(card('fixture-unmanaged').textContent.includes('已有插件待确认') && card('fixture-unmanaged').textContent.includes('检查已有安装'), 'unmanaged Core is disclosed on the collapsed card');
+  await open('fixture-unmanaged'); await until(() => state().loaded.includes('installation'), 'unmanaged installation assessment');
+  assert(field('route', 'version').value === '', 'unmanaged Core does not inherit the new-install default');
+  assert(host().textContent.includes('发现已有插件') && host().textContent.includes('确认备份再替换') && host().textContent.includes('_DLSS5_Backup'), 'existing files and backup boundary are explained');
+  assert(button('prepare')?.disabled && button('prepare')?.textContent === '应用', 'preview waits for an explicit replacement target');
+  set('route', 'version', '0.4.7beta'); await preview();
+  assert(mock.plan.request.version === '0.4.7beta', 'explicit replacement target reaches the operation preview');
+  click('modal-cancel'); discard(); click('back');
   await open('fixture-dx9'); await until(() => state().loaded.includes('installation'), 'DX9 Feeder assessment');
   assert(state().data.game.supported === false && state().data.game.chosen.bitness === 32 && field('route', 'version').value === 'fixture-dx9-x86-on12', 'old unsupported marker does not suppress an available DX9 x86 Feeder package');
   await preview('prepare');
@@ -225,11 +267,12 @@ async function smoke() {
   assert(!state().loaded.includes('installation'), 'seed appears while installation is unresolved');
   await until(() => state().loaded.includes('installation'), 'five-second installation response'); mock.delays['fixture:installation'] = 0;
   assert(!mock.calls.some(row => row[0] === 'assess' && row[2] !== 'installation'), 'first tab does not start expensive enhancement or diagnostic work');
-  assert(['Intensity', 'LocalToneStrength', 'LocalStructureStrength'].every(key => field('nr', key)?.getClientRects().length > 0), 'three primary NR sliders are visible on first tab');
-  assert(host().querySelectorAll('.gp-nr-primary input[type="range"]').length === 3 && !host().querySelector('.gp-nr-details').open && field('nr', 'WorkMode').closest('details') === host().querySelector('.gp-nr-details'), 'advanced NR starts collapsed below the three primary sliders');
-  assert(![...field('route', 'version').options].some(row => row.value.includes('bridge1411')), 'bridge comparison is absent from basic Core choices');
+  assert(!field('nr', 'Intensity'), 'installation page keeps NR controls on their own page'); await tab('nr');
+  assert(['Intensity', 'LocalToneStrength', 'LocalStructureStrength'].every(key => field('nr', key)?.getClientRects().length > 0), 'three primary NR controls are visible on the NR page');
+  assert(host().querySelectorAll('.gp-nr-primary input[type="number"]').length === 3 && !host().querySelector('.gp-nr-details').open && field('nr', 'WorkMode').closest('details') === host().querySelector('.gp-nr-details'), 'advanced NR starts collapsed below three precise numeric controls');
+  await tab('overview'); assert(![...field('route', 'version').options].some(row => row.value.includes('bridge1411')), 'bridge comparison is absent from basic Core choices');
   for (const id of ['0.5-dline13', '0.4.7beta-corefix.8']) {
-    const candidate = [...field('route', 'version').options].find(row => row.value === id);
+    const candidate = host().querySelector('[data-gp-field="version"] option[value="' + id + '"]');
     assert(candidate && !candidate.disabled, id + ' core-update candidate is visible and selectable');
   }
   set('route', 'version', '0.5-dline13'); assert(state().draft.version === '0.5-dline13', 'ordinary Core dropdown accepts the D13 candidate'); discard();
@@ -238,13 +281,13 @@ async function smoke() {
   await tab('maintenance');
   await until(() => mock.calls.some(row => row[0] === 'assess' && row[2] === 'diagnostics'), 'diagnostic request started');
   const diagnosticTicket = mock.calls.filter(row => row[0] === 'assess' && row[2] === 'diagnostics').at(-1)[3];
-  const backAt = performance.now(); await tab('overview');
+  const backAt = performance.now(); await tab('nr');
   assert(performance.now() - backAt < 500 && field('nr', 'Intensity').value === '0.65', 'slow diagnostics never block the basic tab or erase its draft');
   mock.delays['fixture-two:installation'] = 30; await open('fixture-two');
   await until(() => state().loaded.includes('installation'), 'second game installs first');
   set('nr', 'Intensity', '.8');
   await until(() => mock.calls.some(row => row[0] === 'assess-resolved' && row[3] === diagnosticTicket), 'older first-game diagnostic response');
-  assert(state().id === 'fixture-two' && state().data.api.effectiveApi === 'dx12' && field('nr', 'Intensity').value === '0.8', 'late first-game response cannot replace the second game or its draft');
+  assert(state().id === 'fixture-two' && state().data.api.effectiveApi === 'dx12' && Number(field('nr', 'Intensity').value) === .8, 'late first-game response cannot replace the second game or its draft');
   await open('fixture');
   assert(host() === firstHost && host().__gpController === firstController && mock.mounts.get('fixture') === 1, 'same host and controller survive cross-game expansion');
   assert(field('nr', 'Intensity').value === '0.65', 'first-game draft survives returning from another game');
@@ -337,7 +380,7 @@ async function smoke() {
   mock.assessment.launch.readiness = { state: 'blocked', known: true, source: 'metadata', blockers: [{ domain: 'fg', code: 'SETTINGS_FG_FILE_RECOVERY_REQUIRED', message: '补帧组件文件操作尚未完成，请先恢复。', action: { kind: 'recover' }, recovery: true }], pending: [], requests: {} };
   await tab('overview'); click('refresh'); await until(() => state().data.game.name === 'FG 文件恢复 · metadata 阶段' && !state().busy, 'FG metadata readiness');
   assert(!state().loaded.includes('enhancements') && button('resolve-readiness')?.textContent === '前往补帧恢复', 'metadata FG recovery points to the owner flow before enhancement details load');
-  click('resolve-readiness'); await until(() => state().tab === 'maintenance' && state().loaded.includes('enhancements'), 'FG recovery owner section'); await fold('.gp-maintenance-details');
+  click('resolve-readiness'); await until(() => state().tab === 'overview' && state().loaded.includes('enhancements'), 'FG recovery owner section'); await fold('.gp-maintenance-details');
   assert(button('recover-fg-components') && !button('recover-operation'), 'FG file recovery exposes its dedicated component owner action');
   click('recover-fg-components'); await settled();
   assert(mock.calls.some(row => row[0] === 'recover-fg-components') && !button('recover-fg-components') && state().readiness?.state === 'ready', 'FG component recovery reaches the owner API and clears the launch blocker');
@@ -484,7 +527,7 @@ async function smoke() {
   assert(field('route', 'api').value === 'auto' && state().data.api.effectiveApi === 'dx12', 'explicit recheck does not convert automatic API back to manual');
   await scenario('游戏目录默认安装 · UI fixture', value => { value.game.installed = false; }); await tab('overview'); await preview('prepare');
   assert(mock.plan.request.api === 'auto' && mock.plan.request.version === '0.4.7beta' && mock.plan.request.deployment === 'local' && mock.plan.request.loadingMode === undefined, 'prepare preserves automatic API and local layout while binding the displayed Core'); click('modal-cancel'); discard();
-  await tab('maintenance'); set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview');
+  await scenario('已安装游戏 · 独立桥接更新'); await tab('maintenance'); set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview');
   assert(field('route', 'version').value === '0.4.7beta', 'advanced bridge choice does not appear as a second Core'); await preview();
   assert(JSON.stringify(mock.plan.request) === JSON.stringify({ components: { bridge: 'nigos-1.4.11-nr' } }), 'bridge version is an independent component request and leaves Core identity implicit'); click('modal-cancel'); discard();
   for (const route of ['vulkan', 'feeder']) {
@@ -492,12 +535,12 @@ async function smoke() {
     await scenario(route + ' 固定配套', value => { value.game.installed = false; value.game.chosen.apiResolution.api = value.api.effectiveApi = api; value.game.nativeDlssAvailable = route !== 'feeder';
       value.game[route] = { installed: false, available: true, selectionAvailable: true, packageId, coreVersion: route + '-core' };
       value.layout.source = route; value.layout.mode = value.deployment.mode = route === 'vulkan' ? 'external' : 'local'; });
-    await tab('overview'); assert(field('route', 'version').disabled && field('route', 'version').value === packageId && field('route', 'version').options.length === 1, 'fixed route exposes only its package');
+    await tab('overview'); assert(field('route', 'version').value === packageId && field('route', 'version').options.length === 1, 'fixed route preserves its package when no verified current Core is offered');
     await preview('prepare'); assert(mock.plan.request.route === route && mock.plan.request.api === 'auto' && mock.plan.request.version === packageId && mock.plan.request.loadingMode === undefined, 'fixed route follows automatic detection and sends its fixed package without a native Core or helper choice'); click('modal-cancel'); discard();
-    await tab('maintenance'); assert(field('route', 'deployment').disabled && field('route', 'loadingMode').disabled, 'fixed route blocks unrelated layout and helper choices');
+    await tab('maintenance'); assert(field('route', 'deployment').disabled && (!field('route', 'loadingMode') || field('route', 'loadingMode').disabled), 'fixed route blocks unrelated layout and helper choices');
   }
 
-  await scenario('三滑块与人脸强度 · UI fixture'); await tab('overview');
+  await scenario('三滑块与人脸强度 · UI fixture'); await tab('nr');
   const nrPassiveWrites = count('apply');
   set('nr', 'Intensity', '1.15'); set('nr', 'LocalToneStrength', '.75'); set('nr', 'LocalStructureStrength', '1.25');
   assert(!field('nr', 'SkinStructureStrength') && !field('face', 'enabled').checked, 'disabled AutoMask hides the face strength control');
@@ -515,8 +558,8 @@ async function smoke() {
   await scenario('旧 Core 缺少新参数 · UI fixture', value => {
     value.nr.capabilities.LocalToneStrength = value.nr.capabilities.LocalStructureStrength = value.nr.capabilities.SkinStructureStrength = false;
     delete value.nr.LocalToneStrength; delete value.nr.LocalStructureStrength;
-  }); await tab('overview');
-  assert(field('nr', 'LocalToneStrength').disabled && field('nr', 'LocalStructureStrength').disabled && field('face', 'enabled').disabled, 'absent Core capabilities stay disabled instead of fabricated by fixture defaults');
+  }); await tab('nr');
+  assert(!field('nr', 'LocalToneStrength') && !field('nr', 'LocalStructureStrength') && field('face', 'enabled').disabled, 'unsupported Core parameters are not offered or fabricated by fixture defaults');
   await scenario('能力结果缺失 · UI fixture', value => { delete value.enhancements.featureStates.sr; }); await tab('enhance');
   assert(field('sr', 'preset').disabled && button('preview-sr').disabled && !button('confirm-sr'), 'missing automatic feature evidence cannot inherit old boolean support flags');
 
@@ -530,51 +573,65 @@ async function smoke() {
   click('modal-cancel'); discard();
 
   await scenario('MFG 面板读回与独立版本 · UI fixture', value => {
-    value.enhancements.fgComponents.installed = true; value.enhancements.fgComponents.installedProvider = 'mfgunlock-0.6.1';
+    value.enhancements.fgComponents.installed = true; value.enhancements.fgComponents.installedProvider = 'mfgunlock-0.9';
     value.enhancements.requests.fg = { request: { backend: 'mfgunlock', mode: 'fixed', multiplier: 3 } };
     value.enhancements.applied.fg = { request: { backend: 'mfgunlock', mode: 'fixed', multiplier: 3 }, readbackVerified: true };
     value.enhancements.current = { fg: { source: 'active-ini', valid: true, differsFromLastApplied: true, request: { backend: 'mfgunlock', mode: 'fixed', multiplier: 4 } } };
   }); await tab('enhance');
-  assert(field('fg', 'multiplier').value === '4' && field('component', 'mfgUnlock').value === 'mfgunlock-0.6.1', 'actual game-panel INI takes priority over old multiplier while installed provider remains selected');
+  assert(field('fg', 'multiplier').value === '4' && field('component', 'mfgUnlock').value === 'mfgunlock-0.9', 'actual game-panel INI takes priority over old multiplier while installed provider remains selected');
   assert(host().textContent.includes('与上次管理器请求不同'), 'external game-panel change is visible');
   set('fg', 'multiplier', '2');
   mock.assessment.enhancements.current.fg.request.multiplier = 3; click('discard');
   set('fg', 'multiplier', '2');
   await host().__gpController.refresh(true);
-  assert(field('fg', 'multiplier').value === '2' && state().draft.fg.multiplier === 2, 'fresh INI readback preserves a dirty FG draft');
+  assert(field('fg', 'multiplier').value === '3' && !state().draft.fg, 'external INI wins over dirty FG settings');
+  assert(host().textContent.includes('未应用修改已保留') && host().querySelector('[data-gp-action="restore-draft-backup"]'), 'superseded draft remains recoverable');
+  click('restore-draft-backup');
+  assert(state().draft.fg.multiplier === 2, 'restored draft still requires Apply');
   await preview(); assert(mock.plan.request.fg.multiplier === 2 && !mock.plan.request.components && mock.plan.request.version === undefined, 'FG setting change preserves the installed MFG plugin version');
   click('modal-cancel'); discard();
   assert(field('fg', 'multiplier').value === '3', 'discard returns to the newest actual INI value');
-  set('component', 'mfgUnlock', 'mfgunlock-0.7-zh-CN'); await tab('maintenance'); set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview');
+  set('component', 'mfgUnlock', 'mfgunlock-0.9-zh-CN'); await tab('maintenance'); set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview');
   assert(field('route', 'version').value === '0.4.7beta', 'independent MFG and bridge selections keep the Core visible');
-  await preview(); assert(JSON.stringify(mock.plan.request) === JSON.stringify({ components: { mfgUnlock: 'mfgunlock-0.7-zh-CN', bridge: 'nigos-1.4.11-nr' } }), 'component choices combine without synthesizing a Core, NR or FG request');
+  await preview(); assert(JSON.stringify(mock.plan.request) === JSON.stringify({ components: { mfgUnlock: 'mfgunlock-0.9-zh-CN', bridge: 'nigos-1.4.11-nr' } }), 'component choices combine without synthesizing a Core, NR or FG request');
   click('modal-apply'); await settled(); await tab('enhance'); await until(() => state().loaded.includes('enhancements'), 'provider refresh');
-  assert(field('component', 'mfgUnlock').value === 'mfgunlock-0.7-zh-CN' && field('fg', 'multiplier').value === '3', 'provider update reads back independently from the actual multiplier');
+  assert(field('component', 'mfgUnlock').value === 'mfgunlock-0.9-zh-CN' && field('fg', 'multiplier').value === '3', 'provider update reads back independently from the actual multiplier');
 
   await scenario('DX12 入口独立选择 · UI fixture', value => {
     value.game.chosen.apiResolution.api = value.api.effectiveApi = 'dx12'; value.api.capabilities = ['dx12'];
-  }); await tab('maintenance'); set('route', 'proxyEntry', 'd3d12');
+  }); await tab('overview'); click('switch-proxy');
   await preview(); assert(JSON.stringify(mock.plan.request) === JSON.stringify({ proxyEntry: 'd3d12' }) && state().data.api.effectiveApi === 'dx12', 'proxy filename is independent from graphics API and Core version'); click('modal-cancel'); discard();
   await scenario('DX11 入口不伪造 API · UI fixture'); await tab('maintenance');
-  assert(field('route', 'proxyEntry').querySelector('option[value="d3d12"]').disabled, 'DX11 cannot choose the DX12-only proxy entry');
+  assert(!button('switch-proxy') && !field('route', 'proxyEntry'), 'DX11 has no DX12-only proxy control');
   set('component', 'bridge', 'nigos-1.4.11-nr'); await tab('overview'); set('route', 'api', 'dx12');
   assert(!state().draft.components?.bridge && state().draft.api === 'dx12', 'moving from DX11 to DX12 clears only the inapplicable bridge draft'); discard();
 
-  await scenario('Feeder 随 API 选择完整配套', value => {
+  await scenario('原生集成证据交由后端选择 Feeder', value => {
     value.game.installed = false; value.game.nativeDlssAvailable = false;
+    value.enhancements.featureStates.sr = structuredClone(mock.features.notObservedSr);
+    value.componentChoices.stack = structuredClone(mock.feederRecommendation);
     value.game.feeder = { installed: false, available: true, selections: {
       dx11: { api: 'dx11', available: true, packageId: 'fixture-feeder-dx11', coreVersion: '0.4.7beta' },
       dx12: { api: 'dx12', available: true, packageId: 'fixture-feeder-dx12', coreVersion: '0.4.7beta' },
       dx10: { api: 'dx10', available: true, packageId: 'fixture-feeder-dx10', coreVersion: '0.4.7beta' }
     } };
   }); await tab('overview');
-  assert(field('route', 'version').value === 'fixture-feeder-dx11', 'automatic DX11 selects its complete Feeder package');
+  assert(state().data.enhancements.featureStates.sr.evidence.support.code === 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED' && state().data.enhancements.featureStates.sr.evidence.static.coverage.complete && host().textContent.includes('DirectX 11 · DLSS5 Feeder 路线'), 'a complete backend assessment supplies the Feeder recommendation independently of the static DLL flag');
+  assert(field('route', 'version').value === '0.4.7beta', 'automatic DX11 keeps the selected Core while the backend chooses its matching input package');
+  await preview('prepare');
+  assert(!Object.hasOwn(mock.plan.request, 'route') && mock.plan.request.api === 'auto' && mock.plan.request.version === '0.4.7beta', 'automatic DX11 submits the API and Core without forcing a route from a static DLL flag'); click('modal-cancel'); discard();
+  set('route', 'api', 'dx12'); await preview();
+  assert(!Object.hasOwn(mock.plan.request, 'route') && mock.plan.request.api === 'dx12' && mock.plan.request.version === '0.4.7beta', 'DX12 preserves the Core and leaves native-versus-Feeder selection to current API evidence'); click('modal-cancel'); discard();
   set('route', 'api', 'dx10'); assert(field('route', 'version').value === 'fixture-feeder-dx10', 'DX10 selection changes only to a matching Feeder package');
   await preview(); assert(mock.plan.request.route === 'feeder' && mock.plan.request.api === 'dx10' && mock.plan.request.version === 'fixture-feeder-dx10', 'matching Feeder selection submits the displayed API-specific package'); click('modal-cancel'); discard();
   await tab('maintenance'); set('input-route', 'route', 'native'); await preview();
   assert(mock.plan.request.route === 'native' && mock.plan.request.version === '0.4.7beta', 'explicit native input binds the displayed Core for production eligibility to validate'); click('modal-cancel'); discard();
 
+  mock.assessments['fixture-hoyo'].enhancements.featureStates.sr = structuredClone(mock.features.notObservedSr);
+  mock.assessments['fixture-hoyo'].componentChoices.stack = structuredClone(mock.feederRecommendation);
   await open('fixture-hoyo'); await until(() => state().loaded.includes('installation'), 'HoYo client assessment');
+  assert([...field('route', 'version').options].map(row => row.value).join('|') === '0.4.7beta|0.5-dline21-unified5' && !host().querySelector('[data-gp-detail="rollback"]'), 'HoYo keeps only the current 0.4.7 and latest 0.5 Core choices even in ordinary loading mode');
+  assert(field('route', 'version').querySelector('[value="0.4.7beta"]').disabled && field('route', 'version').value === '0.5-dline21-unified5', 'the backend Feeder recommendation disables incompatible 0.4.7 and chooses the latest ready Core before first Apply');
   assert(field('route', 'loadingBackend').value === 'local' && !field('hoyo', 'channel'), 'HoYo clients retain ordinary loading as the initial visible choice');
   set('route', 'loadingBackend', 'hoyoshade');
   assert(field('hoyo', 'channel').options.length === 3 && [...field('hoyo', 'channel').options].every(row => ['cn', 'bilibili', 'global'].includes(row.value)), 'formal channels come from production HoYo profile options');
@@ -583,9 +640,18 @@ async function smoke() {
   set('hoyo', 'kind', 'starward'); assert(!state().draft.hoyo.launcher.path, 'changing launcher type clears the previous program identity');
   mock.selectedLauncher = 'C:\\UI-fixture\\Starward\\Starward.exe'; click('pick-hoyo-launcher'); await until(() => state().draft.hoyo?.launcher.path === mock.selectedLauncher, 'Starward path binding');
   await tab('maintenance');
-  assert(field('route', 'deployment').disabled && field('route', 'deployment').value === 'external' && field('route', 'loadingMode').disabled && field('route', 'loadingMode').value === 'helper' && !field('route', 'proxyEntry'), 'HoYo external helper controls do not expose a conflicting proxy entry');
+  assert(field('route', 'deployment').disabled && field('route', 'deployment').value === 'external' && field('route', 'deployment').options.length === 1 && field('route', 'loadingMode').disabled && field('route', 'loadingMode').value === 'helper' && field('route', 'loadingMode').options.length === 1 && !button('switch-proxy'), 'an automatic HoYo input route keeps its owner-bound external/helper controls fixed and exposes no local proxy switch');
   await preview();
-  assert(mock.plan.request.loadingBackend === 'hoyoshade' && mock.plan.request.route === 'feeder' && mock.plan.request.version === 'fixture-feeder-dx11-x64' && JSON.stringify(mock.plan.request.hoyo) === JSON.stringify({ family: 'starrail', channel: 'bilibili', launcher: { kind: 'starward', path: mock.selectedLauncher } }), 'HoYo preview preserves family, public channel, launcher type and program path');
+  assert(mock.plan.request.loadingBackend === 'hoyoshade' && mock.plan.request.deployment === 'external' && mock.plan.request.loadingMode === 'helper' && !Object.hasOwn(mock.plan.request, 'route') && mock.plan.request.version === '0.5-dline21-unified5' && JSON.stringify(mock.plan.request.hoyo) === JSON.stringify({ family: 'starrail', channel: 'bilibili', launcher: { kind: 'starward', path: mock.selectedLauncher } }), 'HoYo preview preserves the displayed current Core and launcher identity while leaving automatic input selection to backend evidence');
+  click('modal-cancel');
+  set('input-route', 'route', 'native');
+  assert(field('route', 'deployment').disabled && field('route', 'deployment').value === 'external' && field('route', 'loadingMode').disabled && field('route', 'loadingMode').value === 'helper', 'an explicit native input route cannot unlock HoYo installation or loading ownership');
+  await preview(); assert(mock.plan.request.route === 'native' && mock.plan.request.deployment === 'external' && mock.plan.request.loadingMode === 'helper' && mock.plan.request.loadingBackend === 'hoyoshade' && !mock.plan.request.proxyEntry, 'explicit native HoYo preview retains the same owner-bound loading request');
+  click('modal-cancel');
+  set('route', 'loadingBackend', 'local');
+  assert(!field('route', 'deployment').disabled && field('route', 'loadingBackend').value === 'local' && !field('hoyo', 'kind'), 'switching the independent loading backend back to local restores ordinary installation choices');
+  set('route', 'deployment', 'local'); await preview();
+  assert(mock.plan.request.loadingBackend === 'local' && mock.plan.request.deployment === 'local' && !mock.plan.request.loadingMode && !mock.plan.request.hoyo, 'the explicit local switch does not retain HoYo helper or launcher parameters');
   click('modal-cancel'); discard(); await tab('overview');
   assert(field('route', 'loadingBackend').value === 'local' && !field('hoyo', 'kind'), 'discard restores the ordinary HoYo loading choice');
   await open('fixture');
@@ -623,7 +689,7 @@ async function smoke() {
   assert(mock.policyApplied === verifiedBeforeChange && host().querySelector('.gp-message.error[role="alert"]')?.textContent, 'last-moment mutation is rejected by production snapshot assertion and shown as an error'); discard();
 
   await scenario('库条目移出 · 已有覆盖', value => { value.game.installed = false; value.enhancements.applied.sr = { request: { backend: 'native', quality: 'quality', preset: 'K' }, readbackVerified: true }; }); await maintenance();
-  assert(button('remove-game').disabled, 'owned settings block library removal');
+  assert(!button('remove-game').disabled, 'owned settings permit explicit keep-files library removal');
   await scenario('库条目移出 · 无受管状态', value => { value.game.installed = false; }); await maintenance();
   const beforeRemoveApply = count('apply'), beforeRemovePreview = count('preview'); click('remove-game');
   assert(button('remove-confirm') && !button('modal-apply') && count('remove-game') === 0, 'library removal has a separate metadata-only dialog'); click('modal-cancel'); assert(count('remove-game') === 0, 'cancel retains entry');
@@ -804,7 +870,8 @@ async function smokeTargetedHoYo() {
   game.api.effectiveApi = 'dx12'; game.api.detectedApi = 'dx12'; game.api.capabilities = ['dx12'];
   game.defaults = { ...game.defaults, deployment: 'external', loadingMode: 'helper' };
   game.layout = { ...game.layout, mode: 'external', loadingMode: 'helper', loadingBackend: 'hoyoshade', source: 'hoyoshade-profile', inputRoute: 'native' };
-  game.deployment = { ...game.deployment, mode: 'external', loadingMode: 'helper', version: '0.4.7beta' };
+  game.game.addonVersion = '0.5-dline13';
+  game.deployment = { ...game.deployment, mode: 'external', loadingMode: 'helper', version: '0.5-dline13' };
   game.launch.readiness = structuredClone(readiness); game.nr = structuredClone(gp.baseline.nr);
   const secondGameId = 'fixture-hoyo-second', secondGame = structuredClone(game), secondFlow = structuredClone(flow);
   secondGame.gameId = secondGame.game.id = secondGameId; secondGame.game.name = '崩坏：星穹铁道 · 旧 M blocker';
@@ -842,11 +909,12 @@ async function smokeTargetedHoYo() {
   gp.delays['fixture-hoyo:installation'] = 0; gp.delays['fixture-hoyo:enhancements'] = 0;
   const version = () => settings()?.querySelector('[data-gp-group="route"][data-gp-field="version"]');
   controller().selectTab('overview'); await until(() => controller().getState().tab === 'overview' && version(), 'HoYo Core picker tab');
-  const candidates = ['0.5-dline13', '0.4.7beta-corefix.8'];
-  for (const id of candidates) {
-    const option = [...(version()?.options || [])].find(row => row.value === id);
-    assert(option && !option.disabled, id + ' is visible and selectable in the HoYo Core picker');
-  }
+  const candidates = ['0.5-dline21-unified5', '0.4.7beta'];
+  assert([...version().options].filter(row => row.value).map(row => row.value).join('|') === '0.4.7beta|0.5-dline21-unified5' && !settings().querySelector('[data-gp-detail="rollback"]'), 'HoYo replacement choices contain only current 0.4.7 and latest 0.5 without historical rollback options');
+  assert(version().value === '' && settings().textContent.includes('当前安装：') && settings().textContent.includes('0.5-dline13') && !controller().getState().draft.version, 'an installed historical Core remains truthfully visible without becoming a replacement option or automatic draft');
+  await controller().previewRepair(); await until(() => settings().querySelector('.gp-modal') && !controller().getState().busy, 'historical HoYo Core repair');
+  assert(JSON.stringify(gp.plan.request) === JSON.stringify({ repair: true }), 'repair preserves the historical HoYo installation without substituting a current Core');
+  settings().querySelector('[data-gp-action="modal-cancel"]').click();
   const selected = version(); selected.value = candidates[0]; selected.dispatchEvent(new Event('change', { bubbles: true }));
   await until(() => controller().getState().draft.version === candidates[0], 'HoYo Core draft');
   const previewBefore = gp.calls.filter(row => row[0] === 'preview').length;

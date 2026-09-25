@@ -17,6 +17,7 @@ const { getBitness } = require('../src/core/pe');
 const { verify: verifyArchive } = require('./verify-release-archive');
 const readme = require('./game-ota-readme');
 const { ensureDefaultReShadeHotkey } = require('../src/product/hotkeys');
+const { ID: MFG_ID, PROVIDERS: MFG_PROVIDERS } = require('../src/product/fg-mfgunlock-resources');
 
 const CORE_VERSION = '0.4.7beta';
 const HASH = /^[a-f0-9]{64}$/;
@@ -239,14 +240,18 @@ async function collectPlan({ root, mfg }) {
   await addFile(path.join(nativeRoot, 'versions', fallback.sourceVersion, INSTALLED_NAMES.carrier),
     `独立组件/桥接器回退/${INSTALLED_NAMES.carrier}`, fallback.sha256, 'x64', fallback);
   addText('仅供原生 DX11 Core 0.4.7beta 配套明确回退。退出游戏，备份并移出活动目录中的 1.4.12 桥接器后，以本文件替换同名文件；不要同时加载两版，不替换 Core／nrchain，不用于 Feeder 或 DX12。\n来源：https://github.com/smartLanny/dlss5-nr-before-sr-lab/issues/224\n实际游戏 NR 状态仍需验证。\n', '独立组件/桥接器回退/说明.txt');
-  // The independent MFG archive has its own payload verifier and provider hashes.
-  const mfgFile = path.resolve(root, mfg), mfgReportFile = path.join(path.dirname(mfgFile), 'staging-report.json');
-  await safeSource(root, mfgReportFile);
-  const mfgReport = JSON.parse(await fsp.readFile(mfgReportFile, 'utf8'));
-  if (!HASH.test(mfgReport.sha256 || '') || typeof mfgReport.file !== 'string' || path.resolve(mfgReport.file) !== mfgFile || mfgReport.providers?.length !== 3) fail('独立 MFG ZIP 缺少配套 staging-report.json。');
-  const mfgRow = await addFile(mfgFile, '独立组件/RTX40-MFGUnlock-0.7-zh-CN.zip', mfgReport.sha256, null, { version: '0.7-zh-CN', providers: mfgReport.providers });
-  if (mfgRow.bytes !== mfgReport.bytes) fail('独立 MFG ZIP 长度不符。');
-  addText(json({ ...mfgReport, file: mfgRow.packagePath }), '独立组件/MFG-来源与校验.json');
+  // Manual update material follows the current 1.0 default. The Manager keeps
+  // 0.9 as a separately selectable fallback; 0.7/0.6.1 remain recovery-only.
+  const provider = MFG_PROVIDERS.find(row => row.id === MFG_ID);
+  if (!provider || provider.version !== '1.0' || provider.sha256 !== 'f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e')
+    fail('MFG 1.0 固定记录无效。');
+  const mfgFile = path.resolve(root, mfg); await safeSource(root, mfgFile);
+  const mfgRow = await addFile(mfgFile, '独立组件/RTX40-MFGUnlock-1.0/renodx-mfgunlock.addon64', provider.sha256, 'x64',
+    { id: provider.id, version: provider.version, source: provider.sourceRepository, sourceUrl: provider.sourceUrl });
+  if (mfgRow.bytes !== 710144) fail('MFG 1.0 长度不符。');
+  addText(readme.mfgReadme(provider), '独立组件/RTX40-MFGUnlock-1.0/说明.txt');
+  addText(json({ schema: 1, id: provider.id, version: provider.version, file: mfgRow.packagePath, bytes: mfgRow.bytes,
+    sha256: mfgRow.sha256, source: provider.sourceRepository, download: provider.sourceUrl }), '独立组件/MFG-来源与校验.json');
   addText(readme.overview(plan), '请先阅读-更新与回退说明.txt');
   addText(json({ schema: plan.schema, coreVersion: plan.coreVersion, feederVersion: plan.feederVersion,
     managerOtaImportSupported: false, routeCount: plan.routes.length,
@@ -298,7 +303,7 @@ async function writePackage({ root, output, plan, zipExecutable }) {
   return report;
 }
 function parseArgs(args) {
-  const options = { root: path.resolve(__dirname, '..'), mfg: 'build/beta3-manual-mfg/RTX40-MFGUnlock-0.7-zh-CN.zip' };
+  const options = { root: path.resolve(__dirname, '..'), mfg: 'resources/fg-mfgunlock/versions/1.0/renodx-mfgunlock.addon64' };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--check') options.check = true;
     else if (['--output', '--mfg'].includes(args[i]) && args[i + 1] && !args[i + 1].startsWith('--')) {
@@ -306,7 +311,7 @@ function parseArgs(args) {
     }
     else fail(`未知或不完整参数：${args[i]}`);
   }
-  if (!options.check && !options.output) fail('用法：node scripts/build-game-ota.js --check | --output build/全新目录 [--mfg build/目录/独立MFG.zip]');
+  if (!options.check && !options.output) fail('用法：node scripts/build-game-ota.js --check | --output build/全新目录 [--mfg resources/fg-mfgunlock/versions/1.0/renodx-mfgunlock.addon64]');
   return options;
 }
 if (require.main === module) (async () => {

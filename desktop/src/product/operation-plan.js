@@ -13,7 +13,7 @@ const policy = require('./launch-settings-policy');
 const fail = (code, message, details) => { throw Object.assign(new Error(message), { code: `OPERATION_${code}`, details }); };
 const clone = value => structuredClone(value);
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const fingerprint = ({ request, before, changes, blockers, resolved }) => hash({ request, before, resolved,
+const fingerprint = ({ request, before, changes, blockers, resolved, adoption }) => hash({ request, before, resolved, ...(adoption ? { adoption } : {}),
   changes: changes.map(row => ['receipt', 'manifest', 'history-receipt'].includes(row.role) && row.afterSha256 !== null ? { ...row, afterSha256: 'generated-manager-record' } : row), blockers });
 const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 function blockerMessages(owner) {
@@ -22,8 +22,9 @@ function blockerMessages(owner) {
 }
 
 function validateRequest(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['route', 'api', 'version', 'deployment', 'loadingMode', 'loadingBackend', 'proxyEntry', 'components', 'hoyo', 'addonKeep', 'nr', 'sr', 'fg', 'hotkeys', 'launchMode', 'uninstall', 'repair', 'reapplyExternalChanges'].includes(key))) fail('INPUT', '应用请求含未知选项。');
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['route', 'api', 'version', 'deployment', 'loadingMode', 'loadingBackend', 'proxyEntry', 'components', 'hoyo', 'addonKeep', 'adoption', 'nr', 'sr', 'fg', 'hotkeys', 'launchMode', 'uninstall', 'repair', 'reapplyExternalChanges'].includes(key))) fail('INPUT', '应用请求含未知选项。');
   const request = clone(value);
+  require('./installation-adoption').validateAdoptionChoice(request.adoption);
   if (request.api !== undefined && !['auto', 'dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].includes(request.api)) fail('INPUT', 'API 选择无效。');
   if (request.version !== undefined && (typeof request.version !== 'string' || !/^[a-zA-Z0-9._-]{1,100}$/.test(request.version))) fail('INPUT', 'Core 版本无效。');
   if (request.deployment !== undefined && !['local', 'external'].includes(request.deployment)) fail('INPUT', '部署模式无效。');
@@ -49,7 +50,6 @@ function validateRequest(value) {
   if (request.nr !== undefined) {
     if (!request.nr || typeof request.nr !== 'object' || Array.isArray(request.nr) || Object.keys(request.nr).some(key => !PUBLIC_NR_KEYS.includes(key))) fail('INPUT', 'NR 参数无效。');
     for (const [key, value] of Object.entries(request.nr)) {
-      if (typeof value !== 'number' && typeof value !== 'boolean' || !Number.isFinite(Number(value))) fail('INPUT', 'NR 参数必须为有效数值。');
       request.nr[key] = normalizeValue(key, value);
     }
   }
@@ -64,7 +64,7 @@ function validateRequest(value) {
 }
 
 function createOperationPlans({ userData, service, settings, components, fgWorkflow, environment, preparation, guards,
-  applyEnhancement, restoreForUninstall, setLaunchMode, inspectLaunchMode, onChange = () => {} }) {
+  applyEnhancement, restoreForUninstall, setLaunchMode, inspectLaunchMode, onChange = () => {}, onProgress = () => {} }) {
   const plans = new Map(), directory = path.join(userData, 'operation-plans');
   function target(id) {
     const exe = service.gameExecutable(id), game = service.gameDirectory(id);
@@ -83,16 +83,66 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
     return { pending: Boolean(record), record, runtimeVerified: false };
   }
   async function assertReady(id) { if ((await inspect(id)).pending) fail('RECOVERY_REQUIRED', '上次统一应用未完成，请先在维护页恢复未完成操作。'); }
+  async function prepareForWaiting(id, input) {
+    const request = validateRequest(input), t = target(id); await assertReady(id);
+    await preparation.assertReady(id); await environment.assertReady(id); await settings.assertReady(id);
+    const current = typeof service.assessmentSeed === 'function' ? await service.assessmentSeed(id) : (await service.listGames()).find(row => row.id === id);
+    const api = resolveOperationApi(current, request);
+    if (requiresOperationApi(request) && !api.supported) fail('API_SELECTION_REQUIRED', '请先确认游戏实际使用的图形 API。');
+    if (typeof service.validateWaitingComponents !== 'function') fail('WAITING_SOURCE_UNAVAILABLE', '当前组件来源尚不能在游戏运行时核验，请退出游戏后重新应用。');
+    const source = await service.validateWaitingComponents(id, request), blockers = [...blockerMessages(source)];
+    if (source.ready !== true) blockers.push('所需组件尚未完成来源核验。');
+    if (request.nr) {
+      if (source.deployment === false) { const current = await service.readNrSettings(id); if (current.status === 'error') fail('NR_UNREADABLE', current.error?.message || '当前 NR 配置无法读取。'); }
+      const contract = source.nrContract || (await service.readNrSettings(id)).contract;
+      for (const [key, value] of Object.entries(request.nr)) normalizeValue(key, value, contract);
+    }
+    if (request.components?.mfgUnlock || request.fg && ['mfgunlock', 'dlssg-sm86'].includes(request.fg.backend) && request.fg.mode !== 'restore') {
+      const component = await components.previewProvider(id, request.components?.mfgUnlock || (request.fg?.backend === 'dlssg-sm86' ? require('./fg-sm86-components').ID : null));
+      blockers.push(...blockerMessages(component));
+    }
+    for (const domain of ['sr', 'fg']) if (request[domain]) {
+      const checked = await settings.preview(id, domain, request[domain], { allowComponentPreparation: true, reapplyExternalChanges: request.reapplyExternalChanges === true });
+      blockers.push(...blockerMessages(checked));
+    }
+    if (request.launchMode === 'steam' && !(await inspectLaunchMode(id)).steamAvailable) blockers.push('没有可验证的 Steam 安装身份。');
+    if (source.deployment === true && !['feeder', 'vulkan'].includes(source.route)) {
+      // Payload readiness cannot tell us whether an installed Add-on will be
+      // isolated. Compile the same read-only native/profile proposal used by
+      // Apply, without creating a journal or persisting an actionable plan.
+      // Legacy fixed-route owners still require a closed game for their full
+      // preview and retain their independently verified-source contract.
+      const prepared = await preview(id, request, { readOnlyWhileRunning: true, preparationOnly: true });
+      const allBlockers = [...new Set([...blockers, ...prepared.blockers])];
+      return { ...prepared, source, ready: !allBlockers.length, blockers: allBlockers,
+        preparationOnly: true, identity: prepared.fingerprint };
+    }
+    const adoption = await service.inspectInstallationAdoption?.(id, request) || null;
+    blockers.push(...blockerMessages(adoption));
+    return { request, ready: !blockers.length, blockers: [...new Set(blockers)], source, adoption,
+      requiresAdoptionConfirmation: adoption?.required === true, identity: hash({ request, source, adoption }),
+      changes: [], preparationOnly: true, runtimeVerified: false, gameId: t.id };
+  }
+  async function nrIdentity(t) {
+    const layout = service.getLayout(t.id);
+    const current = typeof service.readNrSettings === 'function' ? await service.readNrSettings(t.id).catch(error => {
+      if (error.code === 'ERR_NOT_INSTALLED') return null; throw error;
+    }) : null;
+    const file = current?.file || path.join(layout.nrConfigDir || layout.runtimeDir || path.dirname(t.exe), 'nr_before_sr.ini');
+    await noLinks(file);
+    return { file, sha256: await digestFile(file) };
+  }
   async function snapshot(t) {
     const layout = service.getLayout(t.id), store = service.store.read(), key = path.resolve(t.game).toLowerCase();
-    const files = [...new Set([layout.activeConfigPath, path.join(layout.nrConfigDir || layout.runtimeDir, 'nr_before_sr.ini'),
+    const nr = await nrIdentity(t);
+    const files = [...new Set([layout.activeConfigPath, nr.file,
       path.join(t.game, '_DLSS5_Backup', 'xiaofeng-manager.json'), path.join(t.game, '_DLSS5_Backup', 'xiaofeng-external.json')].filter(Boolean))];
     const identities = [];
-    for (const file of files) { await noLinks(file); identities.push({ file, sha256: await digestFile(file) }); }
+    for (const file of files) { await noLinks(file); identities.push({ file, sha256: same(file, nr.file) ? nr.sha256 : await digestFile(file) }); }
     return { exe: t.exe, exeSha256: await digestFile(t.exe), layout: { mode: layout.mode, source: layout.source, loadingMode: layout.loadingMode, loadingBackend: layout.loadingBackend, inputRoute: layout.inputRoute, bindingId: layout.bindingId, generation: layout.generation, runtimeDir: layout.runtimeDir, activeConfigPath: layout.activeConfigPath },
-      identities, override: store.gameOverrides[key] || null };
+      identities, nr, override: store.gameOverrides[key] || null };
   }
-  async function preview(id, input) {
+  async function preview(id, input, internal = {}) {
     const request = validateRequest(input), t = target(id); await assertReady(id);
     const current = typeof service.assessmentSeed === 'function' ? await service.assessmentSeed(id) :
       (await service.listGames()).find(game => game.id === id);
@@ -105,6 +155,8 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
     const routeChange = request.api !== undefined || request.version !== undefined || request.components?.bridge !== undefined;
     const deploy = !request.uninstall && !request.repair && (routeChange || request.deployment !== undefined || request.loadingMode !== undefined || request.loadingBackend !== undefined || request.hoyo !== undefined || request.route !== undefined || request.addonKeep !== undefined || request.proxyEntry !== undefined && (before.layout.mode === 'external' || before.layout.source === 'feeder'));
     const defaults = deploy && service.installationDefaults ? await service.installationDefaults(id, request) : null;
+    if (deploy && (!request.proxyEntry || request.proxyEntry === 'auto') && defaults?.proxyEntry && defaults.proxyEntry !== 'auto')
+      request.proxyEntry = defaults.proxyEntry;
     const installed = Boolean(current.installed || current.addonVersion || before.layout.source === 'xiaofeng-external-runtime');
     const loadingBackend = request.loadingBackend || before.layout.loadingBackend || defaults?.loadingBackend || 'local';
     const targetMode = loadingBackend === 'hoyoshade' ? 'external' : request.deployment || defaults?.deployment || (installed ? before.layout.mode || 'local' : 'local');
@@ -149,10 +201,10 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
         if (special && loadingMode === 'helper' && loadingBackend !== 'hoyoshade') fail('ROUTE', 'Vulkan 与 Feeder 使用各自的固定加载配套。');
         // Only an actual version in the request is explicit. The deployment
         // owner resolves implicit installed/global defaults and supersession.
-        deployment = loadingBackend === 'hoyoshade' ? await service.previewHoYoDeployment(id, { ...request, route, api }, { plannedFgRestore: changingMode }) :
+        deployment = loadingBackend === 'hoyoshade' ? await service.previewHoYoDeployment(id, { ...request, route, api }, { plannedFgRestore: changingMode, readOnlyWhileRunning: internal.readOnlyWhileRunning === true }) :
           special ? await service.previewSpecialDeployment(id, { route, api, ...(request.version ? { version: request.version } : {}), ...(request.proxyEntry ? { proxyEntry: request.proxyEntry } : {}), ...(request.addonKeep ? { addonKeep: request.addonKeep } : {}) }) :
           await service.previewDeployment(id, { mode: targetMode, ...(request.version ? { version: request.version } : {}), api,
-            loadingMode, ...(request.proxyEntry ? { proxyEntry: request.proxyEntry } : {}), ...(request.components ? { components: request.components } : {}), ...(request.addonKeep ? { addonKeep: request.addonKeep } : {}) }, { plannedFgRestore: changingMode });
+            loadingMode, ...(request.proxyEntry ? { proxyEntry: request.proxyEntry } : {}), ...(request.components ? { components: request.components } : {}), ...(request.addonKeep ? { addonKeep: request.addonKeep } : {}), ...(request.adoption ? { adoption: request.adoption } : {}) }, { plannedFgRestore: changingMode, readOnlyWhileRunning: internal.readOnlyWhileRunning === true });
         changes.push(...(deployment.changes || [])); blockers.push(...blockerMessages(deployment));
         steps.push({ kind: 'deployment', route, routeChange, api, version: request.version,
           resolvedVersion: deployment.version || deployment.packageId || defaults?.version || null, mode: targetMode, loadingMode, loadingBackend });
@@ -163,7 +215,8 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
         if (proxy.changes.length) steps.push({ kind: 'proxy', entry: proxy.entry });
       }
       if (request.nr && Object.keys(request.nr).length) {
-        const version = deployment?.version || defaults?.version || (await service.installationDefaults?.(id))?.version || current.addonVersion || '';
+        const version = deploy ? deployment?.nrContract || deployment?.version || defaults?.version || '' :
+          (await service.readNrSettings?.(id))?.contract || current.addonVersion || '';
         for (const [key, value] of Object.entries(request.nr)) request.nr[key] = normalizeValue(key, value, version);
         changes.push(...Object.entries(request.nr).map(([key, value]) => ({ action: 'set-config-key', path: '当前部署 / nr_before_sr.ini', key, value })));
         steps.push({ kind: 'nr' });
@@ -203,11 +256,18 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
           launcherSha256: deployment.launcher?.sha256 } : {}) } : {}) } : null;
     if (deployment?.loadingBackend === 'hoyoshade') resolved = { ...resolved, loadingBackend: 'hoyoshade',
       bindingId: deployment.layout?.helper?.bindingId || deployment.layout?.bindingId, launcherSha256: deployment.launcher?.sha256 };
+    const adoption = deployment?.adoption || (deploy ? await service.inspectInstallationAdoption?.(id, request) : null) || null;
+    blockers.push(...blockerMessages(adoption));
     const value = { version: 1, planId: crypto.randomUUID(), gameId: id, exe: t.exe, game: t.game, request, before, resolved,
+      adoption, requiresAdoptionConfirmation: adoption?.required === true,
+      nrConflicts: require('./nr-conflict-summary').nrConflictSummary(request.uninstall ? null : deployment, { userData, exe: t.exe, game: t.game }),
       createdAt: Date.now(), expiresAt: Date.now() + 10 * 60000, changes, blockers: [...new Set(blockers.filter(Boolean))],
       steps, deployment, runtimeVerified: false, requiresConfirmation: true };
-    value.fingerprint = fingerprint(value); plans.set(value.planId, value);
-    await atomicJson(path.join(directory, `${value.planId}.preview.json`), value);
+    value.fingerprint = fingerprint(value);
+    if (internal.preparationOnly !== true) {
+      plans.set(value.planId, value);
+      await atomicJson(path.join(directory, `${value.planId}.preview.json`), value);
+    }
     return clone(value);
   }
   async function loadPlan(planId, expectedFingerprint) {
@@ -235,11 +295,13 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
     const record = { version: 1, planId: plan.planId, gameId: t.id, exe: t.exe, game: t.game, request: plan.request,
       before: plan.before, changes: plan.changes, startedAt: new Date().toISOString(), stages: [], status: 'applying' };
     const persist = () => atomicJson(ledgerFile(t), record);
+    let expectedNr = plan.before.nr;
     await persist();
     try {
       for (const step of plan.steps) {
         await guards.assertGameClosed(t.game, t.exe);
         const stage = { kind: step.kind, status: 'started' }; record.stages.push(stage); await persist();
+        onProgress({ gameId: t.id, phase: step.kind, completed: record.stages.length - 1, total: plan.steps.length });
         if (step.kind === 'deployment') {
           const special = ['feeder', 'vulkan'].includes(step.route);
           // loadPlan has just rebuilt and verified the deployment preflight.
@@ -251,9 +313,22 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
                 ...(step.loadingMode ? { loadingMode: step.loadingMode } : {}), ...(plan.request.proxyEntry ? { proxyEntry: plan.request.proxyEntry } : {}), ...(plan.request.components ? { components: plan.request.components } : {}), ...(plan.request.addonKeep ? { addonKeep: plan.request.addonKeep } : {}) }))) : plan.deployment;
           const blocked = blockerMessages(migration); if (blocked.length) fail('BLOCKED', blocked.join('；'));
           stage.result = await (step.loadingBackend === 'hoyoshade' ? service.applyHoYoDeployment : special ? service.applySpecialDeployment : service.applyDeployment)(migration.planId, { allowAntiCheat: consent.allowAntiCheat === true });
+          if (plan.request.nr) {
+            const installedNr = await nrIdentity(t);
+            // A new location or newly created INI gets a baseline immediately
+            // after deployment. Existing INIs retain their reviewed baseline.
+            if (!same(installedNr.file, expectedNr.file) || expectedNr.sha256 === null) expectedNr = installedNr;
+            stage.nrIdentity = expectedNr;
+          }
         } else if (step.kind === 'repair') stage.result = await service.applyRepair(plan.deployment.planId, { allowAntiCheat: consent.allowAntiCheat === true });
         else if (step.kind === 'proxy') stage.result = await service.applyProxyEntry(t.id, step.entry, { allowAntiCheat: consent.allowAntiCheat === true });
-        else if (step.kind === 'nr') stage.result = await service.writeNrSettings(t.id, plan.request.nr);
+        else if (step.kind === 'nr') {
+          const currentNr = await nrIdentity(t);
+          if (!same(currentNr.file, expectedNr.file) || currentNr.sha256 !== expectedNr.sha256)
+            fail('NR_CHANGED', '应用期间 NR 配置已在外部改变，已保留外部版本；请重新核对原选择。');
+          stage.nrIdentity = expectedNr;
+          stage.result = await service.writeNrSettings(t.id, plan.request.nr, { expectedFingerprint: expectedNr.sha256 });
+        }
         else if (step.kind === 'hotkeys') stage.result = await service.writeGameHotkey(t.id, 'reshade', plan.request.hotkeys.reshade);
         else if (step.kind === 'restore-fg') { await settings.restore(t.id, 'fg'); stage.result = await components.restore(t.id); }
         else if (step.kind === 'sr' || step.kind === 'fg') stage.result = await applyEnhancement(t.id, step.kind, step.request, { allowAntiCheat: consent.allowAntiCheat === true, reapplyExternalChanges: plan.request.reapplyExternalChanges === true,
@@ -274,8 +349,20 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
     }
   }
   async function recover(id) {
-    const t = target(id), { record } = await inspect(id); if (!record) return { recovered: false };
+    const t = target(id), { record } = await inspect(id);
     await guards.assertGameClosed(t.game, t.exe);
+    if (!record) {
+      // Older deployments have their own journal without a unified operation
+      // ledger. Their current owner still controls validation and recovery.
+      const before = await service.inspectDeployment(id);
+      if (!before.pending && !before.needsRecovery) return { recovered: false, runtimeVerified: false };
+      const result = await service.recoverDeployment(id);
+      const after = await service.inspectDeployment(id);
+      if (after.pending || after.needsRecovery) fail('RECOVERY_REQUIRED', '部署仍有未完成文件事务，请先恢复该部署。');
+      onChange(t.id);
+      return { ...result, recovered: true, runtimeVerified: false,
+        notice: result?.notice || '原部署的未完成文件事务已恢复，请核对当前配置后重新应用。' };
+    }
     // Each owner verifies its own before/after digests. Completed stages remain
     // visible; recovery never claims to roll back a previous full configuration.
     await service.recoverDeployment?.(id);
@@ -296,6 +383,6 @@ function createOperationPlans({ userData, service, settings, components, fgWorkf
     record.status = 'recovered'; record.recoveredAt = new Date().toISOString(); await archive(t, record);
     return { recovered: true, stages: record.stages, notice: '未完成文件事务已恢复；此前已完成的设置仍保留，请核对后重新应用。', runtimeVerified: false };
   }
-  return { preview, apply, inspect, recover, assertReady, loadPlan };
+  return { preview, apply, inspect, recover, assertReady, loadPlan, prepareForWaiting };
 }
 module.exports = { createOperationPlans, validateOperationRequest: validateRequest };

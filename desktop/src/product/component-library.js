@@ -20,6 +20,7 @@ function relativeName(name) {
   return name;
 }
 async function digest(file) { return hashRegularFile(file, { assertPath: noLinks, maxBytes: MAX_FILE }); }
+function digestBytes(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
 async function json(file) {
   await noLinks(file); const stat = await fsp.stat(file);
   if (!stat.isFile() || stat.size > 1024 * 1024) fail('组件清单过大或不是普通文件。');
@@ -55,8 +56,9 @@ async function unpack(file, target) {
     })().catch(stop); }); zip.readEntry();
   }));
 }
-function createComponentLibrary({ userData, catalog = CATALOG }) {
-  const root = path.join(userData, 'component-library'), inventoryFile = path.join(root, 'inventory.json');
+function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALOG }) {
+  const root = path.resolve(selectedRoot || path.join(userData, 'component-library'));
+  const inventoryFile = path.join(root, 'inventory.json');
   const releaseFile = path.join(root, 'release-catalog.json');
   function availableCatalog() {
     let remote = [], checkedAt = null;
@@ -92,10 +94,36 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
   }
   async function importPlain(file) {
     const hash = await digest(file), known = availableCatalog().packages.find(p => p.sha256 === hash);
-    if (!known) fail('尚未识别这个单文件组件，请先检查更新，或导入带 component-manifest.json 的组件包。');
     const stat = await fsp.stat(file);
+    if (!known) {
+      const name = path.basename(file);
+      if (!/\.addon64$/i.test(name) || pe.getBitness(file) !== 64) fail('尚未识别这个单文件组件。用户 Add-on 目前只接受 64 位 .addon64；其他组件请导入带 component-manifest.json 的组件包。');
+      const clues = await require('./component-assessment').inspectComponentClues(file);
+      return {
+        id: `user-addon-${hash.slice(0, 24)}`,
+        kind: 'user-addon',
+        version: name.replace(/\.addon64$/i, ''),
+        variant: clues.label || '用户导入 ReShade Add-on',
+        architecture: 'x64',
+        interface: 'ReShade-Addon-API',
+        classification: clues.classification || 'unknown',
+        validation: 'candidate',
+        files: [{ file: await storeFile(file, hash, name), name, sha256: hash, bytes: stat.size }],
+        source: 'user-imported', importedAt: new Date().toISOString()
+      };
+    }
     if (stat.size !== known.bytes || pe.getBitness(file) !== (known.architecture === 'x86' ? 32 : 64)) fail('组件大小或位数不符。');
     return { ...known, files: [{ file: await storeFile(file, hash, known.filename), name: known.filename, sha256: hash, bytes: stat.size }], source: 'catalog', importedAt: new Date().toISOString() };
+  }
+  async function importCustomCandidate(file, media) {
+    const hash=await digest(file), stat=await fsp.stat(file), name=path.basename(file);
+    if (media === 'native-module') {
+      const bits=pe.getBitness(file); if (![32,64].includes(bits)) fail('这个 DLL 不是可识别的 Windows 模块。');
+    }
+    return { id:`custom-candidate-${hash.slice(0,24)}`,kind:'custom-candidate',version:name,variant:'自定义候选、尚未验证',
+      architecture:media === 'native-module' ? (pe.getBitness(file) === 64 ? 'x64' : 'x86') : 'unknown',interface:'unknown',
+      validation:'blocked',blockers:['缺少可验证的组件身份、用途和兼容契约；不会自动用于任何游戏。'],media,
+      files:[{file:await storeFile(file,hash,name),name,sha256:hash,bytes:stat.size}],source:'user-imported',importedAt:new Date().toISOString() };
   }
   async function importDirectory(directory) {
     await noLinks(directory);
@@ -162,15 +190,66 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
       }
       files.push({ file: await storeFile(source, row.sha256, path.basename(name)), name, sha256: row.sha256, bytes: row.bytes });
     }
-    // Declared metadata is retained as an imported candidate, never elevated to a tested catalog entry.
+    // Declared metadata is retained as an imported candidate, never elevated to
+    // a trusted package by the user-facing import path. The separate bundled
+    // adoption path below verifies the complete packaged catalog identity.
     return [{ id: m.id, kind: m.kind, version: m.version, variant: m.variant || 'external', architecture: m.architecture,
       interface: m.interface, gameApis: m.gameApis || [], hardwareFamilies: m.hardwareFamilies || [],
       compatibleCoreInterfaces: m.compatibleCoreInterfaces || [], inputInterfaces: Array.isArray(m.inputInterfaces) ? m.inputInterfaces : [m.interface], supportsPresent: m.supportsPresent === true,
       capabilities: Array.isArray(m.capabilities) ? m.capabilities.filter(value => typeof value === 'string') : [],
-      validation: m.validation === 'blocked' || m.validation?.status === 'blocked' ? 'blocked' : 'candidate', blockers: m.validation?.blockers || [], source: 'user-imported', files,
+      validation: m.validation === 'blocked' || m.validation?.status === 'blocked' ? 'blocked' : 'candidate', blockers: m.validation?.blockers || [],
+      defaultEligible:false, verifiedSource:false, immutable:false, sourceType:'user-imported', source: 'user-imported', files,
       importedAt: new Date().toISOString() }];
   }
-  async function importComponent(selected) { return serialize(async () => {
+  async function bundledIdentity(directory, identity, rows) {
+    if (!identity || !validId(identity.id) || !Array.isArray(rows) || rows.length !== 1 || rows[0].id !== identity.id ||
+        rows[0].kind !== identity.kind || rows[0].version !== identity.version || rows[0].architecture !== identity.architecture ||
+        rows[0].interface !== identity.interface || !Array.isArray(identity.files) || !identity.files.length || identity.files.length > 128)
+      fail('随包组件身份与导入清单不一致。');
+    const exactArray = (left, right) => JSON.stringify(Array.isArray(left) ? left : []) === JSON.stringify(Array.isArray(right) ? right : []);
+    for (const field of ['gameApis','hardwareFamilies','inputInterfaces','compatibleCoreInterfaces','capabilities'])
+      if (!exactArray(rows[0][field], identity[field])) fail(`随包组件 ${field} 声明不一致。`);
+    const prefix = `components/${identity.id}/`, expected = new Map();
+    for (const item of identity.files) {
+      if (!item || typeof item.path !== 'string' || !item.path.replaceAll('\\','/').startsWith(prefix) ||
+          !HASH.test(item.sha256 || '') || !Number.isSafeInteger(item.bytes) || item.bytes < 0 || item.bytes > MAX_FILE)
+        fail('随包组件文件索引无效。');
+      const name = relativeName(item.path.replaceAll('\\','/').slice(prefix.length));
+      if (expected.has(name.toLowerCase())) fail('随包组件文件索引重复。');
+      expected.set(name.toLowerCase(), { ...item, name });
+      const source = path.join(directory, ...name.split('/'));
+      await noLinks(source); const stat = await fsp.stat(source);
+      if (!stat.isFile() || stat.size !== item.bytes || await digest(source) !== item.sha256) fail('随包组件文件与发布目录不一致。');
+    }
+    if (!expected.has('component-manifest.json')) fail('随包组件缺少受目录保护的组件清单。');
+    for (const item of rows[0].files) {
+      const indexed = expected.get(String(item.name || '').replaceAll('\\','/').toLowerCase());
+      if (!indexed || indexed.sha256 !== item.sha256 || indexed.bytes !== item.bytes) fail('随包组件清单包含目录未登记文件。');
+    }
+    const sourceType = String(identity.sourceType || 'bundled');
+    if (!['bundled','official-release'].includes(sourceType)) fail('随包组件来源类型无效。');
+    if (sourceType === 'official-release' &&
+        (!identity.repository || !String(identity.downloadUrl || '').startsWith(`https://github.com/${identity.repository}/releases/download/`)))
+      fail('官方随包组件缺少不可变下载来源。');
+    return { ...rows[0], gameApis:[...(identity.gameApis || [])], hardwareFamilies:[...(identity.hardwareFamilies || [])],
+      inputInterfaces:[...(identity.inputInterfaces || [])], compatibleCoreInterfaces:[...(identity.compatibleCoreInterfaces || [])],
+      capabilities:[...(identity.capabilities || [])], validation:identity.validation || rows[0].validation,
+      defaultEligible:identity.defaultEligible === true, sourceType, repository:identity.repository || null,
+      downloadUrl:identity.downloadUrl || null, commit:identity.commit || null,
+      source:'bundled', verifiedSource:true, immutable:true, importedAt:new Date().toISOString() };
+  }
+  async function adoptBundledComponent(directory, identity) { return serialize(async () => {
+    if (typeof directory !== 'string' || !path.isAbsolute(directory)) fail('随包组件目录无效。');
+    await noLinks(directory); await fsp.mkdir(root, { recursive:true });
+    const row = await bundledIdentity(directory, identity, await importDirectory(directory));
+    const data = await inventory(), index = data.packages.findIndex(item => item.id === row.id);
+    if (index >= 0 && JSON.stringify(data.packages[index].files) !== JSON.stringify(row.files))
+      fail('同一随包组件 ID 对应不同文件。');
+    if (index < 0) data.packages.push(row); else data.packages[index] = row;
+    await atomicJson(inventoryFile, data);
+    return { packages:[row], changedGames:false };
+  }); }
+  async function importComponent(selected) {
     if (typeof selected !== 'string' || !path.isAbsolute(selected)) fail('请选择本机组件文件或目录。');
     await noLinks(selected); await fsp.mkdir(root, { recursive: true });
     const stat = await fsp.stat(selected); let rows, temp;
@@ -182,18 +261,73 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
           if (stat.size !== known.bytes) fail('上游压缩包长度不符。');
           rows = [{ ...known, files:[{file:await storeFile(selected,hash,known.filename),name:known.filename,sha256:hash,bytes:stat.size}],
             source:'catalog',validation:'candidate',requiresAdapter:true,importedAt:new Date().toISOString() }];
-        } else { temp = await fsp.mkdtemp(path.join(root, '.import-')); await unpack(selected, temp); rows = await importDirectory(temp); }
+        } else {
+          temp = await fsp.mkdtemp(path.join(root, '.import-')); await unpack(selected, temp);
+          try { rows = await importDirectory(temp); }
+          catch (error) {
+            if (!/目录中没有已识别组件；自定义组件须提供 component-manifest[.]json/.test(error.message || '')) throw error;
+            rows = [await importCustomCandidate(selected,'archive')];
+          }
+        }
       }
       else if (path.basename(selected) === 'component-manifest.json') rows = await importDirectory(path.dirname(selected));
-      else rows = [await importPlain(selected)];
-      const data = await inventory();
-      for (const row of rows) {
-        const existing = data.packages.find(p => p.id === row.id);
-        if (existing && JSON.stringify(existing.files) !== JSON.stringify(row.files)) fail('同一组件 ID 对应不同文件，请为新变体使用独立 ID。');
-        if (!existing) data.packages.push(row);
+      else {
+        try { rows = [await importPlain(selected)]; }
+        catch (error) {
+          if (!/尚未识别这个单文件组件/.test(error.message || '') || !/\.dll$/i.test(selected)) throw error;
+          rows = [await importCustomCandidate(selected,'native-module')];
+        }
       }
-      await atomicJson(inventoryFile, data); return { packages: rows, changedGames: false };
+      return await serialize(async () => {
+        const data = await inventory();
+        for (const row of rows) {
+          const existing = data.packages.find(p => p.id === row.id);
+          if (existing && JSON.stringify(existing.files) !== JSON.stringify(row.files)) fail('同一组件 ID 对应不同文件，请为新变体使用独立 ID。');
+          if (!existing) data.packages.push(row);
+        }
+        await atomicJson(inventoryFile, data); return { packages: rows, changedGames: false };
+      });
     } finally { if (temp && inside(root, temp) && path.basename(temp).startsWith('.import-')) await fsp.rm(temp, { recursive: true, force: true }); }
+  }
+  async function importVerifiedCore(input) { return serialize(async () => {
+    if (!input || !validId(input.id) || typeof input.version !== 'string' || !input.version || input.version.length > 100 ||
+        input.architecture !== 'x64' || typeof input.interface !== 'string' || !Array.isArray(input.inputInterfaces) ||
+        !Array.isArray(input.files) || input.files.length < 2 || input.files.length > 11) fail('Core 组件身份不完整。');
+    const companions = require('./payload-companions');
+    const allowed = new Set(['nr-before-sr.zh-CN.addon64','nrchain_nvngx.dll','nr_before_sr.ini',
+      ...(companions.required(input.id) ? [require('./constants').DX11_COMPAT_CARRIER] : []), ...companions.NAMES]);
+    const seen = new Set(), staged = [];
+    for (const row of input.files) {
+      if (!row || !allowed.has(row.name) || seen.has(row.name) || !Buffer.isBuffer(row.bytes) || !HASH.test(row.sha256 || '') ||
+          row.bytes.length > MAX_FILE || digestBytes(row.bytes) !== row.sha256) fail('Core 组件文件摘要不符。');
+      seen.add(row.name); staged.push(row);
+    }
+    if (!seen.has('nr-before-sr.zh-CN.addon64') || !seen.has('nrchain_nvngx.dll')) fail('Core 组件必须同时包含 addon 与 nrchain。');
+    const resources = staged.filter(row => companions.isCompanionName(row.name));
+    companions.validateMap(resources.length ? Object.fromEntries(resources.map(row => [row.name, row.sha256])) : undefined, input.id);
+    await fsp.mkdir(root, { recursive: true });
+    const temp = await fsp.mkdtemp(path.join(root, '.verified-core-'));
+    try {
+      const files = [];
+      for (const row of staged) {
+        const source = path.join(temp, row.name); await fsp.mkdir(path.dirname(source), { recursive: true }); await fsp.writeFile(source, row.bytes, { flag:'wx' });
+        if (/\.(dll|addon64)$/i.test(row.name) && pe.getBitness(source) !== 64) fail('Core 组件位数与清单不匹配。');
+        files.push({ file:await storeFile(source,row.sha256,path.basename(row.name)), name:row.name, sha256:row.sha256, bytes:row.bytes.length });
+      }
+      const data = await inventory();
+      const record = { id:input.id, kind:'core', version:input.version, variant:input.variant || 'zh-CN', architecture:'x64',
+        interface:input.interface, inputInterfaces:[...input.inputInterfaces], supportsPresent:input.supportsPresent === true,
+        gameApis:['dx12'], capabilities:Array.isArray(input.capabilities) ? input.capabilities.filter(value => typeof value === 'string') : [],
+        validation:input.validation === 'blocked' ? 'blocked' : 'candidate', blockers:Array.isArray(input.blockers) ? input.blockers : [],
+        stableRelease:input.stableRelease === true, coreUpdateOnly:input.coreUpdateOnly === true,
+        source:input.catalogIdentity === true ? 'catalog' : 'user-imported',
+        archiveSha256:HASH.test(input.archiveSha256 || '') ? input.archiveSha256 : null, files, importedAt:new Date().toISOString() };
+      const existing = data.packages.find(row => row.id === record.id);
+      if (existing && JSON.stringify(existing.files) !== JSON.stringify(record.files)) fail('同一 Core ID 对应不同文件，已保留原库存。');
+      if (!existing) data.packages.push(record);
+      await atomicJson(inventoryFile,data);
+      return { packages:[existing || record], changedGames:false };
+    } finally { if (inside(root,temp) && path.basename(temp).startsWith('.verified-core-')) await fsp.rm(temp,{recursive:true,force:true}); }
   }); }
   async function materializePayload(data, bundledPayloadDir) {
     const base = await json(path.join(bundledPayloadDir, 'bundle.json'));
@@ -209,9 +343,9 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
     }
     for (const [version, entry] of Object.entries(base.versions)) {
       if (!validId(version)) fail('基础包版本 ID 无效。');
-      for (const [name, hash] of Object.entries(entry.files)) {
+      for (const [name, hash] of Object.entries({ ...entry.files, ...require('./payload-companions').validateMap(entry.companions, version) })) {
         relativeName(name); const source = path.join(bundledPayloadDir, 'versions', version, name);
-        const object = await storeFile(source, hash, name), dest = path.join(root, 'versions', version, name);
+        const object = await storeFile(source, hash, path.basename(name)), dest = path.join(root, 'versions', version, name);
         await noLinks(dest); await fsp.mkdir(path.dirname(dest), { recursive: true }); await fsp.copyFile(path.join(root, object), dest);
       }
     }
@@ -232,24 +366,38 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
     const inheritedVersion = base.defaultVersion;
     for (const core of data.packages.filter(p => coreIds.has(p.id))) {
       if (core.validation === 'blocked' || core.kind !== 'core' || core.architecture !== 'x64') fail('这个 Core 尚不能用于安装。');
-      const addons = core.files.filter(f => /\.addon64$/i.test(f.name));
+      const addons = core.files.filter(f => /\.addon64$/i.test(f.name) && f.name !== require('./constants').DX11_COMPAT_CARRIER);
       if (addons.length !== 1) fail('请选择只含一种语言 Core 的组件包。');
-      const versionId = `component-${core.id}`;
+      const canonicalCoreId = core.source === 'catalog' && require('./core-menu').choiceFor(core.id) ? core.id : null;
+      const versionId = canonicalCoreId || `component-${core.id}`;
       if (!validId(versionId)) fail('Core 组件 ID 过长。');
-      const entry = { ...base.versions[inheritedVersion], label: `${core.version} · ${core.variant}`, source: 'component-library',
-        files: { ...base.versions[inheritedVersion].files }, inputInterfaces: core.inputInterfaces || [core.interface], supportsPresent: core.supportsPresent === true,
-        capabilities: core.capabilities || [], coreUpdateOnly: false, comparisonOnly: false, ota: false, compatibility: null };
+      const templateVersion = base.versions[core.id] ? core.id : inheritedVersion;
+      const entry = { ...base.versions[templateVersion], label: `${core.version} · ${core.variant}`, source: 'component-library',
+        files: { ...base.versions[templateVersion].files }, inputInterfaces: core.inputInterfaces || [core.interface], supportsPresent: core.supportsPresent === true,
+        capabilities: core.capabilities || [], coreUpdateOnly: core.coreUpdateOnly === true, comparisonOnly: false,
+        ota: core.coreUpdateOnly === true, stableRelease: core.stableRelease === true,
+        validation: core.validation || 'candidate', blockers: core.blockers || [],
+        compatibility: require('./payload-companions').required(core.id) ? base.versions[templateVersion]?.compatibility || 'dx11' : null };
+      delete entry.companions;
+      const resourceRows = core.files.filter(row => require('./payload-companions').isCompanionName(row.name));
+      const companionMap = require('./payload-companions').validateMap(resourceRows.length ? Object.fromEntries(resourceRows.map(row => [row.name, row.sha256])) : undefined, core.id);
+      if (resourceRows.length) entry.companions = companionMap;
       const sources = { 'nr-before-sr.zh-CN.addon64': addons[0] };
-      for (const name of ['nrchain_nvngx.dll','nr_before_sr.ini']) { const file = core.files.find(f => path.basename(f.name) === name); if (file) sources[name] = file; }
+      for (const name of ['nrchain_nvngx.dll','nr_before_sr.ini', ...(require('./payload-companions').required(core.id) ? [require('./constants').DX11_COMPAT_CARRIER] : [])]) { const file = core.files.find(f => path.basename(f.name) === name); if (file) sources[name] = file; }
       for (const [name, file] of Object.entries(sources)) entry.files[name] = file.sha256;
       for (const [name, hash] of Object.entries(entry.files)) {
         // A new independent Core never inherits an old private carrier.
-        if (/\.addon64$/i.test(name) && name !== 'nr-before-sr.zh-CN.addon64') { delete entry.files[name]; continue; }
-        const src = sources[name], source = src ? path.join(root, relativeName(src.file)) : path.join(root,'versions',inheritedVersion,name);
+        if (/\.addon64$/i.test(name) && name !== 'nr-before-sr.zh-CN.addon64' && !sources[name]) { delete entry.files[name]; continue; }
+        const src = sources[name], source = src ? path.join(root, relativeName(src.file)) : path.join(root,'versions',templateVersion,name);
         const expected = src ? src.sha256 : hash;
         if (await digest(source) !== expected) fail('Core 配套文件校验失败。');
         const dest = path.join(root,'versions',versionId,relativeName(name)); await noLinks(dest); await fsp.mkdir(path.dirname(dest),{recursive:true});
         await fsp.copyFile(source,dest); entry.files[name] = expected;
+      }
+      for (const file of resourceRows) {
+        const source = path.join(root, relativeName(file.file)), dest = path.join(root, 'versions', versionId, file.name);
+        if (await digest(source) !== file.sha256) fail('Core 附属资源校验失败。');
+        await noLinks(dest); await fsp.mkdir(path.dirname(dest), { recursive: true }); await fsp.copyFile(source, dest);
       }
       base.versions[versionId] = entry;
       if (core.id === data.selected.core) base.defaultVersion = versionId;
@@ -287,8 +435,10 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
       { kind:'nr-runtime', name:'nvngx_dlssnr.dll', sha256:bundle.fixed[family].files['nvngx_dlssnr.dll'],
         file:bundle.fixed[family].paths?.runtime ? path.join(payloadDir,relativeName(bundle.fixed[family].paths.runtime)) : path.join(payloadDir,'fixed',family,'nvngx_dlssnr.dll') }
     ];
+    for (const [name, sha256] of Object.entries(require('./payload-companions').validateMap(entry.companions, version)))
+      files.push({ kind: 'core-resource', name, sha256, file: path.join(payloadDir, 'versions', version, name) });
     for (const item of files) {
-      const source = safePayloadPath(payloadDir,item.file), object = await storeFile(source,item.sha256,item.name);
+      const source = safePayloadPath(payloadDir,item.file), object = await storeFile(source,item.sha256,path.basename(item.name));
       if (!data.packages.some(row => row.files?.some(file => file.file === object && file.sha256 === item.sha256))) {
         data.packages.push({ id:`payload-${item.kind}-${item.sha256.slice(0,24)}`, kind:item.kind, version, architecture:'x64', internal:true,
           source:'catalog', validation:'candidate', files:[{file:object,name:item.name,sha256:item.sha256,bytes:(await fsp.stat(source)).size}] });
@@ -302,7 +452,7 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
     const results = await Promise.all(Object.entries(repos).map(async ([kind, repo]) => {
       try {
         const response = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=3`, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15000) });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) throw Object.assign(new Error(`更新服务器返回 HTTP ${response.status}，可稍后重试。`), { code: `HTTP_${response.status}` });
         const body = await response.text(); if (body.length > 1024 * 1024) fail('更新目录过大。');
         const releases = JSON.parse(body); if (!Array.isArray(releases)) fail('更新目录格式无效。');
         return { kind, releases: releases.filter(r => !r.draft).slice(0,3).map(r => ({ version: String(r.tag_name).slice(0,100), preview: r.prerelease === true,
@@ -313,7 +463,10 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
               filename: a.name, bytes: a.size, sha256: a.digest.slice(7), downloadUrl: a.browser_download_url,
               architecture: kind === 'feeder' ? 'mixed' : 'x64', interface: kind === 'mfg' ? 'Streamline-DLSSG' : 'NGX-D3D12-Feature1',
               ...(kind === 'bridge' ? { gameApis:['dx11','vulkan'] } : kind === 'mfg' ? { hardwareFamilies:['RTX40'] } : {archive:true,requiresAdapter:true}), validation:'candidate' })) })) };
-      } catch (error) { return { kind, releases: [], error: error.message }; }
+      } catch (error) { return { kind, releases: [], error: {
+        code: error.code || error.cause?.code || (error.name === 'TimeoutError' ? 'UPDATE_TIMEOUT' : 'UPDATE_CHECK_FAILED'),
+        message: error.message || '更新检查失败。'
+      } }; }
     }));
     await atomicJson(releaseFile, { schemaVersion:1, checkedAt:new Date().toISOString(), packages:results.flatMap(r => r.releases.flatMap(v => v.assets || [])) });
     return results;
@@ -333,7 +486,7 @@ function createComponentLibrary({ userData, catalog = CATALOG }) {
       return await importComponent(file);
     } finally { if (inside(root,temp) && path.basename(temp).startsWith('.download-')) await fsp.rm(temp,{recursive:true,force:true}); }
   }
-  return { root, importComponent, activateRuntime, activateCore, registerPayloadContext, inventory, checkUpdates, downloadComponent, catalog: availableCatalog };
+  return { root, importComponent, adoptBundledComponent, importVerifiedCore, activateRuntime, activateCore, registerPayloadContext, inventory, checkUpdates, downloadComponent, catalog: availableCatalog };
 }
 function readCachedComponents(root) {
   const file = path.join(root, 'inventory.json');

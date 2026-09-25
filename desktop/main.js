@@ -8,8 +8,11 @@ const { createStartupDiagnostics, watchWindow, PROCESS_LAUNCH_GUIDANCE } = requi
 const { createStartupElevation, withPermissionRecovery } = require('./src/product/startup-elevation');
 const { createOperationElevation } = require('./src/product/operation-elevation');
 const { workerArguments, runOperationWorker } = require('./src/product/operation-worker');
-const startup = createStartupDiagnostics();
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, shell, clipboard } = require('electron');
+let portableData = null, portableDataError = null;
+try { portableData = require('./src/product/portable-data').configurePortableData(app); }
+catch (error) { portableDataError = error; }
+const startup = createStartupDiagnostics(portableData ? { roots:[path.join(portableData.logs, 'startup')] } : {});
 const operationWorkerRequested = process.argv.some(value => typeof value === 'string' && (value.startsWith('--operation-worker=') || value.startsWith('--hoyo-launch-worker=')));
 let createAppService, createSrModelService, createLaunchSettingsService, createLaunchCoordinator, installGuards, createFgComponents, classifyApi;
 
@@ -23,6 +26,26 @@ let fgWorkflow = null;
 let preparation = null;
 let environment = null;
 let operationPlans = null;
+let deferredOperations = null;
+const workScheduler = require('./src/product/work-scheduler').createWorkScheduler();
+const gameWorkKey = id => 'game:' + path.resolve(service.gameDirectory(id)).toLowerCase();
+async function assertNoWaitingOperation(id) {
+  await deferredOperations?.assertNoWaiting(id);
+}
+async function assertEnvironmentRestorable(id) {
+  const deployment = await service.inspectDeployment(id), settings = await launchCoordinator.inspect(id), legacy = await srModel.migrationInfo(id);
+  const fg = settings.fgComponents || {};
+  // An interrupted cleanup owns the same generic file WAL as installation.
+  // Let that owner recover its own rollback when no managed installation remains.
+  const cleanupPending = (deployment.needsRecovery || deployment.pending) && (await environment.inspect(id)).pending;
+  if (deployment.installed || (deployment.needsRecovery || deployment.pending) && !cleanupPending || await launchSettings.hasOwnedState(id) || legacy?.baselineCaptured ||
+      ['installed', 'managed', 'receipt', 'needsRecovery', 'needsCleanup', 'fileRecoveryPending', 'fileOperationActive', 'migrationPending'].some(key => fg[key]))
+    throw Object.assign(new Error('请先卸载当前配套，再恢复隔离文件。'), { code: 'ENVIRONMENT_RESTORE_FIRST' });
+}
+function coordinateDriver(adapter) {
+  return Object.fromEntries(Object.entries(adapter).map(([name, value]) => [name, typeof value === 'function'
+    ? (...args) => workScheduler.run('driver:nvidia-drs', () => value.apply(adapter, args)) : value]));
+}
 let operationElevation = null;
 let hoyoLaunchPlans = null;
 let hoyoWorkflow = null;
@@ -32,14 +55,18 @@ let gameAssessment = null;
 let verificationRecords = null;
 let currentHardware = null;
 let compatibilityFeedback = null;
+let launcherCompatibility = null;
+let managerUpdate = null;
 let windowWatch = null;
 let failureVisible = false;
 let quitting = false;
 let singleInstanceOwned = false;
-app.on('before-quit', () => { quitting = true; });
+app.on('before-quit', () => { quitting = true; deferredOperations?.stop(); });
 const softwareRendering = app.commandLine.hasSwitch('software-rendering');
+const noSandbox = app.commandLine.hasSwitch('no-sandbox');
+const sandboxRetryOnce = app.commandLine.hasSwitch('sandbox-retry-once');
 if (softwareRendering) { app.disableHardwareAcceleration(); startup.log('software-rendering-requested'); }
-startup.log('startup-options', { noSandbox: app.commandLine.hasSwitch('no-sandbox'), disableGpu: app.commandLine.hasSwitch('disable-gpu'),
+startup.log('startup-options', { noSandbox, sandboxRetryOnce, disableGpu: app.commandLine.hasSwitch('disable-gpu'),
   disableGpuSandbox: app.commandLine.hasSwitch('disable-gpu-sandbox'), softwareRendering,
   chromium: process.versions.chrome || '', osRelease: os.release(),
   nodeOptionsPresent: Boolean(process.env.NODE_OPTIONS), electronRunAsNodePresent: Boolean(process.env.ELECTRON_RUN_AS_NODE),
@@ -53,7 +80,9 @@ async function exportStartupReport() {
 
 async function startupFailure(title, error, softwareRetry = false) {
   if (operationWorkerRequested) { startup.log('operation-worker-startup-failed', { title, code: error?.code, message: error?.message }); app.exit(1); return; }
+  const sandboxRetry = error?.sandboxFailure === true && !noSandbox && !sandboxRetryOnce;
   startup.log('startup-failure', { title, code: error?.code || '', type: error?.type, reason: error?.reason, exitCode: error?.exitCode,
+    sandboxFailure: error?.sandboxFailure === true,
     message: error?.message || String(error), stack: error?.stack || '' });
   if (failureVisible) return;
   failureVisible = true;
@@ -67,9 +96,14 @@ async function startupFailure(title, error, softwareRetry = false) {
     }
     await app.whenReady();
     const result = await dialog.showMessageBox({ type: 'error', title: '管理器未能正常启动', message: title,
-      detail: `${error?.message || '启动过程未完成。'}\n可以直接导出精简诊断。不会自动删除旧配置，也不能仅凭此判断缺少 VC++。`,
-      buttons: softwareRetry ? ['导出诊断', '使用软件渲染重启', '关闭'] : ['导出诊断', '关闭'], cancelId: softwareRetry ? 2 : 1 });
+      detail: `${error?.message || '启动过程未完成。'}\n可以直接导出精简诊断。不会自动删除旧配置，也不能仅凭此判断缺少 VC++。${sandboxRetry ? '\n已确认 Electron 子进程启动失败，可只在下一次启动临时关闭沙箱排障；该选择不会保存。' : ''}`,
+      buttons: sandboxRetry ? ['导出诊断', '临时兼容重试', '关闭'] : softwareRetry ? ['导出诊断', '使用软件渲染重启', '关闭'] : ['导出诊断', '关闭'], cancelId: sandboxRetry || softwareRetry ? 2 : 1 });
     if (result.response === 0) { await exportStartupReport(); app.quit(); }
+    else if (sandboxRetry && result.response === 1) {
+      const args = process.argv.slice(1).filter(arg => arg !== '--no-sandbox' && arg !== '--sandbox-retry-once' && !arg.startsWith('--sandbox-retry-once='));
+      startup.log('sandbox-retry-once-requested');
+      app.relaunch({ args:[...args,'--no-sandbox','--sandbox-retry-once'] }); app.quit();
+    }
     else if (softwareRetry && result.response === 1) { app.relaunch({ args: [...process.argv.slice(1).filter(arg => arg !== '--software-rendering'), '--software-rendering'] }); app.quit(); }
     else app.quit();
   } catch (failure) {
@@ -85,7 +119,7 @@ app.on('child-process-gone', (_event, details) => {
   startup.log('child-process-gone', { type: details.type, reason: details.reason, exitCode: details.exitCode, serviceName: details.serviceName, name: details.name });
   if (!quitting && details.type === 'GPU' && ['launch-failed', 'integrity-failure'].includes(details.reason)) {
     void startupFailure('图形子进程无法启动', Object.assign(new Error(`GPU process: ${details.reason} (${details.exitCode})。${PROCESS_LAUNCH_GUIDANCE}`),
-      { type: details.type, reason: details.reason, exitCode: details.exitCode }));
+      { type: details.type, reason: details.reason, exitCode: details.exitCode, sandboxFailure:true }));
   }
 });
 
@@ -113,16 +147,23 @@ async function inspectLaunchMode(id) {
   const state = service.store.read(), entry = state.gameOverrides[path.resolve(service.gameDirectory(id)).toLowerCase()];
   const override = entry?.launchExecutable && path.resolve(entry.launchExecutable).toLowerCase() === path.resolve(exe).toLowerCase() ? entry.launchMode : 'auto';
   const selected = ['steam', 'exe'].includes(override) ? override : 'auto';
-  return { selected, effective: selected === 'auto' ? steamAvailable ? 'steam' : 'exe' : selected, steamAvailable,
-    steamAppId: steamAvailable ? String(verified) : null, steamRoot: steamAvailable ? steamRoot : null, exe };
+  const profileGame = { ...game, scan:{ ...(seed?.scan || service.gameScan(id)), chosen },
+    ...(steamAvailable ? { verifiedSteamAppId:String(verified), steamRoot } : {}) };
+  const selection = require('./src/product/operation-api').resolveOperationApi(profileGame);
+  const profile = launcherCompatibility?.resolveLaunchProfile(profileGame, selection.effectiveApi, { preference:selected });
+  const effective = profile?.launchMode || (selected === 'auto' ? steamAvailable ? 'steam' : 'exe' : selected);
+  return { selected, effective, steamAvailable,
+    steamAppId: steamAvailable ? String(verified) : null, steamRoot: steamAvailable ? steamRoot : null, exe,
+    launchProfile:profile || null, instruction:profile?.reason || null, warning:profile?.warning || null };
 }
 async function setLaunchMode(id, mode) {
   if (!['auto', 'steam', 'exe'].includes(mode)) throw Object.assign(new Error('启动方式无效。'), { code: 'LAUNCH_MODE' });
   const current = await inspectLaunchMode(id);
   if (current.loadingBackend === 'hoyoshade') throw Object.assign(new Error('米哈游模式的启动方式由客户端绑定决定，请在兼容设置中修改。'), { code: 'LAUNCH_HOYO_BOUND' });
   if (mode === 'steam' && !current.steamAvailable) throw Object.assign(new Error('当前游戏没有可验证的 Steam 安装身份。'), { code: 'LAUNCH_STEAM_UNVERIFIED' });
-  const state = service.store.read(), key = path.resolve(service.gameDirectory(id)).toLowerCase();
-  await service.store.write({ gameOverrides: { ...state.gameOverrides, [key]: { ...state.gameOverrides[key], launchMode: mode, launchExecutable: current.exe } } });
+  const key = path.resolve(service.gameDirectory(id)).toLowerCase();
+  await service.store.update(state => ({ gameOverrides: { ...state.gameOverrides,
+    [key]: { ...state.gameOverrides[key], launchMode: mode, launchExecutable: current.exe } } }));
   await service.refresh(); return inspectLaunchMode(id);
 }
 async function applyEnhancement(id, domain, input, options = {}) {
@@ -133,7 +174,9 @@ async function applyEnhancement(id, domain, input, options = {}) {
     const eligibility = await launchSettings.assessEligibility(id, domain, request);
     if (!eligibility.eligible) throw Object.assign(new Error(eligibility.blockers.map(row => row.message).join('；')), { code: eligibility.blockers[0]?.code || 'SETTINGS_UNAVAILABLE' });
   }
-  if (domain === 'fg' && request.backend === 'mfgunlock' && request.mode !== 'restore') return fgWorkflow.apply(id, request, options);
+  if (domain === 'fg' && ['mfgunlock', 'dlssg-sm86'].includes(request.backend) && request.mode !== 'restore') {
+    return fgWorkflow.apply(id, request, options);
+  }
   if (policy.isRestore(domain, request)) {
     const result = await launchSettings.restore(id, domain);
     return { ...result, saved: true };
@@ -202,13 +245,22 @@ async function iconDataFor(file, currentIcon = null) {
 }
 
 function createWindow() {
+  let workArea = null;
+  try { workArea = screen?.getPrimaryDisplay()?.workAreaSize || null; } catch {}
+  const validArea = workArea && Number.isFinite(workArea.width) && Number.isFinite(workArea.height) && workArea.width > 0 && workArea.height > 0;
+  const fit = (desired, floor, available) => validArea ? Math.min(desired, Math.max(Math.min(floor, available), available - 32)) : desired;
+  const width = fit(1400, 480, workArea?.width);
+  const height = fit(860, 360, workArea?.height);
   win = new BrowserWindow({
-    width: 1400,
-    height: 860,
-    minWidth: 900,
-    minHeight: 620,
+    width,
+    height,
+    minWidth: Math.min(900, width),
+    minHeight: Math.min(620, height),
+    center: true,
     backgroundColor: '#fbfbfa',
-    icon: path.join(__dirname, 'build', 'icon.png'),
+    // Windows uses the exact same multi-size ICO for the window and the
+    // packaged executable, so Explorer and the taskbar cannot diverge.
+    icon: path.join(__dirname, 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     frame: false,
     autoHideMenuBar: true,
     show: false,
@@ -245,10 +297,10 @@ function registerIpc() {
     ? service.withError(() => operationElevation.inspect()) : { ok: false, error: { code: 'IPC_SENDER', message: '请求来源无效。' } });
   ipcMain.handle('operation-elevation-recover', async (event, request) => {
     if (!fromMainWindow(event) || request?.confirm !== true) return { ok: false, error: { code: 'CONFIRM_REQUIRED', message: '请明确恢复已结束的一次性操作。' } };
-    return service.withError(() => launchCoordinator.serialize(() => operationElevation.recover()));
+    return service.withError(() => workScheduler.run('operation-elevation', () => operationElevation.recover()));
   });
   const loggedGameActions = new Set([
-    'game-install', 'game-repair', 'game-upgrade-addon', 'game-uninstall', 'game-api-set', 'game-route-apply',
+    'game-install', 'game-repair', 'game-upgrade-addon', 'game-uninstall', 'game-api-set', 'game-route-apply', 'game-user-addon-set',
     'game-toggle-d3d12', 'game-launch', 'game-diagnose', 'game-rename', 'game-hotkeys-read',
     'game-hotkey-write', 'nr-read', 'nr-write', 'nr-default', 'nr-recommended',
     'sr-model-read', 'sr-model-write', 'feedback-export', 'launch-settings-inspect',
@@ -257,43 +309,67 @@ function registerIpc() {
     'game-reframework-inspect', 'game-reframework-prepare', 'game-reframework-restore', 'game-reframework-recover',
     'game-feeder-inspect', 'game-feeder-install', 'game-feeder-restore', 'game-prepare-all', 'game-preparation-recover', 'fg-components-recover',
     'game-environment-inspect', 'game-environment-prepare-clean', 'game-environment-preview-clean', 'game-environment-apply', 'game-environment-restore', 'game-library-remove',
-    'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm'
+    'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm',
+    'game-deployment-rescue-preview', 'game-deployment-rescue-apply'
   ]);
   const guardedActions = new Set(['game-install', 'game-repair', 'game-upgrade-addon', 'game-toggle-d3d12',
     'game-api-set', 'game-route-apply', 'nr-write', 'nr-default', 'nr-recommended', 'game-hotkey-write', 'game-reframework-prepare', 'game-reframework-restore',
-    'game-feeder-install', 'game-prepare-all']);
+    'game-feeder-install', 'game-prepare-all', 'game-user-addon-set']);
   const serializedActions = new Set([...guardedActions, 'game-launch', 'game-uninstall', 'game-dismiss', 'game-library-remove',
     'game-confirm', 'game-rename', 'settings-update', 'sr-model-write', 'launch-settings-save', 'launch-settings-preview',
     'launch-settings-apply', 'launch-settings-restore', 'launch-settings-recover', 'fg-components-prepare', 'fg-components-restore',
-    'payload-source-pick', 'payload-source-reset', 'payload-source-recheck', 'launch-settings-update', 'launch-settings-reset-all',
+    'payload-source-reset', 'payload-source-recheck', 'launch-settings-update', 'launch-settings-reset-all',
     'game-reframework-recover', 'game-feeder-restore', 'game-preparation-recover', 'fg-components-recover',
     'game-environment-prepare-clean', 'game-environment-preview-clean', 'game-environment-apply', 'game-environment-restore',
-    'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm']);
-  for (const name of ['addon-import', 'addon-remove', 'pick-addon', 'pick-scan-folder', 'components-pick', 'components-runtime-activate', 'game-component-apply']) serializedActions.add(name);
+    'game-operation-preview', 'game-operation-apply', 'game-operation-apply-elevated', 'game-operation-recover', 'game-feature-confirm', 'game-user-addon-set',
+    'game-deployment-rescue-preview', 'game-deployment-rescue-apply']);
+  for (const name of ['addon-import', 'addon-remove', 'components-runtime-activate', 'game-component-apply']) serializedActions.add(name);
   guardedActions.add('game-component-apply');
-  serializedActions.add('components-download');
   serializedActions.add('components-core-activate');
   serializedActions.add('components-provider-select');
+  serializedActions.add('manager-update-prepare');
+  serializedActions.add('manager-update-apply');
+  // Deferred operations own the directory queue, including confirmation.
+  serializedActions.delete('game-operation-apply');
   loggedGameActions.add('game-component-apply');
-  for (const name of ['hoyo-discover', 'hoyo-pick-game', 'hoyo-pick-launcher', 'hoyo-bind', 'hoyo-preview', 'hoyo-apply', 'hoyo-recover']) serializedActions.add(name);
+  for (const name of ['hoyo-discover', 'hoyo-bind', 'hoyo-preview', 'hoyo-apply', 'hoyo-recover', 'hoyo-start']) serializedActions.add(name);
+  const hoyoGameActions = new Set(['hoyo-bind', 'hoyo-preview', 'hoyo-apply', 'hoyo-recover', 'hoyo-start']);
+  const hoyoBindingActions = new Set(['hoyo-discover', 'hoyo-pick-game', 'hoyo-pick-launcher', 'hoyo-bind']);
+  const settingsPlanGames = new Map();
   const call = (name, fn) => ipcMain.handle(name, async (_event, ...args) => withPermissionRecovery(await service.withError(
-    () => {
+    async () => {
+      if (_event.sender !== win?.webContents) throw Object.assign(new Error('请求不是来自当前管理器窗口。'), { code: 'IPC_SENDER' });
       const work = async () => {
-        if (_event.sender !== win?.webContents) throw Object.assign(new Error('请求不是来自当前管理器窗口。'), { code: 'IPC_SENDER' });
+        const recoveryExit = name === 'game-deployment-rescue-preview' || name === 'game-deployment-rescue-apply' ||
+          name === 'game-library-remove' && args[1]?.keepFiles === true;
         if (serializedActions.has(name)) await operationElevation?.assertAvailable();
-        if (serializedActions.has(name) && loggedGameActions.has(name) && !['game-operation-recover', 'game-preparation-recover', 'launch-settings-recover', 'fg-components-recover', 'game-reframework-recover', 'game-feeder-restore', 'game-environment-restore'].includes(name)) await operationPlans?.assertReady(args[0]);
-        if (serializedActions.has(name) && loggedGameActions.has(name) && name !== 'game-environment-restore') await environment?.assertReady(args[0]);
-        if (serializedActions.has(name) && loggedGameActions.has(name) && !['game-operation-recover', 'game-preparation-recover', 'launch-settings-recover', 'fg-components-recover', 'game-reframework-recover', 'game-feeder-restore', 'game-environment-restore'].includes(name)) await preparation?.assertReady(args[0]);
+        if (!recoveryExit && serializedActions.has(name) && loggedGameActions.has(name) && !['game-operation-recover', 'game-preparation-recover', 'launch-settings-recover', 'fg-components-recover', 'game-reframework-recover', 'game-feeder-restore', 'game-environment-restore'].includes(name)) await operationPlans?.assertReady(args[0]);
+        if (!recoveryExit && serializedActions.has(name) && loggedGameActions.has(name) && name !== 'game-environment-restore') await environment?.assertReady(args[0]);
+        if (!recoveryExit && serializedActions.has(name) && loggedGameActions.has(name) && !['game-operation-recover', 'game-preparation-recover', 'launch-settings-recover', 'fg-components-recover', 'game-reframework-recover', 'game-feeder-restore', 'game-environment-restore'].includes(name)) await preparation?.assertReady(args[0]);
         if (guardedActions.has(name)) await launchCoordinator.assertMutationReady(args[0]);
         return fn(...args);
       };
       if (serializedActions.has(name) && operationElevation?.busy) throw Object.assign(new Error('一次性管理员操作正在执行，请等待明确结果。'), { code: 'ERR_JOB_BUSY' });
-      return serializedActions.has(name) ? launchCoordinator.serialize(work) : work();
+      if (!serializedActions.has(name)) return work();
+      if (hoyoGameActions.has(name)) {
+        const flow = await hoyoWorkflow.inspect(args[0]);
+        return workScheduler.run(gameWorkKey(flow.gameId), () => hoyoBindingActions.has(name)
+          ? workScheduler.run('hoyo-bindings', work) : work());
+      }
+      if (hoyoBindingActions.has(name)) return workScheduler.run('hoyo-bindings', work);
+      const id = name === 'launch-settings-apply' ? settingsPlanGames.get(args[0])
+        : loggedGameActions.has(name) || name === 'game-dismiss' ? args[0] : null;
+      if (name === 'launch-settings-apply' && !id) throw Object.assign(new Error('预览已过期。'), { code: 'PLAN_EXPIRED' });
+      const key = typeof id === 'string' ? gameWorkKey(id)
+        : name === 'game-confirm' && typeof args[0]?.root === 'string' ? 'game:' + path.resolve(args[0].root).toLowerCase()
+          : name.startsWith('manager-update-') ? 'manager-update' : 'component-inventory';
+      return workScheduler.run(key, work);
     },
     { action: name, gameId: loggedGameActions.has(name) && typeof args[0] === 'string' ? args[0] : null }
   )));
   call('boot', async () => {
     const data = await service.boot();
+    deferredOperations?.start();
     currentHardware = data.hardware;
     for (const warning of data.discoveryWarnings || []) startup.log('launcher-discovery-warning', { code: warning.code, message: warning.message });
     return data;
@@ -305,25 +381,33 @@ function registerIpc() {
   call('hoyo-inspect', (id, options) => hoyoWorkflow.inspect(id, { retry: options?.retry === true }));
   call('hoyo-pick-game', async () => {
     const result = await dialog.showOpenDialog(win, { properties: ['openFile'], title: '选择正式米哈游游戏程序', filters: [{ name: '游戏程序', extensions: ['exe'] }] });
-    return hoyoWorkflow.pickGame(result.canceled ? null : result.filePaths[0]);
+    return workScheduler.run('hoyo-bindings', async () => {
+      await operationElevation.assertAvailable();
+      return hoyoWorkflow.pickGame(result.canceled ? null : result.filePaths[0]);
+    });
   });
   call('hoyo-pick-launcher', async id => {
     const result = await dialog.showOpenDialog(win, { properties: ['openFile'], title: '选择这个客户端的 HoYoPlay 或 Starward 启动器', filters: [{ name: '启动器', extensions: ['exe'] }] });
-    return hoyoWorkflow.pickLauncher(id, result.canceled ? null : result.filePaths[0]);
+    const flow = await hoyoWorkflow.inspect(id);
+    return workScheduler.run(gameWorkKey(flow.gameId), () => workScheduler.run('hoyo-bindings', async () => {
+      await operationElevation.assertAvailable();
+      return hoyoWorkflow.pickLauncher(id, result.canceled ? null : result.filePaths[0]);
+    }));
   });
   call('hoyo-bind', (id, input) => hoyoWorkflow.bind(id, input));
-  call('hoyo-preview', (id, action) => hoyoWorkflow.preview(id, action));
+  call('hoyo-preview', (id, action, options) => hoyoWorkflow.preview(id, action, options));
   call('hoyo-apply', (id, planId, consent) => hoyoWorkflow.apply(id, planId, consent));
   call('hoyo-recover', id => hoyoWorkflow.recover(id));
-  call('hoyo-start', async id => { await operationElevation.assertAvailable(); return hoyoWorkflow.start(id); });
+  call('hoyo-start', async id => {
+    await operationElevation.assertAvailable();
+    const flow = await hoyoWorkflow.inspect(id);
+    await assertNoWaitingOperation(flow.gameId);
+    return hoyoWorkflow.start(id);
+  });
   call('hoyo-cancel', id => hoyoWorkflow.cancel(id));
   call('game-visual-record', (id, input) => verificationRecords.record(id, input));
   call('game-operation-preview', (id, request) => operationPlans.preview(id, request));
-  call('game-operation-apply', async (id, planId, consent) => {
-    const plan = await operationPlans.loadPlan(planId, consent?.fingerprint);
-    if (plan.gameId !== id) throw Object.assign(new Error('应用预览属于另一游戏。'), { code: 'OPERATION_TARGET' });
-    return operationPlans.apply(planId, consent);
-  });
+  call('game-operation-apply', (id, planId, consent) => deferredOperations.apply(id, planId, consent));
   call('game-operation-apply-elevated', async (id, planId, consent) => {
     const result = await operationElevation.apply(id, planId, consent);
     await service.refresh(); return result;
@@ -336,12 +420,26 @@ function registerIpc() {
   call('game-repair', (id, options) => service.repair(id, options));
   call('game-upgrade-addon', (id, version, options) => service.upgradeAddon(id, version, options));
   call('game-dismiss', id => launchCoordinator.dismiss(id));
-  call('game-library-remove', async id => {
+  call('game-library-remove', async (id, options = {}) => {
+    if (options.keepFiles === true) {
+      if (options.confirm !== true) throw Object.assign(new Error('请确认仅移出游戏库，保留所有游戏文件与恢复记录。'), { code: 'LIBRARY_CONFIRM_REQUIRED' });
+      const waitingArchive = await deferredOperations.cancelWithinQueue(id);
+      return launchCoordinator.removeLibraryEntry(id, { keepFiles: true, confirm: true, waitingArchive });
+    }
     await operationPlans.assertReady(id); await preparation.assertReady(id); await environment.assertReady(id);
     return launchCoordinator.removeLibraryEntry(id);
   });
+  call('game-deployment-rescue-preview', (id, mode = 'repair') => service.previewDeploymentRescue(id, mode));
+  call('game-deployment-rescue-apply', async (id, planId, consent = {}) => {
+    if (consent.confirm !== true) throw Object.assign(new Error('请先核对并确认本次部署恢复预览。'), { code: 'CONFIRM_REQUIRED' });
+    await deferredOperations.cancelWithinQueue(id);
+    return service.applyDeploymentRescue(id, planId, consent);
+  });
   call('game-rename', (id, name) => service.renameGame(id, name));
   call('game-api-set', (id, api, options) => service.setGameApi(id, api, options));
+  call('game-api-preference', (id, api) => service.setGameApiPreference(id, api));
+  call('game-operation-submit', (id, request, consent) => deferredOperations.submit(id, request, consent));
+  call('game-operation-cancel-waiting', id => deferredOperations.cancel(id));
   call('game-route-apply', (id, options) => service.applyGameRoute(id, options));
   call('game-prepare-all', (id, options) => preparation.prepare(id, options));
   call('game-preparation-inspect', id => preparation.inspect(id));
@@ -365,10 +463,9 @@ function registerIpc() {
   });
   call('game-environment-apply', async (id, planId, names) => service.refreshAfterMutation(await environment.apply(id, planId, names)));
   call('game-environment-restore', async id => {
+    await assertEnvironmentRestorable(id);
     const recovered = await environment.recoverPending(id);
     await preparation.assertReady(id);
-    await launchCoordinator.restoreForUninstall(id);
-    await service.restoreManagedForCleanup(id);
     return service.refreshAfterMutation({ ...await environment.restore(id), interruptedFilesRecovered: recovered.recovered });
   });
   call('game-feeder-inspect', id => service.inspectFeeder(id));
@@ -392,6 +489,7 @@ function registerIpc() {
     } catch (error) { return { ...result, remainingCheckFailed: true, notice: `安装已恢复，但残留检查未完成：${error.message}。请在维护入口重新检查。` }; }
   });
   call('game-launch', async id => {
+    await assertNoWaitingOperation(id);
     let result;
     try { result = await launchCoordinator.launch(id); }
     catch (error) {
@@ -418,8 +516,16 @@ function registerIpc() {
   call('sr-model-write', (id, selection) => launchCoordinator.writeLegacySr(id, selection));
   call('launch-settings-inspect', id => launchCoordinator.inspect(id));
   call('launch-settings-save', (id, domain, request) => launchSettings.save(id, domain, request));
-  call('launch-settings-preview', (id, domain, request) => launchSettings.preview(id, domain, request));
-  call('launch-settings-apply', (planId, consent) => launchSettings.apply(planId, { confirm: consent?.confirm === true }));
+  call('launch-settings-preview', async (id, domain, request) => {
+    const plan = await launchSettings.preview(id, domain, request);
+    settingsPlanGames.set(plan.id, id);
+    if (settingsPlanGames.size > 256) settingsPlanGames.delete(settingsPlanGames.keys().next().value);
+    return plan;
+  });
+  call('launch-settings-apply', async (planId, consent) => {
+    try { return await launchSettings.apply(planId, { confirm: consent?.confirm === true }); }
+    finally { settingsPlanGames.delete(planId); }
+  });
   call('launch-settings-restore', (id, domain) => launchSettings.restore(id, domain));
   call('launch-settings-recover', id => launchSettings.recover(id));
   call('launch-settings-update', (id, domain, input, options = {}) => applyEnhancement(id, domain, input, options));
@@ -458,17 +564,38 @@ function registerIpc() {
   call('components-list', () => service.listComponents());
   call('components-providers', () => service.inspectComponentProviders());
   call('components-provider-select', id => service.selectComponentProvider(id));
+  call('manager-update-check', () => managerUpdate ? managerUpdate.check() : Promise.reject(Object.assign(new Error('当前版本未配置自动更新清单。'), { code:'UPDATE_CONFIGURATION' })));
+  call('manager-update-prepare', manifest => managerUpdate ? managerUpdate.prepare(manifest) : Promise.reject(Object.assign(new Error('当前版本不能自动准备更新。'), { code:'UPDATE_CONFIGURATION' })));
+  call('manager-update-cancel', () => managerUpdate?.cancel() === true);
+  call('manager-update-apply', async () => {
+    if (!managerUpdate) throw Object.assign(new Error('当前版本不能自动应用更新。'), { code:'UPDATE_CONFIGURATION' });
+    const result = await managerUpdate.launchApply(); setImmediate(() => app.quit()); return result;
+  });
   call('components-updates', () => service.checkComponentUpdates());
   call('components-download', id => service.downloadComponent(id));
   call('game-components', id => service.componentChoices(id));
   call('game-component-apply', (id, bridge) => service.applyBridgeComponent(id, bridge));
+  call('game-user-addon-set', (id, componentId, enabled) => service.setUserAddon(id, componentId, enabled === true));
   call('components-runtime-activate', id => service.activateComponentRuntime(id));
   call('components-core-activate', id => service.activateComponentCore(id));
+  call('components-storage-pick', async () => {
+    const current=await service.listComponents();
+    const result=await dialog.showOpenDialog(win,{properties:['openDirectory'],title:'选择组件仓库所在磁盘或目录',
+      defaultPath:path.dirname(current.storage.root)});
+    if (result.canceled || !result.filePaths[0]) return null;
+    return service.moveComponentLibrary(result.filePaths[0]);
+  });
   call('components-pick', async directory => {
     const result = await dialog.showOpenDialog(win, { properties: [directory ? 'openDirectory' : 'openFile'],
       title: '导入运行库或外部组件', ...(directory ? {} : { filters: [{ name: '组件包与模块', extensions: ['zip','json','dll','addon64','addon32'] }] }) });
     if (result.canceled || !result.filePaths[0]) return null;
     return service.importComponent(result.filePaths[0]);
+  });
+  call('components-runtime-pick', async () => {
+    const result = await dialog.showOpenDialog(win, { properties: ['openFile'], title: '选择 NR 运行库 DLC（RTX40 / RTX50）',
+      filters: [{ name: 'NR 运行库 DLC', extensions: ['zip'] }] });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return service.importRuntimeDlc(result.filePaths[0]);
   });
   call('payload-source-pick', async () => {
     const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: '选择完整组件目录',
@@ -590,11 +717,20 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       resourcesPath: process.resourcesPath,
       appDir: __dirname,
       version: app.getVersion(),
-      overrides: { getFeatureEvidence: (id, domain) => featureProbe.inspect(id, domain), getKnownComponents: async id => fgComponents ? [
+      overrides: { applicationDir:app.isPackaged ? path.dirname(process.execPath) : null,
+        portableExecutable:process.env.PORTABLE_EXECUTABLE_FILE || null,
+        getFeatureEvidence: (id, domain, context) => featureProbe.inspect(id, domain, context), getKnownComponents: async id => fgComponents ? [
         ...await fgComponents.ownedModuleManifest(id).then(rows => rows.map(row => ({ ...row, owned: true, compatibility: 'compatible' }))),
         ...(typeof fgComponents.catalog === 'function' ? fgComponents.catalog() : []).map(row => ({ sha256: row.sha256, role: 'mfgunlock', compatibility: 'compatible' }))
       ] : [] }
     });
+    if (!worker && typeof service.product?.updateManifestUrl === 'string') {
+      managerUpdate = require('./src/product/manager-update').createManagerUpdate({ currentVersion:app.getVersion(),
+        manifestUrl:service.product.updateManifestUrl, root:portableData?.updates || path.join(userData,'updates'),
+        applicationDirectory:app.isPackaged ? path.dirname(process.execPath) : null,
+        executable:app.isPackaged ? process.execPath : null, portable:Boolean(portableData),
+        progress:value => { if (win && !win.isDestroyed()) win.webContents.send('manager-update-progress',value); } });
+    }
     startup.log('state-store-opened');
     const configRecovery = service.store.readRecoveryStatus?.();
     if (!worker && configRecovery && !['ok', 'missing', 'unread'].includes(configRecovery.state)) {
@@ -602,8 +738,13 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       void dialog.showMessageBox({ type: 'warning', title: '已保留旧配置', message: configRecovery.message,
         detail: '原配置和游戏备份没有被删除。需要协助时，可通过启动诊断导出当前状态。', buttons: ['知道了'] });
     }
+    const driverScript = name => process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, name))
+      ? path.join(process.resourcesPath, name) : path.join(__dirname, 'src', 'product', name);
+    const nvapi = coordinateDriver(require('./src/product/nvapi-drs').createNvapiDrs({ scriptPath: driverScript('nvapi-drs.ps1') }));
+    const driver = coordinateDriver(require('./src/product/nvapi-profile').createNvapiProfileAdapter({ scriptPath: driverScript('nvapi-profile.ps1') }));
     srModel = createSrModelService({
       userData,
+      nvapi,
       resourcesPath: process.resourcesPath,
       appDir: __dirname,
       gameDirectory: id => service.gameDirectory(id),
@@ -615,7 +756,7 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       resourcesPath: process.resourcesPath, appDir: __dirname
     });
     launchSettings = createLaunchSettingsService({
-      userData, resourcesPath: process.resourcesPath, appDir: __dirname,
+      userData, resourcesPath: process.resourcesPath, appDir: __dirname, driver,
       gameDirectory: id => service.gameDirectory(id),
       getLayout: id => service.getLayout(id), scan: id => service.gameScan(id),
       gameExecutable: id => service.gameExecutable(id), legacySrModel: srModel,
@@ -656,7 +797,7 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
     launchCoordinator = createLaunchCoordinator({ service, settings: launchSettings, legacySrModel: srModel, guards: installGuards,
       components: fgComponents, explicitApply: true, launchGame: (id, controls) => launchSessions.start(id, controls) });
     environment = require('./src/product/game-environment').createGameEnvironment({ gameDirectory: id => service.gameDirectory(id),
-      gameExecutable: id => service.gameExecutable(id), guards: installGuards });
+      gameExecutable: id => service.gameExecutable(id), guards: installGuards, assertRestorable: assertEnvironmentRestorable });
     const processes = require('./src/product/game-processes').createGameProcesses();
     const nativeRuntimeVerification = require('./src/product/runtime-verification').createRuntimeVerification({ layout: id => service.getLayout(id), processes, modules: id => service.gameModuleManifest(id) });
     const legacyRuntimeVerification = require('./src/product/legacy-runtime-verification').createLegacyRuntimeVerification({ appDir: __dirname, resourcesPath: process.resourcesPath,
@@ -667,6 +808,8 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       matched: (id, session) => service.legacyRuntimeContext(id) ? legacyRuntimeVerification.matched(id, session) : null
     };
     const broker = require('./src/product/game-launch-broker').createGameLaunchBroker({ resourcesPath: process.resourcesPath });
+    launcherCompatibility = require('./src/product/launcher-compatibility').createLauncherCompatibility({ userData, broker,
+      assertGameClosed: (gameDir, exe) => installGuards.assertGameClosed(gameDir, exe) });
     const isAdministrator = async () => (await elevation.context()).privilege === 'administrator';
     const hoyoLauncher = require('./src/product/hoyo-launcher').createHoYoLauncher({ broker, isAdministrator });
     const loadingHelper = require('./src/product/loading-helper').createLoadingHelper({ appDir: __dirname, resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
@@ -676,7 +819,8 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
     launchSessions = require('./src/product/launch-session').createLaunchSessions({ userData, processes, broker, helper: loadingHelper, hoyoTimeoutMs: 300000,
       game: async id => { const mode = await inspectLaunchMode(id), layout = service.getLayout(id);
         if (layout.loadingBackend === 'hoyoshade') return hoyoLauncher.resolve(layout);
-        return { exe: mode.exe, launchMode: mode.effective, steamAppId: mode.steamAppId, steamRoot: mode.steamRoot,
+        return { exe: mode.launchProfile?.realExecutable || mode.exe, launchMode: mode.effective, steamAppId: mode.steamAppId, steamRoot: mode.steamRoot,
+        ...(mode.launchProfile ? { launchRequest:mode.launchProfile.launchRequest, launchProfile:mode.launchProfile } : {}),
         ...(layout.loadingMode === 'helper' ? { helper: { gameId: id } } : {}) }; },
       launchDirect: id => service.launch(id), launchHoYo: (id, _target, controls) => hoyoLauncher.launch(service.getLayout(id), controls),
       beforeLaunch: async (id, session) => {
@@ -703,14 +847,22 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
     }
     operationPlans = require('./src/product/operation-plan').createOperationPlans({ userData, service, settings: launchSettings,
       components: fgComponents, fgWorkflow, environment, preparation, guards: installGuards, applyEnhancement,
-      restoreForUninstall: id => launchCoordinator.restoreForUninstall(id), setLaunchMode, inspectLaunchMode });
+      restoreForUninstall: id => launchCoordinator.restoreForUninstall(id), setLaunchMode, inspectLaunchMode,
+      onProgress: value => { if (win && !win.isDestroyed()) win.webContents.send('operation-progress', value); } });
+    deferredOperations = require('./src/product/deferred-operations').createDeferredOperations({
+      userData, service, operations: operationPlans,
+      assertClosed: id => installGuards.assertGameClosed(service.gameDirectory(id), service.gameExecutable(id)),
+      run: (game, work) => workScheduler.run('game:' + path.resolve(game).toLowerCase(), work),
+      beforeApply: async () => { await operationElevation?.assertAvailable(); },
+      emit: value => { if (win && !win.isDestroyed()) win.webContents.send('waiting-operation-updated', value); }
+    });
     verificationRecords = require('./src/product/game-verification-records').createGameVerificationRecords({ userData,
       gameExecutable: id => service.gameExecutable(id), layout: id => service.getLayout(id), coreIdentity: id => service.gameCoreIdentity(id), launchSession: id => launchSessions.inspect(id) });
     const componentAssessment = require('./src/product/component-assessment').createComponentAssessment({ layout: id => service.getLayout(id), allowExplicitExpectedPaths: true,
       knownPayloads: () => service.knownComponentCatalog(),
       getExpectedModules: async id => [...await service.gameModuleManifest(id), ...await fgComponents.ownedModuleManifest(id)] });
     gameAssessment = require('./src/product/game-assessment').createGameAssessment({ service, settings: launchSettings, coordinator: launchCoordinator,
-      environment, operations: operationPlans, launches: launchSessions, verification: runtimeVerification, launchMode: inspectLaunchMode,
+      environment, operations: operationPlans, deferred: deferredOperations, launches: launchSessions, verification: runtimeVerification, launchMode: inspectLaunchMode,
       hardware: () => currentHardware, helper: loadingHelper, records: verificationRecords, components: componentAssessment });
     if (!worker) compatibilityFeedback = require('./src/product/compatibility-feedback').createCompatibilityFeedback({
       assessment: gameAssessment, sessions: launchSessions,
@@ -748,7 +900,11 @@ async function initializeServices({ worker = false, hoyoWorker = false, workerCo
       packaged: app.isPackaged, runPowerShell, log: startup.log });
     if (!worker) hoyoWorkflow = require('./src/product/hoyo-workflow').createHoYoWorkflow({ userData, service,
       operations: operationPlans, launches: launchSessions, verification: runtimeVerification,
-      launch: (id, controls) => launchCoordinator.serialize(() => launchCoordinator.launch(id, controls)),
+      launch: (id, controls) => workScheduler.run(gameWorkKey(id), async () => {
+        await operationElevation.assertAvailable();
+        await assertNoWaitingOperation(id);
+        return launchCoordinator.launch(id, controls);
+      }),
       inspectLaunchReadiness: id => launchCoordinator.inspectLaunchReadiness(id),
       elevatedApply: (id, planId, consent) => operationElevation.apply(id, planId, consent),
       beforeMutation: id => installGuards.assertGameClosed(service.gameDirectory(id), service.gameExecutable(id)),
@@ -788,6 +944,7 @@ async function startApplication() {
     await app.whenReady(); startup.exportTo(target); app.quit(); return;
   }
   if (process.argv.includes('--diagnostics')) { await app.whenReady(); await exportStartupReport(); app.quit(); return; }
+  if (noSandbox && !sandboxRetryOnce) throw Object.assign(new Error('不能直接以无沙箱模式启动。请先普通双击；仅在程序确认 Electron 子进程启动失败后，错误框会提供一次临时兼容重试。'), { code:'UNAUTHORIZED_NO_SANDBOX' });
   if (app.commandLine.hasSwitch('as-admin')) startup.log('legacy-whole-app-elevation-ignored');
   singleInstanceOwned = app.requestSingleInstanceLock({ startupNonce: startup.sessionId });
   if (!singleInstanceOwned) {
@@ -803,7 +960,7 @@ async function startApplication() {
     startup.log('second-instance-focus', { windowAvailable: Boolean(win) });
     if (!service) return;
     for (const file of addonArgs(argv)) {
-      try { await operationElevation?.assertAvailable(); await launchCoordinator.serialize(() => service.importAddonFile(file)); }
+      try { await operationElevation?.assertAvailable(); await workScheduler.run('component-inventory', () => service.importAddonFile(file)); }
       catch (error) { startup.log('addon-import-deferred', { code: error.code, message: error.message });
         await dialog.showMessageBox({ type: 'warning', title: '组件尚未导入', message: '当前操作尚未结束，请等待结果或恢复后，再导入这个组件。', buttons: ['知道了'] }); }
     }
@@ -813,6 +970,13 @@ async function startApplication() {
   app.setAppUserModelId('com.xiaofeng.dlss5.manager');
   await app.whenReady();
   startup.log('electron-ready');
+  if (portableDataError) throw portableDataError;
+  const prerequisite = require('./src/product/startup-prerequisite').createStartupPrerequisite({ dialog, shell,
+    platform:process.platform, executable:process.execPath });
+  const prerequisiteResult = await prerequisite.ensureReady();
+  startup.log('startup-prerequisite', { status:prerequisiteResult.result?.status || 'unknown',
+    repair:prerequisiteResult.result?.repair || '', action:prerequisiteResult.action || 'none' });
+  if (!prerequisiteResult.proceed) { app.quit(); return; }
   await initializeServices();
     for (const file of addonArgs(process.argv)) {
       try { await operationElevation.assertAvailable(); await service.importAddonFile(file); }

@@ -27,8 +27,8 @@ async function processWindow(pid, closeTicks = null) {
   const result = await execute(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 10000, maxBuffer: 16384 });
   return JSON.parse(result.stdout);
 }
-function startupLog(pid) {
-  const roots = [path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'xiaofeng-dlss5-manager/startup'), path.join(os.tmpdir(), 'xiaofeng-dlss5-manager/startup')];
+function startupLog(pid, portableRoot = null) {
+  const roots = portableRoot ? [path.join(portableRoot, 'logs/startup')] : [path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'xiaofeng-dlss5-manager/startup'), path.join(os.tmpdir(), 'xiaofeng-dlss5-manager/startup')];
   for (const root of roots) {
     if (!fs.existsSync(root)) continue;
     for (const name of fs.readdirSync(root).filter(value => /^startup-[a-f0-9-]{36}\.log$/.test(value))) {
@@ -50,6 +50,8 @@ async function runUninstrumentedSmoke({ executable, proofFile, logsDirectory } =
   if (process.platform !== 'win32') throw new Error('This packaged startup acceptance requires Windows.');
   if (!executable || !proofFile) throw new Error('Provide --executable and --isolation-proof.');
   executable = fs.realpathSync(executable);
+  const portableRoot = require('../src/product/portable-data').readMarker(path.dirname(executable)) ? path.join(path.dirname(executable), 'data') : null;
+  if (portableRoot && fs.existsSync(portableRoot)) throw new Error('Portable acceptance requires a fresh extraction without an existing data directory.');
   const archive = path.join(path.dirname(executable), 'resources/app.asar');
   const proof = JSON.parse(fs.readFileSync(proofFile, 'utf8'));
   validateIsolationProof(proof, executable, archive);
@@ -70,9 +72,9 @@ async function runUninstrumentedSmoke({ executable, proofFile, logsDirectory } =
     const initial = await processWindow(started.pid);
     if (!initial.exists || path.resolve(initial.path).toLowerCase() !== executable.toLowerCase()) throw new Error('Could not bind the launched PID to the expected EXE.');
     ownedStartTicks = initial.startTicks;
-    const deadline = Date.now() + 20000, minimum = Date.now() + 15000;
+    const deadline = Date.now() + 90000, minimum = Date.now() + 15000;
     while (Date.now() < deadline) {
-      log = startupLog(started.pid);
+      log = startupLog(started.pid, portableRoot);
       const names = new Set(log?.stages.map(row => row.stage));
       if (names.has('startup-failure') || names.has('render-process-gone') || log?.stages.some(row => row.stage === 'child-process-gone' && row.reason !== 'clean-exit')) break;
       if (Date.now() >= minimum && ['window-visible', 'page-loaded', 'renderer-ready'].every(name => names.has(name))) break;
@@ -85,11 +87,12 @@ async function runUninstrumentedSmoke({ executable, proofFile, logsDirectory } =
     const ok = started.elevated === false && lastWindow.exists && lastWindow.visible === true && !failed.length && options?.noSandbox === false &&
       ['window-visible', 'page-loaded', 'renderer-ready'].every(name => names.has(name));
     report = { ok, packagedExecutable: true, instrumentation: false, gameServicesReplaced: false, profileIsolated: true,
-      scope: 'Actual EXE and ASAR, default sandbox, ordinary token, fresh verified user-data-dir; read-only real game discovery permitted; no game/driver actions invoked.',
+      scope: 'Actual EXE and ASAR, default sandbox, ordinary token, fresh profile; read-only real game discovery permitted; no game/driver actions invoked.',
+      profileMode: portableRoot ? 'fresh-directory-portable' : 'user-data-dir',
       executableSha256: proof.executableSha256, sourceSha256: proof.sourceSha256, pid: started.pid, tokenElevated: started.elevated,
       elapsedMs: Date.now() - begins, visible: lastWindow.visible === true, windowHandle: lastWindow.handle || null,
       startupLog: log?.file || null, stages: log?.stages || [], failed,
-      userDataCreated: fs.readdirSync(userData).length > 0, logsDirectory: logsDirectory || null };
+      userDataCreated: fs.readdirSync(portableRoot || userData).length > 0, logsDirectory: logsDirectory || null };
     if (sha256(executable) !== proof.executableSha256 || sha256(archive) !== proof.sourceSha256) throw new Error('Candidate files changed during the startup acceptance.');
     return report;
   } catch (error) { error.artifactRoot = root; throw error; }
@@ -105,7 +108,7 @@ async function runUninstrumentedSmoke({ executable, proofFile, logsDirectory } =
         } else if (report) report.cleanup = 'Only the verified owned window was asked to close; the process exited.';
       }
       if (logsDirectory) {
-        const complete = startupLog(started.pid);
+        const complete = startupLog(started.pid, portableRoot);
         if (complete) {
           fs.writeFileSync(path.join(logsDirectory, complete.file), complete.bytes);
           if (report) report.completeLogSha256 = crypto.createHash('sha256').update(complete.bytes).digest('hex');

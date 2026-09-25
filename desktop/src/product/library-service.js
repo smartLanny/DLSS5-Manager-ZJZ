@@ -10,6 +10,7 @@ const { detectReEngine } = require('./re-engine-detection');
 const { createLaunchContext, steamLaunchIdentity } = require('./launch-evidence');
 const { DX11_COMPAT_VERSION } = require('./constants');
 const { readManifest, manifestPath, manifestExecutable } = require('./manifest');
+const { inspectExistingInstallation } = require('./existing-installation');
 const { MESSAGES } = require('./errors');
 const pe = require('../core/pe');
 
@@ -519,6 +520,10 @@ function createLibraryService(overrides = {}) {
         steamAppId: steamIdentity.steamAppId || null, ...entryContext, documentsDir: overrides.documentsDir, apiOverride });
       let manifest = null;
       try { manifest = readManifest(game.dir); } catch {}
+      const existingInstallation = inspectExistingInstallation({
+        executable: scan.chosen?.path,
+        managed: Boolean(manifest)
+      });
       const carrierEnabled = isDx11Only(scan.chosen);
       scan.componentSelection = { dx11Carrier: carrierEnabled };
       // Pure DX11 uses the unified 0.4.5 compatibility payload. A remembered
@@ -567,6 +572,7 @@ function createLibraryService(overrides = {}) {
         supportCode: support.code,
         supportText: support.code ? MESSAGES[support.code] : '支持安装',
         installed: Boolean(manifest),
+        existingInstallation,
         apiOverride: ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan', 'opengl'].includes(apiOverride) ? apiOverride : 'auto',
         components: { dx11Carrier: carrierEnabled },
         addonVersion: manifest && manifest.payloadVersion ? manifest.payloadVersion : null,

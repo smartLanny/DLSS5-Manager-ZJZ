@@ -3,13 +3,15 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('node:crypto');
+const { AsyncLocalStorage } = require('node:async_hooks');
+const experimentalRouting = require('./experimental-core-routing');
 const { PRODUCT, DX11_COMPAT_VERSION, INSTALLED_NAMES } = require('./constants');
 const { isDx11Only, classifyApi, assess } = require('./game-support');
 const { createStore } = require('./state-store');
 const { createLibraryWorkerClient } = require('./library-worker-client');
 const { createPayloadInspectionCache } = require('./payload-inspection-cache');
 const { createInstaller } = require('./installer');
-const { payloadRoot, readBundle, requirePayload, sha256 } = require('./payload');
+const { payloadRoot, readBundle, requirePayload, safePayloadPath, sha256 } = require('./payload');
 const { readConfig, writeConfig, defaultPatch } = require('./nr-config');
 const { readReShadeHotkey, writeReShadeHotkey } = require('./hotkeys');
 const { readManifest, assertManifestExecutable, manifestPath } = require('./manifest');
@@ -20,7 +22,7 @@ const { readOtaPackage } = require('./ota');
 const { createFeedbackCollector } = require('./feedback');
 const { createExternalRuntime, RECEIPT: EXTERNAL_RECEIPT, PENDING: EXTERNAL_PENDING } = require('./external-runtime');
 const { resolveVersion } = require('./version-selection');
-const { resolvePayloadDirectory, inspectSource } = require('./payload-source');
+const { resolvePayloadDirectory } = require('./payload-source');
 const { createVulkanService } = require('./vulkan-service');
 const { inspectNativeEnhancementCapabilities } = require('./game-enhancement-capabilities');
 const { createGameLaunchBroker } = require('./game-launch-broker');
@@ -28,13 +30,33 @@ const { createReframeworkPreparation } = require('./reframework-preparation');
 const { REFRAMEWORK_ADAPTERS } = require('./reframework-compatibility');
 const { createRdr2ApiSettings } = require('./rdr2-api-settings');
 const { createGameApiSettings } = require('./game-api-settings');
+const adoptionPolicy = require('./installation-adoption');
 
 const QUIET_READ_ACTIONS = new Set(['boot', 'games-refresh', 'games-list', 'game-diagnose', 'game-hotkeys-read',
   'nr-read', 'sr-model-read', 'launch-settings-inspect', 'addon-list', 'game-art', 'game-icon', 'game-feeder-inspect',
   'game-selection-icon', 'feedback-build', 'payload-source-read', 'game-reframework-inspect']);
 
 function createAppService({ userData, resourcesPath, appDir, documentsDir, version = '0.0.0', overrides = {} }) {
+  const coreSelectionScope = new AsyncLocalStorage();
   const store = createStore(path.join(userData, 'settings.json'));
+  const updateGameOverride = (key, fields) => store.update(state => ({ gameOverrides: { ...state.gameOverrides,
+    [key]: { ...state.gameOverrides[key], ...fields } } }));
+  async function writeApiPreference(key, api, exe) {
+    let receipt;
+    const saved = await store.update(state => {
+      const before = state.gameOverrides[key] || {};
+      receipt = { before: { api: before.api || 'auto', apiExecutable: before.apiExecutable || null },
+        after: { api: api || 'auto', apiExecutable: exe } };
+      return { gameOverrides: { ...state.gameOverrides, [key]: { ...before, ...receipt.after } } };
+    });
+    const after = saved.gameOverrides[key] || {};
+    receipt.after = { api: after.api || 'auto', apiExecutable: after.apiExecutable || null };
+    return receipt;
+  }
+  const storageApi = require('./component-storage');
+  const storageState = store.read();
+  const componentStorage = storageApi.resolveComponentStorage({ userData, configuredRoot:storageState.componentLibraryPath,
+    portableExecutable:overrides.portableExecutable, applicationDir:overrides.applicationDir });
   const library = overrides.library || createLibraryWorkerClient({ documentsDir });
   const installer = overrides.installer || createInstaller();
   const externalDeployment = overrides.externalDeployment || createExternalRuntime({ userData,
@@ -45,6 +67,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   const repairPlans = new Map();
   const specialDeploymentPlans = new Map();
   const hoyoDeploymentPlans = new Map();
+  const adoptionProposals = new Map();
   const apiSettingsReader = overrides.apiSettingsReader || createRdr2ApiSettings({ documentsDir });
   const gameApiSettings = overrides.gameApiSettings || createGameApiSettings({ userData, settings: apiSettingsReader,
     assertGameClosed: overrides.assertGameClosed || require('../core/install-guards').assertGameClosed });
@@ -55,10 +78,27 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     resolveFeederLogDirectory: game => feeder.feedbackLogDirectory(game) });
   const payloadInspection = createPayloadInspectionCache();
   const bundledPayloadDir = payloadRoot(fs.existsSync(path.join(resourcesPath || '', 'payload')) ? resourcesPath : appDir);
-  const componentLibrary = require('./component-library').createComponentLibrary({ userData });
+  const componentLibrary = require('./component-library').createComponentLibrary({ userData,
+    root:overrides.componentLibraryRoot || componentStorage.root });
+  const componentOverview = require('./component-overview').createComponentOverview({ appDir, resourcesPath, libraryRoot: componentLibrary.root });
+  const userAddons = require('./user-addon-manager').createUserAddonManager({
+    componentRoot: componentLibrary.root,
+    assertGameClosed: overrides.assertGameClosed || require('../core/install-guards').assertGameClosed
+  });
   let seedPromise;
   const componentSeedErrors = [];
+  const managedStorageSources = [componentStorage.legacyRoot,
+    overrides.applicationDir && path.join(path.resolve(overrides.applicationDir),'DLSS5-Manager-Data','component-library'),
+    overrides.portableExecutable && path.join(path.dirname(path.resolve(overrides.portableExecutable)),'DLSS5-Manager-Data','component-library'),
+    storageState.componentLibraryPreviousPath]
+    .filter(value => typeof value === 'string' && path.isAbsolute(value));
+  const storageFinalization = storageState.componentLibraryPath && !overrides.componentLibraryRoot
+    ? storageApi.finalizeComponentStorageMove({ userData, configuredRoot:componentLibrary.root, allowedSources:managedStorageSources })
+      .then(async result => { if (result.removedSource && storageState.componentLibraryPreviousPath) await store.write({componentLibraryPreviousPath:null}); return result; })
+      .catch(error => { componentSeedErrors.push(`旧组件仓库尚未清理：${error.message}`); return {removedSource:false,error}; })
+    : Promise.resolve({removedSource:false});
   const bundledComponentIds = new Set();
+  const bundledComponentIdentities = new Map();
   function seedBundledComponents() {
     if (seedPromise) return seedPromise;
     seedPromise = (async () => {
@@ -69,12 +109,20 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (fs.statSync(file).size > 1024 * 1024) throw new Error('随包组件目录过大。');
       const catalog = JSON.parse(await fs.promises.readFile(file,'utf8'));
       if (catalog.schemaVersion !== 1 || !Array.isArray(catalog.packages) || catalog.packages.length > 128) throw new Error('随包组件目录无效。');
-      const inventory = await componentLibrary.inventory();
       for (const row of catalog.packages) {
         if (!/^[a-z0-9][a-z0-9._+-]{0,127}$/i.test(row.id || '')) throw new Error('随包组件标识无效。');
         bundledComponentIds.add(row.id);
         const dir = path.join(root,row.id);
-        if (!inventory.packages.some(item => item.id === row.id) && fs.existsSync(path.join(dir,'component-manifest.json'))) await componentLibrary.importComponent(dir);
+        // Re-adopt exact bundled identities on every application version. This
+        // safely promotes an older candidate record only after every packaged
+        // file and catalog field has been reverified by the component library.
+        if (fs.existsSync(path.join(dir,'component-manifest.json'))) {
+          await componentLibrary.adoptBundledComponent(dir, row);
+          const module = row.files.find(file => /\.(?:addon64|dll)$/i.test(file.path || '') && !/component-manifest/i.test(file.path || ''));
+          if (module) bundledComponentIdentities.set(row.id, { id:row.id, kind:row.kind, version:row.version,
+            architecture:row.architecture, gameApis:row.gameApis || [], sourceType:row.sourceType,
+            immutable:row.immutable === true, sha256:module.sha256 });
+        }
       }
     })().catch(error => { componentSeedErrors.push(`随包组件导入未完成：${error.message}`); });
     return seedPromise;
@@ -93,9 +141,25 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     return hardware;
   }
   const vulkan = overrides.vulkan || createVulkanService({ userData, resourcesPath, appDir, hardware,
-    getExternalProviderPackage: (game, identity) => feeder?.vulkanProfilePackage?.(game, identity) || null });
+    getExternalProviderPackage: (game, identity) => {
+      const get = () => feeder?.vulkanProfilePackage?.(game, identity) || null;
+      // An existing Vulkan binding owns its Core too; a global default change
+      // must not reinterpret its provider recipe during inspection or repair.
+      if (!coreSelectionScope.getStore() && identity?.coreVersion === require('./unified5-core').ID) {
+        const entry = readBundle(payloadDir).versions?.[identity.coreVersion];
+        if (!experimentalRouting.isUnified5(identity.coreVersion, entry?.files?.['nr-before-sr.zh-CN.addon64'])) return null;
+        return coreSelectionScope.run({ version: identity.coreVersion, selection: { api: 'vulkan', architecture: 'x64', hardwareFamily: hardware.family } }, get);
+      }
+      return get();
+    } });
   feeder = overrides.feeder || require('./feeder-routing-service').createFeederRoutingService({ userData, resourcesPath, appDir, hardware,
     componentLibraryRoot: componentLibrary.root, getCurrentCore: () => providerContext().currentCore, getCurrentRuntime: () => providerContext().currentRuntime,
+    selectCandidate: selection => {
+      const scoped = coreSelectionScope.getStore();
+      if (!scoped) return undefined;
+      const wanted = { ...scoped.selection, ...(selection && typeof selection === 'object' ? selection : {}) };
+      return experimentalRouting.selectProvider(feeder.inspectProviders(providerContext()).packages, wanted, bundledComponentIds)?.provider.id || null;
+    },
     getLayout: game => hoyo.profile(game),
     getKnownComponents: async game => [...knownComponentCatalog(), ...(typeof overrides.getKnownComponents === 'function' ? await overrides.getKnownComponents(game.id) : [])] });
   const hoyo = overrides.hoyo || require('./hoyoshade-profile').createHoYoProfileService({ externalRuntime: externalDeployment, userData, appDir,
@@ -263,11 +327,15 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     try {
       assertSourceIdentity();
       const inspected = payloadInspection.inspect(payloadDir, options);
-      const sourceError = !inspected.ready && mode !== 'unconfigured'
+      const runtimeDlcRequired = Boolean(inspected.bundle) && inspected.missing.length > 0 && inspected.invalid.length === 0 &&
+        inspected.missing.every(file => String(file).split(/[\\/]/).pop().toLowerCase() === 'nvngx_dlssnr.dll');
+      const sourceError = !inspected.ready && mode !== 'unconfigured' && !runtimeDlcRequired
         ? normalizeError(appError(inspected.missing.length ? 'ERR_PAYLOAD_MISSING' : 'ERR_PAYLOAD_HASH',
           { path: payloadDir, files: inspected.missing.length ? inspected.missing : inspected.invalid })) : null;
       return { ...inspected, source: { mode, bundledAvailable, path: mode === 'unconfigured' ? '' : payloadDir,
-        ready: Boolean(inspected.bundle && inspected.ready), error: sourceError } };
+        ready: Boolean(inspected.bundle && inspected.ready), runtimeDlcRequired,
+        requiredHardwareFamily: runtimeDlcRequired && ['RTX40','RTX50'].includes(options.hardwareFamily) ? options.hardwareFamily : null,
+        error: sourceError } };
     } catch (error) {
       return { dir: payloadDir, bundle: null, versions: {}, selectedVersion: null, files: [], ready: false,
         missing: [], invalid: [], source: { mode, bundledAvailable, path: mode === 'unconfigured' ? '' : payloadDir, ready: false, error: normalizeError(error) } };
@@ -278,7 +346,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     return { settings: store.read(), payload: inspectCurrentPayload({ allowMissingBundle: true, hardwareFamily: hardware.family, version: selectedVersion() }), addons: listAddonVersions() };
   }
   function providerContext() {
-    const bundle = readBundle(payloadDir), version = selectedVersion() || bundle.defaultVersion, entry = bundle.versions?.[version];
+    const bundle = readBundle(payloadDir), version = coreSelectionScope.getStore()?.version || selectedVersion() || bundle.defaultVersion, entry = bundle.versions?.[version];
     if (!entry) return {};
     const rows = require('./component-library').readCachedComponents(componentLibrary.root), files = rows.flatMap(row => row.files || []);
     const coreHash = entry.files?.['nr-before-sr.zh-CN.addon64'], runtimeHash = bundle.fixed?.[hardware.family]?.files?.['nvngx_dlssnr.dll'];
@@ -288,11 +356,55 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const config = files.find(file => file.sha256 === configHash && file.name === 'nr_before_sr.ini');
     const core = files.find(file => file.sha256 === coreHash && /\.addon64$/i.test(file.name)), runtime = files.find(file => file.sha256 === runtimeHash && /\.dll$/i.test(file.name));
     return {
-      currentCore: { id:version, version, file:core?.file, sha256:coreHash, architecture:'x64', inputInterfaces:entry.inputInterfaces || [], capabilities:entry.capabilities || [],
-        companions:chain ? [{role:'core-chain',name:'nrchain_nvngx.dll',file:chain.file,sha256:chain.sha256,bytes:chain.bytes}] : [],
+      currentCore: { id:version, version, file:core?.file, sha256:coreHash, architecture:'x64',
+        inputInterfaces: coreSelectionScope.getStore() && experimentalRouting.isUnified5(version, coreHash) ? ['NGX-D3D12-Feature1', 'NRExternalProviderV1'] : entry.inputInterfaces || [],
+        capabilities: coreSelectionScope.getStore() && experimentalRouting.isUnified5(version, coreHash) ? experimentalRouting.CAPABILITIES : entry.capabilities || [],
+        companions:[...(chain ? [{role:'core-chain',name:'nrchain_nvngx.dll',file:chain.file,sha256:chain.sha256,bytes:chain.bytes}] : []),
+          ...Object.entries(require('./payload-companions').validateMap(entry.companions, version)).map(([name, hash]) => {
+            const item = files.find(file => file.name === name && file.sha256 === hash);
+            return { role: 'core-resource', name, file: item?.file, sha256: hash, bytes: item?.bytes };
+          })],
         config:config && {role:'core-config',name:'nr_before_sr.ini',file:config.file,sha256:config.sha256,bytes:config.bytes} },
       currentRuntime: runtime && { file:runtime.file, sha256:runtimeHash, bytes:runtime.bytes, family:hardware.family }
     };
+  }
+
+  async function withSelectedCore(id, request, run) {
+    const version = request?.version;
+    if (coreSelectionScope.getStore() || version !== require('./unified5-core').ID) return run();
+    const bundle = readBundle(payloadDir), entry = bundle.versions?.[version];
+    if (!experimentalRouting.isUnified5(version, entry?.files?.['nr-before-sr.zh-CN.addon64']))
+      throw appError('ERR_PAYLOAD_HASH');
+    await seedBundledComponents();
+    await componentLibrary.registerPayloadContext(payloadDir, version, hardware.family);
+    const game = findGame(id), api = require('./operation-api').resolveOperationApi(game, request).effectiveApi;
+    return coreSelectionScope.run({ version, selection: { api, architecture: game.scan?.chosen?.bitness === 32 ? 'x86' : 'x64',
+      hardwareFamily: hardware.family, ...(request.loadingBackend ? { loadingBackend: request.loadingBackend } : {}),
+      proxyEntry: request.proxyEntry || 'auto' } }, run);
+  }
+
+  async function useRuntimeComponent(id) {
+    const activated = await componentLibrary.activateRuntime(id, bundledPayloadDir);
+    await selectPayloadSource(activated.payloadDir);
+    await refreshProviderSources({ selectDefault: true, force: true });
+    return { ...activated, state: payloadState() };
+  }
+
+  async function importRuntimeDlc(selected) {
+    const imported = await componentLibrary.importComponent(selected);
+    const family = deploymentHardware().family;
+    const runtimes = imported.packages.filter(item => item.kind === 'nr-runtime');
+    if (!runtimes.length) throw Object.assign(new Error('这不是 NR 运行库 DLC。请选择名称含 NR-Runtime-RTX40、RTX50 或 RTX40+RTX50 的 ZIP 包。'), { code: 'ERR_RUNTIME_DLC_REQUIRED' });
+    if (!['RTX40','RTX50'].includes(family)) return { ...imported, activated: false, hardwareFamily: family || null,
+      message: '运行库已导入组件仓库；当前显卡系列尚未确认，请在设置中确认显卡后再选择对应运行库。', state: payloadState() };
+    const matches = runtimes.filter(item => Array.isArray(item.hardwareFamilies) && item.hardwareFamilies.includes(family));
+    if (matches.length !== 1) {
+      const current = family === 'RTX50' ? 'RTX 50 系' : 'RTX 40 系及 RTX 20/30 系兼容路线';
+      throw Object.assign(new Error(`这份 DLC 不包含当前需要的 ${current} 运行库。请改选对应版本或 RTX40+RTX50 合并包。`), { code: 'ERR_RUNTIME_DLC_MISMATCH' });
+    }
+    const activated = await useRuntimeComponent(matches[0].id);
+    return { ...imported, ...activated, activated: true, hardwareFamily: family, packageId: matches[0].id,
+      message: `${family === 'RTX50' ? 'RTX 50 系' : 'RTX 40 系'}运行库已导入并用于后续安装。` };
   }
   let registeredProviderContext = null;
   async function refreshProviderSources({ selectDefault = false, force = false } = {}) {
@@ -308,7 +420,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (!v1 || !/^[a-f0-9]{64}$/.test(coreHash || '') || !/^[a-f0-9]{64}$/.test(runtimeHash || '') ||
           !/^[a-f0-9]{64}$/.test(chainHash || '') || !/^[a-f0-9]{64}$/.test(configHash || '') || !['RTX40', 'RTX50'].includes(family))
         return { registered: false, selectedId: null, reason: '当前 payload 没有完整 V1 Core、同源 chain、配置与运行库。' };
-      const identity = [path.resolve(payloadDir).toLowerCase(), version, family, coreHash, chainHash, configHash, runtimeHash].join('|');
+      const identity = [path.resolve(payloadDir).toLowerCase(), version, family, coreHash, chainHash, configHash, runtimeHash, JSON.stringify(entry.companions || {})].join('|');
       if (force || registeredProviderContext !== identity) {
         await componentLibrary.registerPayloadContext(payloadDir, version, family);
         registeredProviderContext = identity;
@@ -349,17 +461,25 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
 
   async function selectPayloadSource(selectedPath) {
     const directory = selectedPath === null ? bundledPayloadDir : resolvePayloadDirectory(selectedPath);
-    readBundle(directory);
+    const sourceBundle = readBundle(directory), current = store.read();
     const identity = sha256(path.join(directory, 'bundle.json'));
-    const inspected = inspectSource(directory, { hardwareFamily: hardware.family });
+    payloadInspection.invalidate(directory);
+    let inspected;
+    try { inspected = await payloadInspection.prime(directory, { allowMissingBundle: true, hardwareFamily: hardware.family,
+      version: sourceBundle.versions?.[current.addonVersion] ? current.addonVersion : undefined }); }
+    catch (error) {
+      if (error.code === 'ERR_PAYLOAD_SOURCE_CHANGED') throw error;
+      throw Object.assign(new Error('外部组件目录的清单、路径或文件校验失败。'), { code: error.code === 'ERR_PAYLOAD_MISSING' ? 'ERR_PAYLOAD_SOURCE_MISSING' : 'ERR_PAYLOAD_SOURCE_HASH', details: { path: directory, ...(error.details || {}) } });
+    }
+    if (inspected.missing.length) throw Object.assign(new Error('外部组件目录缺少所需文件。'), { code: 'ERR_PAYLOAD_SOURCE_MISSING', details: { path: directory, files: inspected.missing } });
+    if (!inspected.ready || inspected.invalid.length) throw Object.assign(new Error('外部组件目录文件与清单哈希不一致。'), { code: 'ERR_PAYLOAD_SOURCE_HASH', details: { path: directory, files: inspected.invalid } });
     readBundle(directory);
     if (sha256(path.join(directory, 'bundle.json')) !== identity) throw appError('ERR_PAYLOAD_SOURCE_CHANGED', { path: directory });
-    const current = store.read();
-    await store.write({ payloadSourcePath: selectedPath === null ? null : directory,
+    await store.update(latest => ({ payloadSourcePath: selectedPath === null ? null : directory,
       payloadSourceIdentity: selectedPath === null ? null : identity,
-      addonVersion: inspected.versions && current.addonVersion && !inspected.versions[current.addonVersion] ? null : current.addonVersion });
+      addonVersion: inspected.versions && latest.addonVersion && !inspected.versions[latest.addonVersion] ? null : latest.addonVersion }));
     payloadDir = directory;
-    payloadInspection.invalidate();
+    await payloadInspection.prime(payloadDir, { allowMissingBundle: true, hardwareFamily: hardware.family, version: selectedVersion() });
     return payloadState();
   }
 
@@ -506,10 +626,12 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       deployment: request.deployment || (installed ? layout.mode : 'local'),
       loadingMode: request.loadingMode || (installed ? layout.loadingMode : 'proxy') || 'proxy',
       loadingBackend: layout.loadingBackend || 'local',
-      proxyEntry: request.proxyEntry || manifest?.reshadeRoute || 'auto', route };
+      proxyEntry: require('./proxy-entry-policy').proxyEntryDefault({ game, api: resolvedApi, request, layout, manifest }), route };
   }
 
   async function resolveInputRoute(id, request = {}) {
+    if (!coreSelectionScope.getStore() && request.version === require('./unified5-core').ID)
+      return withSelectedCore(id, request, () => resolveInputRoute(id, request));
     const game = findGame(id), layout = gameLayout(game), selected = require('./operation-api').resolveOperationApi(game, request);
     if (request.route) return request.route;
     if (layout.loadingBackend === 'hoyoshade' && layout.inputRoute) return layout.inputRoute;
@@ -521,19 +643,19 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     }
     if (['dx9', 'dx10'].includes(selected.effectiveApi)) return 'feeder';
     if (readManifest(game.dir) || externalOwned(game)) return 'native';
-    if (selected.effectiveApi === 'dx12') {
-      const currentCore = coreVersionCatalog().find(row => row.id === selectedVersionForGame(game));
-      if (currentCore?.supportsPresent === true) return 'native';
-    }
     if (typeof overrides.getFeatureEvidence !== 'function') return 'native';
-    const evidence = await overrides.getFeatureEvidence(id, 'sr');
-    return evidence?.support?.status === 'supported' ? 'native' : 'feeder';
+    const evidence = await overrides.getFeatureEvidence(id, 'sr', { api: selected.effectiveApi });
+    if (evidence?.support?.status === 'supported') return 'native';
+    if (evidence?.support?.code === 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED') return 'feeder';
+    throw Object.assign(new Error('尚未确认本次 API 的原生 DLSS 输入。请在输入方式中选择原生 DLSS 或 Feeder；证据不足不代表游戏没有 DLSS。'),
+      { code: 'INPUT_ROUTE_UNCONFIRMED', details: { api: selected.effectiveApi, support: evidence?.support || null,
+        coverage: evidence?.staticEvidence?.coverage || null } });
   }
 
   async function previewProxyEntry(id, entry, { deployment } = {}) {
     const game = findGame(id), layout = gameLayout(game), manifest = readManifest(game.dir), changes = [], blockers = [];
     const api = deployment?.api || manifest?.deploymentApi || classifyApi(game.scan.chosen);
-    const current = manifest?.reshadeRoute || 'dxgi', desired = entry === 'auto' ? current : entry;
+    const current = manifest?.reshadeRoute || deployment?.adoption?.replaceProxy?.name?.replace(/\.dll$/i, '') || 'dxgi', desired = entry === 'auto' ? current : entry;
     if (!['dxgi', 'd3d12'].includes(desired) || desired === 'd3d12' && api !== 'dx12') blockers.push('当前原生路线只支持 DXGI，D3D12 入口仅用于 DX12 游戏。');
     if (deployment?.mode === 'external' || !deployment && layout.mode === 'external') blockers.push('外置入口需由外置部署记录共同切换。');
     const source = path.join(path.dirname(game.scan.chosen.path), current + '.dll'), destination = path.join(path.dirname(game.scan.chosen.path), desired + '.dll');
@@ -551,42 +673,57 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   }
 
   async function previewHoYoDeployment(id, request = {}, internal = {}) {
+    if (!coreSelectionScope.getStore() && request.version === require('./unified5-core').ID)
+      return withSelectedCore(id, request, () => previewHoYoDeployment(id, request, internal));
     const game = findGame(id), inputRoute = request.route || await resolveInputRoute(id, request);
     if (!['native', 'feeder'].includes(inputRoute)) throw Object.assign(new Error('米哈游模式尚未提供当前 API 的输入配套。'), { code: 'HOYO_INPUT_ROUTE' });
+    const installedFeed = internal.maintainInstalled === true ? feeder.summary(game) : null;
+    const maintainingFeed = installedFeed?.installed === true && inputRoute === 'feeder' && request.version === installedFeed.packageId &&
+      gameLayout(game).loadingBackend === 'hoyoshade' && gameLayout(game).inputRoute === 'feeder';
+    if (!maintainingFeed) require('../shared/hoyo-core-policy').assertTarget(request.version || gameLayout(game).version ||
+      readManifest(game.dir)?.payloadVersion || readBundle(payloadDir).defaultVersion, inputRoute);
+    const { maintainInstalled: ignoredMaintenance, ...profileInternal } = internal;
     const { api, routed } = deploymentApi(game, request.api || 'auto');
+    const adoption = await inspectInstallationAdoption(id, request);
+    if (adoption?.blockers.length) return { gameId: id, mode: 'external', route: inputRoute, loadingBackend: 'hoyoshade',
+      changes: [], blockers: adoption.blockers, adoption, requiresAdoptionConfirmation: true, runtimeVerified: false };
     if (inputRoute === 'native') requireNoFeeder(game);
     requireKnownVulkanOwnership(game);
     const version = inputRoute === 'native'
       ? request.version || gameLayout(game).version || readManifest(game.dir)?.payloadVersion || readBundle(payloadDir).defaultVersion
       : null;
-    const nativePayload = inputRoute === 'native' && externalOwned(game) && addonUpdate(version)
+    const nativePayload = inputRoute === 'feeder' ? profileLoaderPayload() : externalOwned(game) && addonUpdate(version)
       ? await externalPayload(routed, version, request.components)
-      : selectedPayload(routed, inputRoute === 'native' ? version : null, request.components);
+      : selectedPayload(routed, version, request.components);
     const payload = inputRoute === 'native' ? nativePayload : { reshade: nativePayload.reshade };
     const profile = await hoyo.preview(routed, { hoyo: request.hoyo, inputRoute, api, version: inputRoute === 'native' ? version : undefined,
-      payload, addonKeep: request.addonKeep, ...internal });
+      payload, addonKeep: request.addonKeep, adoption, ...profileInternal });
     const legacy = inputRoute === 'feeder' ? await feeder.previewInstall(routed, { version: request.version, api, loadingBackend: 'hoyoshade', layout: profile.layout }) : null;
     const planId = crypto.randomUUID();
-    hoyoDeploymentPlans.set(planId, { id, routed, request, api, profile, legacy, expires: Date.now() + 5 * 60000 });
+    hoyoDeploymentPlans.set(planId, { id, routed, request, api, profile, legacy, adoption, expires: Date.now() + 5 * 60000 });
     return { ...profile, planId, route: inputRoute, mode: 'external', version: legacy?.packageId || profile.version,
+      adoption, requiresAdoptionConfirmation: adoption?.required === true,
       changes: [...profile.changes, ...(legacy?.changes || [])], blockers: [...(profile.blockers || []), ...(legacy?.blockers || [])],
       phases: ['hoyoshade-profile', ...(legacy ? ['feeder-install'] : [])], runtimeVerified: false };
   }
   async function applyHoYoDeployment(planId, consent = {}) {
+    const scopedPlan = hoyoDeploymentPlans.get(planId);
+    if (!coreSelectionScope.getStore() && scopedPlan?.request.version === require('./unified5-core').ID)
+      return withSelectedCore(scopedPlan.id, scopedPlan.request, () => applyHoYoDeployment(planId, consent));
     const plan = hoyoDeploymentPlans.get(planId); hoyoDeploymentPlans.delete(planId);
     if (!plan || plan.expires < Date.now()) throw Object.assign(new Error('米哈游预览已过期，请重新检查。'), { code: 'DEPLOYMENT_PLAN_EXPIRED' });
     const game = findGame(plan.id), state = store.read(), key = pathKey(game.dir);
+    await adoptionPolicy.assertAdoption(plan.adoption);
     let settingChange, preferenceWritten = false;
     try {
       settingChange = await gameApiSettings.apply(game, plan.request.api || 'auto');
-      await store.write({ gameOverrides: { ...state.gameOverrides, [key]: { ...state.gameOverrides[key], api: plan.request.api || 'auto', apiExecutable: game.scan.chosen.path } } });
-      preferenceWritten = true;
+      preferenceWritten = await writeApiPreference(key, plan.request.api || 'auto', game.scan.chosen.path);
       const profile = await hoyo.apply(plan.profile.planId, consent);
       if (plan.legacy) await feeder.install(plan.routed, { version: plan.legacy.packageId, expectedPlanId: plan.legacy.planId, api: plan.api, loadingBackend: 'hoyoshade',
         layout: hoyo.profile(game), allowAntiCheat: consent.allowAntiCheat === true });
       return refreshAfterMutation({ ...profile, applied: true, runtimeVerified: false });
     } catch (error) {
-      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange);
+      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
       throw error;
     }
   }
@@ -595,13 +732,62 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     if (externalOwned(game)) return gameLayout(game).moduleManifest?.find(row => row.role === 'carrier')?.sha256 || null;
     return readManifest(game.dir)?.files.find(row => row.kind === 'carrier')?.installedSha256 || null;
   }
-  function componentChoices(id) {
-    const game = findGame(id), bundle = readBundle(payloadDir), version = installationDefaults(id).version;
+  async function componentChoices(id) {
+    const game = findGame(id), bundle = readBundle(payloadDir), defaults = installationDefaults(id), version = defaults.version;
     const core = bundle.versions?.[version], installedHash = installedBridgeHash(game);
     const registry = require('./component-registry');
-    return { bridges: [...registry.bridgeCatalog(payloadDir, { coreHash: core?.files?.['nr-before-sr.zh-CN.addon64'], chainHash: core?.files?.['nrchain_nvngx.dll'], installedHash }),
-      ...registry.importedBridges(componentLibrary.root, { ...core, id: version }, installedHash, registry.bridgeGameId(game))],
-      selected: { bridge: registry.bridgeByHash(installedHash)?.id || registry.bridgeByHash(core?.files?.[INSTALLED_NAMES.carrier])?.id || null },
+    const inventory = await componentLibrary.inventory();
+    const owned = Boolean(readManifest(game.dir) || externalOwned(game) || feederOwned(game) || vulkanOwned(game));
+    const api = require('./operation-api').resolveOperationApi(game, { api: defaults.api });
+    const bridges = [...registry.bridgeCatalog(payloadDir, { coreHash: core?.files?.['nr-before-sr.zh-CN.addon64'], chainHash: core?.files?.['nrchain_nvngx.dll'], installedHash }),
+      ...registry.importedBridges(componentLibrary.root, { ...core, id: version }, installedHash, registry.bridgeGameId(game), api.effectiveApi, bundledComponentIdentities)];
+    const selectedBridgeId = registry.bridgeByHash(installedHash)?.id || bridges.find(row => row.installed)?.id || registry.bridgeByHash(core?.files?.[INSTALLED_NAMES.carrier])?.id || null;
+    const selectedBridge = bridges.find(row => row.id === selectedBridgeId) || bridges.find(row => row.default && row.ready && row.compatible) ||
+      bridges.find(row => row.ready && row.compatible) || null;
+    const route = await resolveInputRoute(id, { api: defaults.api });
+    let feed = feeder.summary(game);
+    if (route === 'feeder' && !feed.installed && ['dx9','dx10','dx11','dx12','vulkan'].includes(api.effectiveApi)) {
+      try { feed = feeder.summary(feederRouteSelection(game, api.effectiveApi)); } catch { /* Summary below retains its actionable reason. */ }
+    }
+    const vk = vulkan.summary(game), payload = inspectCurrentPayload({ allowMissingBundle:true, hardwareFamily:hardware.family, version });
+    const runtimeFile = payload.files?.find(row => row.kind === 'runtime');
+    const coreRow = coreVersionCatalog().find(row => row.id === version);
+    const stackModule = require('./component-stack');
+    const coreDescriptor = { id:version, kind:'core', version:coreRow?.label || core?.label || version, architecture:'x64',
+      inputInterfaces:core?.inputInterfaces || coreRow?.inputInterfaces || [], ready:Boolean(coreRow?.ready !== false && core),
+      sha256:core?.files?.['nr-before-sr.zh-CN.addon64'], source:coreRow?.source === 'bundled' ? 'bundled' : 'catalog', validation:core?.validation || 'stable' };
+    const componentDescriptors = [coreDescriptor, ...bridges.map(row => ({ id:row.id, kind:'bridge', version:row.version || row.upstreamVersion,
+      architecture:row.architecture, gameApis:row.gameApis || [row.api], compatibleCoreInterfaces:row.compatibleCoreInterfaces || [row.interface],
+      capabilities:row.capabilities || [], defaultEligible:row.defaultEligible === true,
+      sha256:row.sha256, source:row.sourceType || row.source, validation:row.validation || row.channel,
+      verifiedSource:row.verifiedSource === true, immutable:row.immutable === true, ready:row.ready && row.compatible }))];
+    const feederSha = feed.packageSha256 || feed.recipeFingerprint;
+    if (feed.packageId && /^[a-f0-9]{64}$/i.test(feederSha || '')) {
+      const pairedCoreId = `feeder-core:${feed.coreVersion || feed.packageId}`;
+      componentDescriptors.push({ id:pairedCoreId, kind:'core', version:feed.coreVersion || 'Feeder 配套 Core', architecture:'x64',
+        inputInterfaces:['NRExternalProviderV1'], ready:feed.available !== false });
+      componentDescriptors.push({ id:feed.packageId, kind:'feeder', version:feed.version || feed.packageId, architecture:feed.architecture === 32 ? 'x86' : 'mixed',
+        gameApis:[feed.api || api.effectiveApi], compatibleCoreInterfaces:['NRExternalProviderV1'], pairedCoreId, sha256:feederSha,
+        source:'bundled', validation:feed.validation?.status || 'candidate', immutable:true, verifiedSource:true, ready:feed.available !== false });
+    }
+    const resolvedStack = stackModule.resolveStack({ effectiveApi:api.effectiveApi, coreId:version, components:componentDescriptors,
+      installedEvidence:{ route:feed.installed ? 'feeder' : selectedBridgeId ? 'bridge' : route, bridgeId:selectedBridgeId,
+        bridgeSha256:installedHash, feederId:feed.packageId, feederSha256:feederSha } });
+    const displayRoute = resolvedStack.status === 'ready' ? resolvedStack.route : route;
+    const resolvedBridge = resolvedStack.bridge && bridges.find(row => row.id === resolvedStack.bridge.id);
+    const stack = stackModule.resolveComponentStack({ api:api.effectiveApi, apiAutomatic:defaults.api === 'auto', route:displayRoute,
+      core:{ version, label:coreRow?.label || core?.label || version, ready:Boolean(coreRow?.ready !== false && core) },
+      bridge:(resolvedBridge || selectedBridge) ? { label:(resolvedBridge || selectedBridge).label, ready:(resolvedBridge || selectedBridge).ready,
+        compatible:(resolvedBridge || selectedBridge).compatible } : null,
+      feeder:{ version:feed.version || feed.packageId || null, coreVersion:feed.coreVersion || null,
+        ready:feed.installed ? feed.ready !== false && !feed.needsRecovery : feed.available === true, reason:feed.reason || feed.selectionReason || null },
+      vulkan:{ label:vk.packageId ? `Vulkan 配套 ${vk.packageId}` : null, coreVersion:vk.coreVersion || null,
+        ready:vk.installed ? vk.ready !== false && !vk.needsRecovery : vk.available === true, reason:vk.reason || null },
+      runtime:{ label:hardware.family ? `${hardware.family === 'RTX50' ? 'RTX 50 系' : 'RTX 20/30/40 系'} NR 运行库` : 'NR 显卡运行库',
+        ready:runtimeFile ? runtimeFile.valid === true : payload.ready === true } });
+    return { bridges,
+      addons: await userAddons.inspect(game, inventory.packages, owned),
+      selected: { bridge: resolvedStack.bridge?.id || selectedBridgeId }, stack, resolvedStack,
       currentCore: version, defaultCore: bundle.defaultVersion };
   }
   function knownComponentCatalog() {
@@ -620,6 +806,19 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     return require('./native-addon-policy').compileNativeAddonPolicy({ game, payloadDir, payload, manifest: readManifest(game.dir), addonKeep, knownComponents, preserveOwned });
   }
 
+  function profileLoaderPayload() {
+    assertSourceIdentity();
+    const family = deploymentHardware().family, bundle = readBundle(payloadDir);
+    if (bundle.version !== 4) return { reshade: requirePayload(payloadDir, family, bundle.defaultVersion).reshade };
+    const name = 'ReShade64.dll', expected = bundle.fixed?.[family]?.files?.[name];
+    if (!expected) throw appError('ERR_PAYLOAD_MISSING', { file: `fixed/${family}/${name}` });
+    const file = safePayloadPath(payloadDir, path.join(payloadDir, 'fixed', family, name));
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw appError('ERR_PAYLOAD_MISSING', { file });
+    const actual = sha256(file);
+    if (actual !== expected) throw appError('ERR_PAYLOAD_HASH', { file });
+    return { reshade: { kind: 'reshade', name, file, exists: true, expected, actual, valid: true } };
+  }
+
   function selectedPayload(game, requestedVersion = null, components = {}) {
     assertSourceIdentity();
     const choice = versionChoice(game, requestedVersion), version = choice.version;
@@ -630,11 +829,12 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (!imported || !manifest) throw appError('ERR_ADDON_NOT_FOUND', { reason: 'Install a bundled base before applying an imported update.' });
       if (components.bridge) throw Object.assign(new Error('导入的 OTA 保留其桥接配套；独立切换需要选择已验证接口的内置 Core。'), { code: 'COMPONENT_BRIDGE_CORE' });
       const result = { version, versionInfo: { compatibility: imported.compatibility },
+        ...(imported.companions ? { companions: imported.companions } : {}),
         addon: { file: imported.file, actual: imported.addonSha256, expected: imported.addonSha256, name: INSTALLED_NAMES.addon } };
       for (const kind of ['bridge', 'runtime', 'config', 'reshade', 'carrier']) {
         const provided = kind === 'bridge' ? imported.bridgeFile : kind === 'carrier' ? imported.carrierFile : null;
         const row = manifest.files.find(row => row.kind === kind), expected = kind === 'bridge' ? imported.bridgeSha256 : kind === 'carrier' ? imported.carrierSha256 : null;
-        const rel = kind === 'reshade' && manifest.reshadeRoute === 'd3d12' ? path.join(path.dirname(row?.rel || ''), 'd3d12.dll') : row?.rel;
+        const rel = row ? require('./native-loader-target').nativeTargetRel(manifest, row) : null;
         const file = provided || (rel ? path.resolve(game.dir, rel) : path.join(path.dirname(game.scan.chosen.path), INSTALLED_NAMES[kind]));
         if (fs.existsSync(file)) result[kind] = { file, name: path.basename(file), actual: provided ? expected : sha256(file), expected: provided ? expected : sha256(file) };
       }
@@ -645,6 +845,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     result.replacement = choice.replacement;
     return require('./component-registry').selectNativeComponents(payloadDir, result, { api: classifyApi(game.scan?.chosen),
       componentRoot: componentLibrary.root,
+      trustedComponents: bundledComponentIdentities,
       gameId: require('./component-registry').bridgeGameId(game),
       bridgeId: components.bridge || (requestedVersion === '0.4.7beta-bg3-bridge1411' ? 'nigos-1.4.11-nr' : undefined), installedHash: installedBridgeHash(game) });
   }
@@ -663,6 +864,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       notes: entry.notes || '', coreUpdateOnly: true, addonOnly: true, ota: true, ready: true,
       compatibility: null, file: payload.addon.file, addonSha256: payload.addon.actual,
       bridgeFile: payload.bridge.file, bridgeSha256: payload.bridge.actual, carrierFile: null,
+      ...(payload.companions ? { companions: payload.companions } : {}),
       versionInfo: { compatibility: null, coreUpdateOnly: true } };
   }
 
@@ -780,7 +982,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const importedAddonHash = sha256(imported.file);
     const importedBridgeHash = imported.bridgeFile ? sha256(imported.bridgeFile) : null;
     const importedCarrierHash = imported.carrierFile ? sha256(imported.carrierFile) : null;
-    const files = (base.files || []).map(row => {
+    const files = (base.files || []).filter(row => row.kind !== 'companion').map(row => {
       if (row.kind === 'addon') {
         return { ...row, file: imported.file, actual: importedAddonHash, expected: imported.addonSha256 || importedAddonHash, exists: true, valid: !imported.addonSha256 || importedAddonHash === imported.addonSha256 };
       }
@@ -791,6 +993,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     });
     if (importedCarrierHash) files.push({ kind: 'carrier', name: path.basename(imported.carrierFile), file: imported.carrierFile,
       actual: importedCarrierHash, expected: imported.carrierSha256 || importedCarrierHash, exists: true, valid: !imported.carrierSha256 || importedCarrierHash === imported.carrierSha256 });
+    if (imported.companions) files.push(...imported.companions);
     return {
       payload: { ...base, files, selectedVersion: imported.id, versionInfo: { compatibility: imported.compatibility } },
       payloadVersion: imported.id,
@@ -800,14 +1003,14 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
 
   async function diagnoseGame(game) {
     if (externalOwned(game) || fs.existsSync(path.join(game.dir, EXTERNAL_PENDING))) {
-      const state = gameLayout(game).loadingBackend === 'hoyoshade' ? await hoyo.inspect(game) : await externalDeployment.inspect(game);
+      const state = await inspectDeployment(game.id);
       return { payload: { selectedVersion: state.version, ready: state.ready }, diagnostic: {
         installed: true, complete: state.ready, payloadVersion: state.version, version: state.version,
         deployment: state, runtimeVerified: false, routeMismatch: state.api !== classifyApi(game.scan?.chosen),
         components: [
           { key: 'deployment', label: '运行目录', ok: state.verified && !state.pending,
             detail: state.pending ? '外置部署未完成，请先恢复。' : state.runtimeDir || state.blockers?.join('；') },
-          ...state.files.map(row => ({ key: row.kind, label: row.name, file: path.join(state.runtimeDir || '', row.name),
+          ...(state.files || []).map(row => ({ key: row.kind, label: row.name, file: path.join(state.runtimeDir || '', row.name),
             ok: row.valid, detail: row.valid ? row.mutable ? '当前个人配置' : '摘要与部署记录一致' : row.reason || '文件缺失或摘要改变' }))
         ] } };
     }
@@ -857,7 +1060,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       };
     }
     const payload = inspected.payload;
-    const mapped = Object.fromEntries(payload.files.map(row => [row.kind, row]));
+    const mapped = Object.fromEntries(payload.files.filter(row => row.kind !== 'companion').map(row => [row.kind, row]));
+    if (payload.files.some(row => row.kind === 'companion')) mapped.companions = payload.files.filter(row => row.kind === 'companion');
     mapped.versionInfo = payload.versionInfo || (payload.versions && payload.versions[payload.selectedVersion]);
     const result = await installer.diagnose({ gameDir: game.dir, payload: mapped, payloadVersion: inspected.payloadVersion,
       payloadVersionLabel: inspected.payloadVersionLabel, scan: game.scan });
@@ -948,10 +1152,14 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     return game;
   }
 
-  async function rollbackApiChoice(error, state, key, settingChange) {
-    const current = store.read(), previous = state.gameOverrides[key] || {};
-    try { await store.write({ gameOverrides: { ...current.gameOverrides,
-      [key]: { ...current.gameOverrides[key], api: previous.api || 'auto', apiExecutable: previous.apiExecutable || null } } }); }
+  async function rollbackApiChoice(error, _state, key, settingChange, receipt) {
+    try { if (receipt) await store.update(current => {
+      const latest = current.gameOverrides[key] || {};
+      if (['api', 'apiExecutable'].some(field => (latest[field] || (field === 'api' ? 'auto' : null)) !== receipt.after[field])) {
+        error.details = { ...error.details, preferenceExternalChangeRetained: true }; return {};
+      }
+      return { gameOverrides: { ...current.gameOverrides, [key]: { ...latest, ...receipt.before } } };
+    }); }
     catch { error.details = { ...error.details, preferenceRollbackFailed: true }; }
     if (settingChange?.changed) try {
       const restored = await settingChange.rollback();
@@ -966,6 +1174,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         typeof options.version !== 'string' || !options.version || options.version.length > 100) throw appError('ERR_BAD_REQUEST');
     const game = findGame(id), chosen = game.scan?.chosen;
     if (!chosen) throw appError('ERR_NO_GAME_EXE');
+    if (!internal.adoption && await inspectInstallationAdoption(id)) throw Object.assign(new Error('已有未受管安装，请先预览并确认具体备份接管清单。'), { code: 'ADOPTION_CONFIRM_REQUIRED' });
     requireNoFeeder(game);
     requireKnownVulkanOwnership(game);
     let detected = { ...(chosen.detectedApiResolution || {}), api: require('./operation-api').resolveOperationApi(game, { api: 'auto' }).detectedApi };
@@ -1005,9 +1214,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     let settingChange, preferenceWritten = false, result;
     try {
       settingChange = await gameApiSettings.apply(game, options.api);
-      await store.write({ gameOverrides: { ...state.gameOverrides,
-        [key]: { ...state.gameOverrides[key], api: options.api, apiExecutable: chosen.path } } });
-      preferenceWritten = true;
+      preferenceWritten = await writeApiPreference(key, options.api, chosen.path);
       if (nextApi === 'vulkan') result = providerVulkan.matched && providerVulkan.transportOwner === 'legacy-feeder'
         ? await feeder.install(routed, { ...options, api: 'vulkan', loadingBackend: providerVulkan.loadingBackend })
         : await vulkan.install(routed, options);
@@ -1015,14 +1222,15 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       else {
         await prepareExistingReframework(routed, options);
         const operation = manifest ? installer.repair : installer.install;
-        result = await operation({ gameDir: game.dir, payload, scan: routed.scan, addonPolicy: internal.addonPolicy || await nativeAddonPolicy(routed, payload, options.addonKeep), allowAntiCheat: options.allowAntiCheat === true });
+        result = await operation({ gameDir: game.dir, payload, scan: routed.scan, adoption: internal.adoption,
+          addonPolicy: internal.addonPolicy || await nativeAddonPolicy(routed, payload, options.addonKeep), allowAntiCheat: options.allowAntiCheat === true });
         result = await prepareDetectedReframework(routed, result);
       }
     } catch (error) {
-      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange);
+      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
       throw error;
     }
-    internal.onAppliedState?.({ state, key, settingChange });
+    internal.onAppliedState?.({ state, key, settingChange, preferenceWritten });
     return refreshAfterMutation({ ...result, appliedRoute: { api: nextApi, version: nextApi === 'vulkan' ? options.version : payload?.version || imported?.id,
       gameSettingsSynced: settingChange?.applied === true } });
   }
@@ -1097,7 +1305,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         !/\.exe$/i.test(executable) || !fs.existsSync(executable)) {
       throw appError('ERR_BAD_REQUEST');
     }
-    const state = store.read();
+    await store.update(state => {
     const aliases = executableAliases(state, root, executable);
     const manualExecutables = state.manualExecutables.filter(row => pathKey(row.root) !== pathKey(root) &&
       !(aliases.ownsRoot(row.root) && aliases.sameExe(row.file)));
@@ -1109,22 +1317,25 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const canonical = state.gameOverrides[pathKey(root)];
     const metadata = [canonical, ...remembered].filter(row => row && (!row.apiExecutable || aliases.sameExe(row.apiExecutable)));
     const boundApi = metadata.find(row => aliases.sameExe(row.apiExecutable));
+    const boundLaunch = metadata.find(row => aliases.sameExe(row.launchExecutable));
     const name = typeof selection.name === 'string' ? selection.name.trim().slice(0, 160) : '';
     const icon = typeof selection.icon === 'string' && selection.icon.length <= 1024 * 1024 ? selection.icon : null;
     const gameOverrides = Object.fromEntries(Object.entries(state.gameOverrides).filter(([dir, row]) => !aliases.ownsMetadata(dir, row)));
     gameOverrides[pathKey(root)] = {
       name: name || metadata.find(row => row.name)?.name || '',
       icon: icon || metadata.find(row => row.icon)?.icon || null,
-      api: boundApi?.api || 'auto', apiExecutable: boundApi ? executable : null
+      api: boundApi?.api || 'auto', apiExecutable: boundApi ? executable : null,
+      ...(boundLaunch ? { launchMode: boundLaunch.launchMode, launchExecutable: executable } : {})
     };
-      await store.write({
+      return {
         manualGames: [...state.manualGames.filter(dir => !aliases.ownsRoot(dir) || aliases.sharedRoots.has(pathKey(dir))), root],
         manualExecutables,
         gameOverrides,
         excludedRoots: state.excludedRoots.filter(dir => !aliases.ownsRoot(dir) || aliases.sharedRoots.has(pathKey(dir))),
         excludedGames: state.excludedGames.filter(row => !aliases.sameExe(row.executable) &&
           !(row.dir && !row.executable && aliases.ownsRoot(row.dir) && !aliases.sharedRoots.has(pathKey(row.dir))))
-      });
+      };
+    });
     return refreshCollection(games);
   }
 
@@ -1177,6 +1388,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     if (state.api === 'dx11' && (imported.compatibility !== 'dx11' || !imported.carrierFile || !imported.bridgeFile))
       throw appError('ERR_PAYLOAD_MISSING', { file: 'DX11 配套核心与桥接器' });
     const payload = { version: imported.id, versionInfo: { compatibility: imported.compatibility } };
+    if (imported.companions) payload.companions = imported.companions;
     for (const kind of ['addon', 'bridge', 'runtime', 'carrier']) {
       const current = state.files.find(row => row.kind === kind); if (!current) continue;
       const provided = kind === 'addon' ? imported.file : kind === 'bridge' ? imported.bridgeFile : kind === 'carrier' ? imported.carrierFile : null;
@@ -1193,8 +1405,71 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     return payload;
   }
 
-  function nrConfigVersion(game) {
-    return vulkanOwned(game) || feederOwned(game) ? '' : gameLayout(game).version || readManifest(game.dir)?.payloadVersion || '';
+  const inspectNrCoreIdentity = require('./nr-core-identity').createNrCoreIdentity();
+  async function nrConfigVersion(game, options = {}) {
+    const layout = gameLayout(game);
+    const version = layout.recipe?.coreVersion || layout.coreVersion || layout.version ||
+      feeder.summary(game)?.coreVersion || vulkan.summary(game)?.coreVersion || readManifest(game.dir)?.payloadVersion || '';
+    const modules = await gameModuleManifest(game.id);
+    let cores = modules.filter(row => row.role === 'core');
+    if (!externalOwned(game) && !feederOwned(game) && !vulkanOwned(game) && reframeworkInput(game) && cores.length === 1) {
+      const directory = await settingDirectory(game), mirror = path.join(directory, path.basename(cores[0].path));
+      if (path.resolve(mirror).toLowerCase() !== path.resolve(cores[0].path).toLowerCase() && fs.existsSync(mirror))
+        cores = [{ ...cores[0], path: mirror }];
+    }
+    return inspectNrCoreIdentity({ version, files: cores, fresh: options.fresh === true });
+  }
+  async function inspectInstallationAdoption(id, request = {}) {
+    const game = findGame(id);
+    const adoption = await adoptionPolicy.inspectAdoption({ executable: game.scan?.chosen?.path,
+      managed: Boolean(readManifest(game.dir) || externalOwned(game) || feederOwned(game) || vulkanOwned(game)),
+      choice: request.adoption, pe: overrides.adoptionPe || overrides.externalDeploymentOptions?.pe,
+      inspectReShade: overrides.inspectReShade || require('../core/scan').inspectReShade });
+    if (request.version || request.adoption) adoptionProposals.set(id, { targetVersion: request.version || null,
+      proposedAt: new Date().toISOString(), adoption });
+    return adoption;
+  }
+  async function validateWaitingComponents(id, input = {}) {
+    if (!coreSelectionScope.getStore() && input.version === require('./unified5-core').ID)
+      return withSelectedCore(id, input, () => validateWaitingComponents(id, input));
+    const request = require('./operation-plan').validateOperationRequest(input), game = findGame(id), layout = gameLayout(game);
+    const deployment = ['api', 'version', 'deployment', 'loadingMode', 'loadingBackend', 'hoyo', 'route', 'addonKeep'].some(key => Object.hasOwn(request, key)) ||
+      request.components?.bridge !== undefined || request.proxyEntry !== undefined && ['external', 'feeder'].includes(layout.mode === 'external' ? 'external' : layout.source);
+    if (!deployment) return { ready: true, deployment: false, nrContract: request.nr ? await nrConfigVersion(game, { fresh: true }) : null, runtimeVerified: false };
+    const route = await resolveInputRoute(id, request), defaults = installationDefaults(id, request);
+    if (['feeder', 'vulkan'].includes(route)) {
+      const routed = specialRouteGame(game, { ...request, route }), owner = route === 'feeder' ? feeder : vulkan;
+      if (typeof owner.verifySource !== 'function') throw Object.assign(new Error('当前固定配套未提供运行中来源核验，请退出游戏后再应用。'), { code: 'WAITING_SOURCE_UNAVAILABLE' });
+      const verified = await owner.verifySource(routed, { version: request.version, api: request.api === 'auto' ? undefined : request.api,
+        ...(request.loadingBackend ? { loadingBackend: request.loadingBackend } : {}), ...(request.proxyEntry ? { proxyEntry: request.proxyEntry } : {}) });
+      return { ...verified, ready: true, deployment: true, route, nrContract: { version: verified.coreVersion || verified.version,
+        ...(coreSelectionScope.getStore() ? require('./nr-core-identity').pinnedConfigContract(providerContext().currentCore?.sha256) : {}) }, runtimeVerified: false };
+    }
+    requireNoFeeder(game); requireKnownVulkanOwnership(game); if (vulkanOwned(game)) routeRestoreFirst();
+    await externalDeployment.assertReady(game);
+    const { api, routed } = deploymentApi(game, request.api || defaults.api), version = request.version || defaults.version;
+    const payload = externalOwned(game) ? await externalPayload(routed, version, request.components) : selectedPayload(routed, version, request.components);
+    const support = assess(routed.scan, { allowDx11: payload.versionInfo?.compatibility === 'dx11', supportsPresent: payload.versionInfo?.supportsPresent === true });
+    if (!support.supported) throw appError(support.code);
+    const identity = payload.addon?.actual;
+    const pinned = require('./nr-core-identity').pinnedConfigContract(identity);
+    return { ready: true, deployment: true, route: 'native', api, version: payload.version || version, coreSha256: identity,
+      nrContract: { version: payload.version || version, ...pinned },
+      identity: [payload.version || version, identity, payload.bridge?.actual, payload.runtime?.actual].filter(Boolean).join(':'), runtimeVerified: false };
+  }
+  async function changeNrSettings(game, requested, options = {}) {
+    if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
+    const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
+    // Capture the small INI before checking a potentially large Core. A game or
+    // editor update during identity verification must take precedence.
+    const before = readConfig(file);
+    if (before.status === 'error') throw Object.assign(new Error(before.error.message), { code: before.error.code });
+    const identity = await nrConfigVersion(game, { fresh: true });
+    const current = readConfig(file, identity);
+    const patch = typeof requested === 'function' ? requested(identity, current) : requested;
+    const result = await writeConfig(file, patch, identity, { expectedFingerprint: Object.hasOwn(options, 'expectedFingerprint')
+      ? options.expectedFingerprint : before.fingerprint || null });
+    return { ...result, coreIdentity: identity };
   }
   function deploymentApi(game, requested) {
     const chosen = game.scan?.chosen;
@@ -1211,8 +1486,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       evidence: detected.evidence || [] } }, componentSelection: { dx11Carrier: api === 'dx11' } } } };
   }
   async function previewDeployment(id, request = {}, internal = {}) {
+    if (!coreSelectionScope.getStore() && request.version === require('./unified5-core').ID)
+      return withSelectedCore(id, request, () => previewDeployment(id, request, internal));
     if (!request || typeof request !== 'object' || Array.isArray(request) ||
-        Object.keys(request).some(key => !['mode', 'version', 'api', 'loadingMode', 'components', 'addonKeep', 'proxyEntry'].includes(key)) ||
+        Object.keys(request).some(key => !['mode', 'version', 'api', 'loadingMode', 'components', 'addonKeep', 'proxyEntry', 'adoption'].includes(key)) ||
         !['local', 'external'].includes(request.mode) || request.api !== undefined && !['auto', 'dx11', 'dx12', 'vulkan'].includes(request.api) ||
         request.loadingMode !== undefined && !['proxy', 'helper'].includes(request.loadingMode))
       throw appError('ERR_BAD_REQUEST');
@@ -1230,6 +1507,13 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const { api, routed } = deploymentApi(game, preference);
     const current = await externalDeployment.inspect(game), manifest = readManifest(game.dir);
     const targetVersion = request.version || current.version || manifest?.payloadVersion || selectedVersionForGame(routed);
+    if (current.loadingBackend === 'hoyoshade' || hoyo.supportedProfileOptions?.(game)?.length)
+      require('../shared/hoyo-core-policy').assertTarget(targetVersion, 'native');
+    const adoption = await inspectInstallationAdoption(id, request);
+    if (adoption?.replaceProxy?.name === 'd3d11.dll') adoption.blockers.push({ code: 'ADOPTION_ALTERNATE_HOST',
+      message: '当前普通 ReShade 使用 d3d11.dll；请先将入口切回其安装器支持的 DXGI 方式，再确认接管，未自动改名。' });
+    if (adoption?.blockers.length) return { gameId: id, fromMode: current.mode, toMode: request.mode, mode: request.mode,
+      version: targetVersion, api, changes: [], blockers: adoption.blockers, adoption, requiresAdoptionConfirmation: true, runtimeVerified: false };
     const fromApi = current.mode === 'external' ? current.api : manifest?.deploymentApi || classifyApi(game.scan?.chosen);
     const sameApi = fromApi === api;
     if (current.mode !== 'external' && manifest?.reshadeRoute === 'd3d12' && api !== 'dx12' && request.proxyEntry !== 'dxgi')
@@ -1239,7 +1523,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       payload = selectedPayload(routed, targetVersion, request.components);
       const support = assess(routed.scan, { allowDx11: payload.versionInfo?.compatibility === 'dx11', supportsPresent: payload.versionInfo?.supportsPresent === true });
       if (!support.supported) throw appError(support.code);
-      migrationRequest = { mode: 'external', loadingMode: request.loadingMode || 'proxy', api, version: payload.version, payload, addonKeep: request.addonKeep, proxyEntry: request.proxyEntry };
+      migrationRequest = { mode: 'external', loadingMode: request.loadingMode || 'proxy', api, version: payload.version, payload, addonKeep: request.addonKeep, proxyEntry: request.proxyEntry, adoption };
       migration = await externalDeployment.preview(routed, migrationRequest, internal);
       phases = ['external-install']; changes = migration.changes.map(row => ({ ...row, phase: 'external-install' }));
     } else if (current.mode === 'external' && sameApi) {
@@ -1270,13 +1554,19 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (current.mode !== 'external') { addonPolicy = await nativeAddonPolicy(routed, payload, request.addonKeep); changes.push(...addonPolicy.changes); }
       phases.push(manifest ? 'local-update' : 'local-install');
       const directory = path.dirname(game.scan.chosen.path);
-      const loaderName = manifest?.reshadeRoute === 'd3d12' ? 'd3d12.dll' : INSTALLED_NAMES.reshade;
-      for (const kind of ['addon', 'bridge', 'runtime', ...(!fs.existsSync(path.join(directory, loaderName)) ? ['reshade'] : []), ...(!manifest ? ['config'] : []), ...(api === 'dx11' ? ['carrier'] : [])]) {
+      const loaderName = adoption?.replaceProxy?.name || (manifest?.reshadeRoute === 'd3d12' ? 'd3d12.dll' : INSTALLED_NAMES.reshade);
+      for (const kind of ['addon', 'bridge', 'runtime', ...(!fs.existsSync(path.join(directory, loaderName)) || adoption?.replaceProxy ? ['reshade'] : []), ...(!manifest ? ['config'] : []), ...(api === 'dx11' ? ['carrier'] : [])]) {
         const row = payload[kind]; if (!row) continue;
         const file = path.join(directory, kind === 'reshade' ? loaderName : INSTALLED_NAMES[kind]);
         const before = fs.existsSync(file) && fs.statSync(file).isFile() ? sha256(file) : null;
         changes.push({ path: file, name: path.basename(file), role: kind, phase: 'local-install',
-          beforeSha256: before, afterSha256: row.actual, action: before === row.actual ? 'keep' : before === null ? 'create' : 'replace' });
+          beforeSha256: before, afterSha256: kind === 'config' && before !== null ? before : row.actual,
+          action: kind === 'config' && before !== null || before === row.actual ? 'keep' : before === null ? 'create' : 'replace' });
+      }
+      for (const row of payload.companions || []) {
+        const file = path.join(directory, row.name), before = await require('./launch-safety').digestFile(file);
+        changes.push({ path: file, name: row.name, role: 'core-resource', phase: 'local-install', beforeSha256: before,
+          afterSha256: row.actual, action: before === row.actual ? 'keep' : before === null ? 'create' : 'replace' });
       }
       if (request.mode === 'external') {
         phases.push('external-migration');
@@ -1287,6 +1577,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           changes.push({ path: file, name: path.basename(file), role: kind, phase: 'external-migration',
             beforeSha256: null, afterSha256: row.actual, action: 'create' });
         }
+        for (const row of payload.companions || []) changes.push({ path: path.join(location.runtimeDir, row.name), name: row.name,
+          role: 'core-resource', phase: 'external-migration', beforeSha256: null, afterSha256: row.actual, action: 'create' });
         if (request.loadingMode === 'helper') {
           const existingName = ['dxgi.dll', 'd3d12.dll'].find(name => fs.existsSync(path.join(directory, name)));
           const loaderName = existingName || INSTALLED_NAMES.reshade;
@@ -1303,7 +1595,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const planId = crypto.randomUUID();
     deploymentPlans.set(planId, { id, request: { ...request, api: preference, version: targetVersion }, api, routed,
       fromMode: current.mode, fromApi, fromVersion: current.version, hadManifest: Boolean(manifest),
-      migration, migrationRequest, addonPolicy, phases, expires: Date.now() + 5 * 60 * 1000,
+      migration, migrationRequest, addonPolicy, adoption, phases, expires: Date.now() + 5 * 60 * 1000,
       exe: game.scan.chosen.path, exeHash: await require('./external-runtime').digest(game.scan.chosen.path), preferenceBefore: state });
     const proposedLayout = request.mode === 'external' ? externalDeployment.location(routed) : gameLayout(game);
     const loadingMode = request.mode === 'external' ? request.loadingMode || current.loadingMode || 'proxy' : 'proxy';
@@ -1312,7 +1604,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         loaderPath: loadingMode === 'helper' ? path.join(proposedLayout.runtimeDir, 'ReShade64.dll') : null },
       configured: migration?.configured || current.configured, sourceLayout: migration?.sourceLayout || current.sourceLayout,
       desired: migration?.desired || proposedLayout.desired, blockers: [...(migration?.blockers || []), ...(addonPolicy?.plan.blockers || [])], warnings: migration?.warnings || current.warnings || [],
-      addonCompatibility: addonPolicy?.plan || migration?.addonCompatibility || null,
+      addonCompatibility: addonPolicy?.plan || migration?.addonCompatibility || migration?.compatibility || null,
+      isolatedAddonTransfers: migration?.isolatedAddonTransfers || [],
+      adoption, requiresAdoptionConfirmation: adoption?.required === true,
       retainedAddons: migration?.retainedAddons || [], inactiveAddons: migration?.inactiveAddons || [], requiresFgRestore: migration?.requiresFgRestore === true,
       requiresAntiCheat: Boolean(require('../core/install-guards').antiCheatPresent(game.dir)), requiresConfirmation: true, runtimeVerified: false };
   }
@@ -1320,7 +1614,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const game = findGame(id), layout = gameLayout(game);
     if (layout.loadingBackend === 'hoyoshade' && layout.inputRoute === 'feeder') {
       const plan = await previewHoYoDeployment(id, { route: 'feeder', api: game.apiOverride || 'auto', hoyo: hoyo.profile(game).hoyo,
-        version: feeder.summary(game).packageId, addonKeep: request.addonKeep });
+        version: feeder.summary(game).packageId, addonKeep: request.addonKeep }, { maintainInstalled: true });
       const planId = crypto.randomUUID();
       repairPlans.set(planId, { id, owner: 'hoyoshade', nested: plan.planId, expires: Date.now() + 5 * 60000 });
       return { ...plan, planId, repair: true };
@@ -1369,6 +1663,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     if (game.scan?.chosen?.path !== plan.exe || await require('./external-runtime').digest(plan.exe) !== plan.exeHash)
       throw Object.assign(new Error('预览后游戏 EXE 已变化。'), { code: 'DEPLOYMENT_PLAN_CHANGED' });
     await externalDeployment.assertReady(game);
+    await adoptionPolicy.assertAdoption(plan.adoption);
     const preferenceKey = pathKey(game.dir);
     const preferenceBefore = store.read();
     for (const key of ['api', 'apiExecutable']) if ((preferenceBefore.gameOverrides[preferenceKey]?.[key] || null) !==
@@ -1381,9 +1676,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     try {
       if (plan.phases.every(phase => ['external-install', 'external-update', 'external-migration', 'restore-local'].includes(phase))) {
         settingChange = await gameApiSettings.apply(game, plan.request.api);
-        await store.write({ gameOverrides: { ...preferenceBefore.gameOverrides, [preferenceKey]: {
-          ...preferenceBefore.gameOverrides[preferenceKey], api: plan.request.api, apiExecutable: plan.exe } } });
-        preferenceWritten = true;
+        preferenceWritten = await writeApiPreference(preferenceKey, plan.request.api, plan.exe);
         result = await externalDeployment.apply(plan.migration.planId, consent);
         completed.push(...plan.phases);
       } else {
@@ -1391,8 +1684,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           result = await externalDeployment.apply(plan.migration.planId, consent); completed.push('restore-local');
         }
         result = await applyGameRoute(plan.id, { api: plan.request.api, version: plan.request.version, components: plan.request.components, addonKeep: plan.request.addonKeep, allowAntiCheat: consent.allowAntiCheat === true },
-          { addonPolicy: plan.addonPolicy, onAppliedState: applied => { settingChange = applied.settingChange; } });
-        preferenceWritten = true; completed.push(plan.hadManifest ? 'local-update' : 'local-install');
+          { addonPolicy: plan.addonPolicy, adoption: plan.adoption, onAppliedState: applied => { settingChange = applied.settingChange; preferenceWritten = applied.preferenceWritten; } });
+        completed.push(plan.hadManifest ? 'local-update' : 'local-install');
         if (plan.request.mode === 'external') {
           game = findGame(plan.id);
           const next = await externalDeployment.preview(game, { mode: 'external', loadingMode: plan.request.loadingMode, proxyEntry: plan.request.proxyEntry, api: plan.api });
@@ -1402,7 +1695,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return refreshAfterMutation({ ...result, applied: true, completedPhases: completed,
         appliedRoute: { api: plan.api, version: plan.request.version, mode: plan.request.mode }, runtimeVerified: false });
     } catch (error) {
-      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, preferenceBefore, preferenceKey, settingChange);
+      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, preferenceBefore, preferenceKey, settingChange, preferenceWritten);
       const pending = fs.existsSync(path.join(game.dir, EXTERNAL_PENDING));
       // A newly created ordinary installation is an independently recoverable
       // stage. Revert it only after the external owner has restored its files.
@@ -1480,40 +1773,51 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     return preview;
   }
   async function previewSpecialDeployment(id, request = {}) {
+    if (!coreSelectionScope.getStore() && request.version === require('./unified5-core').ID)
+      return withSelectedCore(id, request, () => previewSpecialDeployment(id, request));
     if (!request || typeof request !== 'object' || Array.isArray(request) ||
         Object.keys(request).some(key => !['route', 'api', 'version', 'proxyEntry', 'addonKeep'].includes(key)) || !['vulkan', 'feeder'].includes(request.route) ||
         request.api !== undefined && !['auto', 'dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].includes(request.api) ||
         request.version !== undefined && (typeof request.version !== 'string' || !request.version || request.version.length > 100)) throw appError('ERR_BAD_REQUEST');
     const game = findGame(id), routed = specialRouteGame(game, request), owner = request.route === 'feeder' ? feeder : vulkan;
+    const adoption = await inspectInstallationAdoption(id);
     const preview = await specialPreviewWithSettings(game, routed, request, owner);
-    const planId = crypto.randomUUID(), normalized = { ...request, api: request.api || preview.api, version: preview.packageId || preview.version };
-    specialDeploymentPlans.set(planId, { id, request: normalized, expires: Date.now() + 5 * 60 * 1000,
+    const planId = crypto.randomUUID(), normalized = { ...request, api: request.api || preview.api,
+      version: coreSelectionScope.getStore()?.version || preview.packageId || preview.version };
+    specialDeploymentPlans.set(planId, { id, request: normalized, adoption, expires: Date.now() + 5 * 60 * 1000,
       exe: game.scan.chosen.path, exeHash: await require('./external-runtime').digest(game.scan.chosen.path),
       preferenceBefore: store.read().gameOverrides[pathKey(game.dir)] || {}, fingerprint: specialFingerprint(preview) });
     return { ...preview, planId, gameId: id, fromMode: gameLayout(game).mode, toMode: preview.mode,
+      ...(coreSelectionScope.getStore() ? { nrContract: { version: coreSelectionScope.getStore().version,
+        ...require('./nr-core-identity').pinnedConfigContract(providerContext().currentCore?.sha256) } } : {}),
+      adoption, requiresAdoptionConfirmation: adoption?.required === true,
+      blockers: [...(preview.blockers || []), ...(adoption?.blockers || [])],
       loadingMode: 'proxy', phases: [`${request.route}-install`], changes: preview.changes.map(row => ({ ...row, phase: `${request.route}-install` })) };
   }
   async function applySpecialDeployment(planId, consent = {}) {
+    const scopedPlan = specialDeploymentPlans.get(planId);
+    if (!coreSelectionScope.getStore() && scopedPlan?.request.version === require('./unified5-core').ID)
+      return withSelectedCore(scopedPlan.id, scopedPlan.request, () => applySpecialDeployment(planId, consent));
     const plan = specialDeploymentPlans.get(planId); specialDeploymentPlans.delete(planId);
     if (!plan || plan.expires < Date.now()) throw Object.assign(new Error('部署预览已过期，请重新检查。'), { code: 'DEPLOYMENT_PLAN_EXPIRED' });
     const game = findGame(plan.id), state = store.read(), key = pathKey(game.dir), before = state.gameOverrides[key] || {};
+    await adoptionPolicy.assertAdoption(plan.adoption);
     if (game.scan?.chosen?.path !== plan.exe || await require('./external-runtime').digest(plan.exe) !== plan.exeHash ||
         ['api', 'apiExecutable'].some(field => (before[field] || null) !== (plan.preferenceBefore[field] || null)))
       throw Object.assign(new Error('预览后游戏 EXE 或 API 选择已变化。'), { code: 'DEPLOYMENT_PLAN_CHANGED' });
     const routed = specialRouteGame(game, plan.request), owner = plan.request.route === 'feeder' ? feeder : vulkan;
     const fresh = await specialPreviewWithSettings(game, routed, plan.request, owner);
     if (specialFingerprint(fresh) !== plan.fingerprint) throw Object.assign(new Error('预览后配套文件或加载状态已变化，请重新检查。'), { code: 'DEPLOYMENT_PLAN_CHANGED' });
-    if (plan.request.route === 'vulkan') return applyGameRoute(plan.id, { api: plan.request.api, version: fresh.packageId, allowAntiCheat: consent.allowAntiCheat === true });
+    if (plan.request.route === 'vulkan') return applyGameRoute(plan.id, { api: plan.request.api, version: fresh.packageId, allowAntiCheat: consent.allowAntiCheat === true }, { adoption: plan.adoption });
     let settingChange, preferenceWritten = false, result;
     try {
       result = await feeder.install(routed, { version: plan.request.version, ...(fresh.planId ? { expectedPlanId: fresh.planId } : {}),
         ...(plan.request.proxyEntry ? { proxyEntry: plan.request.proxyEntry } : {}), ...(plan.request.addonKeep ? { addonKeep: plan.request.addonKeep } : {}), allowAntiCheat: consent.allowAntiCheat === true }, async () => {
         settingChange = await gameApiSettings.apply(game, plan.request.api);
-        await store.write({ gameOverrides: { ...state.gameOverrides, [key]: { ...before, api: plan.request.api, apiExecutable: plan.exe } } });
-        preferenceWritten = true;
+        preferenceWritten = await writeApiPreference(key, plan.request.api, plan.exe);
       });
     } catch (error) {
-      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange);
+      if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
       throw error;
     }
     return refreshAfterMutation({ ...result, applied: true, appliedRoute: { api: classifyApi(routed.scan.chosen), version: result.coreVersion, mode: 'local' },
@@ -1523,14 +1827,23 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const game = findGame(id), feed = feeder.summary(game), vk = vulkan.summary(game);
     const feederState = feed.installed || feed.needsRecovery, vulkanState = vk.installed || vk.needsRecovery;
     if (feederState && vulkanState) throw Object.assign(new Error('同一游戏同时存在多个固定配套的恢复记录，请保留现场核对，未接管其他路线。'), { code: 'DEPLOYMENT_OWNER_CONFLICT' });
-    if (gameLayout(game).loadingBackend === 'hoyoshade') {
+    let layout;
+    try { layout = gameLayout(game); }
+    catch (error) {
+      // A broken loader binding must not hide the independent, receipt-bound
+      // rescue entry. Ordinary config writes/launch still use strict getLayout.
+      if (!hasExternalRecord(game)) throw error;
+      return { ...await externalDeployment.inspect(game), errorCode: error.code, errorDetails: error.details,
+        blockers: [error.message], ready: false, verified: false, runtimeVerified: false };
+    }
+    if (layout.loadingBackend === 'hoyoshade') {
       const profile = await hoyo.inspect(game), input = feederState ? await feeder.inspect(game) : null;
       const blockers = [...(profile.blockers || []), ...(input?.blockers || []), ...(profile.inputRoute === 'feeder' && !input?.installed ? ['米哈游加载配置已准备，Feeder 输入配套尚未完成，请预览修复。'] : [])];
       const pending = Boolean(profile.needsRecovery || input?.needsRecovery || feed.needsRecovery);
       return { ...profile, mode: 'external', source: 'hoyoshade-profile', loadingBackend: 'hoyoshade', route: profile.inputRoute,
         version: input?.coreVersion || profile.version, ready: profile.ready && (profile.inputRoute !== 'feeder' || input?.ready === true) && !blockers.length,
         verified: profile.verified && (profile.inputRoute !== 'feeder' || input?.ready === true) && !blockers.length,
-        pending, needsRecovery: pending, blockers, input, runtimeVerified: false };
+        pending, needsRecovery: pending, blockers, input, rescue: { available: hasExternalRecord(game), pending: fs.existsSync(path.join(game.dir, EXTERNAL_PENDING)) }, runtimeVerified: false };
     }
     if (feederState || vulkanState) {
       const route = feederState ? 'feeder' : 'vulkan', summary = feederState ? feed : vk;
@@ -1539,7 +1852,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return { ...state, source: route, route, mode: feederState ? 'local' : 'external',
         pending, needsRecovery: pending, runtimeVerified: false };
     }
-    return gameLayout(game).loadingBackend === 'hoyoshade' ? hoyo.inspect(game) : externalDeployment.inspect(game);
+    return externalDeployment.inspect(game);
   }
   async function recoverDeployment(id) {
     const game = findGame(id);
@@ -1582,8 +1895,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       const nativeRoles = { addon: 'core', reshade: 'reshade', bridge: 'chain', runtime: 'nr-runtime', carrier: 'carrier' };
       const nativeModule = async (manifest, row, owner) => {
         const role = nativeRoles[row.kind]; if (!role) return;
-        const rel = row.kind === 'reshade' && manifest.reshadeRoute === 'd3d12' && path.basename(row.rel).toLowerCase() === 'dxgi.dll'
-          ? path.join(path.dirname(row.rel), 'd3d12.dll') : row.rel;
+        const rel = require('./native-loader-target').nativeTargetRel(manifest, row);
         const file = path.resolve(game.dir, rel);
         if (!same(path.dirname(file), path.dirname(exe)) || (row.kind === 'reshade'
           ? !/^(?:dxgi|d3d12)\.dll$/i.test(path.basename(file)) : path.basename(file) !== INSTALLED_NAMES[row.kind])) throw new Error('module target does not match its owner');
@@ -1718,23 +2030,41 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
 
   return {
     product: { ...PRODUCT, version },
-    listComponents: async () => { await seedBundledComponents(); await refreshProviderSources({ selectDefault: true });
-      return { ...(await componentLibrary.inventory()), catalog: componentLibrary.catalog(), warnings:[...componentSeedErrors] }; },
+    listComponents: async () => { await storageFinalization; await seedBundledComponents(); await refreshProviderSources({ selectDefault: true });
+      const inventory = await componentLibrary.inventory();
+      const currentPayload = inspectCurrentPayload({ allowMissingBundle: true, hardwareFamily: hardware.family, version: selectedVersion() });
+      const catalog = componentLibrary.catalog();
+      return { ...inventory, catalog, componentOverview: await componentOverview.read({ inventory, catalog, currentCore: providerContext().currentCore }),
+        runtimeSetup: { hardwareFamily: hardware.family || null, ready: currentPayload.ready === true,
+          runtimeDlcRequired: currentPayload.source?.runtimeDlcRequired === true,
+          selectedRuntimeId: inventory.selected?.[hardware.family] || null },
+        storage:{ root:componentLibrary.root, mode:componentStorage.mode, cDrive:/^c:/i.test(componentLibrary.root) }, warnings:[...componentSeedErrors] }; },
+    moveComponentLibrary: async destinationBase => {
+      await storageFinalization; await fs.promises.mkdir(componentLibrary.root,{recursive:true});
+      const moved=await storageApi.moveComponentStorage({userData,source:componentLibrary.root,destinationBase});
+      await store.write({componentLibraryPath:moved.target,componentLibraryPreviousPath:moved.source});
+      return {...moved,message:'组件仓库已完整复制并校验。重启管理器后会使用新位置并清理旧副本。'};
+    },
     inspectComponentProviders: () => feeder.inspectProviders(providerContext()),
     selectComponentProvider: async id => {
       if (id !== null) await refreshProviderSources({ force: true });
       return feeder.selectProvider(id, providerContext());
     },
     importComponent: selected => componentLibrary.importComponent(selected),
+    importRuntimeDlc,
     checkComponentUpdates: () => componentLibrary.checkUpdates(),
     downloadComponent: id => componentLibrary.downloadComponent(id),
     applyBridgeComponent: (id, bridge) => { const selected = installationDefaults(id); return applyGameRoute(id, { api: selected.api, version: selected.version, components: { bridge } }); },
-    activateComponentRuntime: async id => {
-      const activated = await componentLibrary.activateRuntime(id, bundledPayloadDir);
-      await selectPayloadSource(activated.payloadDir);
-      await refreshProviderSources({ selectDefault: true, force: true });
-      return { ...activated, state: payloadState() };
+    setUserAddon: async (id, componentId, enabled) => {
+      if (typeof componentId !== 'string' || typeof enabled !== 'boolean') throw appError('ERR_BAD_REQUEST');
+      const game = findGame(id), inventory = await componentLibrary.inventory();
+      if (!(readManifest(game.dir) || externalOwned(game) || feederOwned(game) || vulkanOwned(game)))
+        throw Object.assign(new Error('请先完成该游戏的核心安装，再加载用户 Add-on。'), { code: 'USER_ADDON_BASE_REQUIRED' });
+      const item = inventory.packages.find(row => row.id === componentId);
+      if (!item) throw Object.assign(new Error('组件仓库中没有这个用户 Add-on，请重新导入。'), { code: 'USER_ADDON_MISSING' });
+      return userAddons.setEnabled(game, item, enabled);
     },
+    activateComponentRuntime: useRuntimeComponent,
     activateComponentCore: async id => {
       const activated = await componentLibrary.activateCore(id, bundledPayloadDir);
       await selectPayloadSource(activated.payloadDir);
@@ -1757,7 +2087,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     withError,
     validateLaunch,
     boot: async () => {
-      await seedBundledComponents();
+      // Hash the initial display snapshot off the main thread before component
+      // registration and game refresh ask for it synchronously.
+      await payloadInspection.prime(payloadDir, { allowMissingBundle: true, hardwareFamily: hardware.family, version: selectedVersion() }).catch(() => {});
+      await storageFinalization; await seedBundledComponents();
       const providerRefresh = await refreshProviderSources({ selectDefault: true });
       if (providerRefresh.reason && providerRefresh.code && !componentSeedErrors.includes(providerRefresh.reason))
         componentSeedErrors.push(`外部 Provider 当前未刷新：${providerRefresh.reason}`);
@@ -1784,6 +2117,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     assessmentSeed: id => { const game = findGame(id); return structuredClone({ ...publicGame(game), scan: game.scan }); },
     installationDefaults,
     resolveInputRoute,
+    validateWaitingComponents,
+    inspectInstallationAdoption,
     previewProxyEntry,
     applyProxyEntry: (id, entry, consent = {}) => installer.toggleD3D12({ gameDir: findGame(id).dir, scan: findGame(id).scan, enabled: entry === 'd3d12', allowAntiCheat: consent.allowAntiCheat === true }),
     previewHoYoDeployment,
@@ -1803,6 +2138,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     gameCoreIdentity,
     inspectDeployment,
+    deploymentRescueState: id => { const game = findGame(id); return hasExternalRecord(game)
+      ? externalDeployment.rescueState(game) : { available: false, pending: false }; },
+    previewDeploymentRescue: (id, mode) => externalDeployment.previewRescue(findGame(id), mode),
+    applyDeploymentRescue: async (id, planId, consent) => refreshAfterMutation(await externalDeployment.applyRescue(findGame(id), planId, consent)),
     previewDeployment,
     componentChoices,
     knownComponentCatalog,
@@ -1827,12 +2166,11 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     addManualGame: async dir => {
       if (typeof dir !== 'string' || !path.isAbsolute(dir)) throw appError('ERR_BAD_REQUEST');
-      const state = store.read();
-      await store.write({
+      await store.update(state => ({
         manualGames: [...state.manualGames, dir],
         excludedRoots: state.excludedRoots.filter(root => pathKey(root) !== pathKey(dir)),
         excludedGames: removeExcludedFor(state.excludedGames, dir)
-      });
+      }));
       return refreshCollection(games);
     },
     prepareGameSelection: async (source, preferredExecutable = null) => {
@@ -1853,36 +2191,47 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     addScanFolder: async dir => {
       if (typeof dir !== 'string' || !path.isAbsolute(dir)) throw appError('ERR_BAD_REQUEST');
-      const state = store.read();
-      await store.write({ scanFolders: [...state.scanFolders, dir] });
+      await store.update(state => ({ scanFolders: [...state.scanFolders, dir] }));
       return refreshCollection(games);
     },
     dismissGame: async (id, options = {}) => {
       const game = findGame(id);
-      if (options.libraryOnly === true && (feederOwned(game) || vulkanOwned(game) || externalOwned(game) ||
-          fs.existsSync(path.join(game.dir, EXTERNAL_PENDING)) || readManifest(game.dir)))
+      const keepFiles = options.keepFiles === true;
+      if (keepFiles && options.confirm !== true) throw Object.assign(new Error('请确认仅移出游戏库；游戏文件、备份与未完成恢复记录都会保留。'), { code: 'LIBRARY_CONFIRM_REQUIRED' });
+      const retainedState = keepFiles ? store.read() : null;
+      const executable = game.scan?.chosen?.path || (keepFiles ?
+        retainedState.manualExecutables.find(row => pathKey(row.root) === pathKey(game.dir))?.file ||
+        retainedState.gameOverrides[pathKey(game.dir)]?.apiExecutable : null) || null;
+      let archiveFile = null;
+      if (keepFiles) {
+        const state = retainedState, aliases = executableAliases(state, game.dir, executable);
+        archiveFile = await require('./library-entry-archive').archiveLibraryEntry({ userData, game, executable, state, aliases, waitingArchive: options.waitingArchive });
+      }
+      const userAddonReceipt = keepFiles ? null : await userAddons.readReceipt(game);
+      if (!keepFiles && options.libraryOnly === true && (feederOwned(game) || vulkanOwned(game) || externalOwned(game) ||
+          fs.existsSync(path.join(game.dir, EXTERNAL_PENDING)) || readManifest(game.dir) || userAddonReceipt.items.length))
         throw Object.assign(new Error('请先选择卸载方式并完成恢复，再移出游戏库。'), { code: 'LIBRARY_RESTORE_FIRST' });
-      if (options.libraryOnly === true) {
+      if (!keepFiles && options.libraryOnly === true) {
         requireNoFeeder(game); requireKnownVulkanOwnership(game);
         if (fs.existsSync(path.join(game.dir, '_DLSS5_Backup/pending-switch.json')))
           throw Object.assign(new Error('请先恢复未完成的组件操作，再移出游戏库。'), { code: 'LIBRARY_RESTORE_FIRST' });
       }
-      if (options.libraryOnly !== true) {
-      if (feederOwned(game)) await feeder.restore(game);
-      requireNoFeeder(game);
-      requireKnownVulkanOwnership(game);
-      if (vulkanOwned(game)) await vulkan.restore(game);
-      if (hasExternalRecord(game)) await externalDeployment.recover(game);
-      if (externalOwned(game)) await externalDeployment.restore(game, { allowAntiCheat: true });
-      // Removing a library entry also removes this tool's NR deployment. Never
-      // hide the game while an incomplete restore still needs the user's attention.
-      if (readManifest(game.dir)) {
-        const result=await installer.uninstall({gameDir:game.dir,removeSettings:false,scan:game.scan});
-        if (result?.removed !== true) throw appError('ERR_BACKUP_INVALID',{operation:'dismiss-uninstall',removed:false,warnings:result?.warnings||[]});
+      if (!keepFiles && options.libraryOnly !== true) {
+        await userAddons.removeAll(game);
+        if (feederOwned(game)) await feeder.restore(game);
+        requireNoFeeder(game);
+        requireKnownVulkanOwnership(game);
+        if (vulkanOwned(game)) await vulkan.restore(game);
+        if (hasExternalRecord(game)) await externalDeployment.recover(game);
+        if (externalOwned(game)) await externalDeployment.restore(game, { allowAntiCheat: true });
+        // Removing a library entry also removes this tool's NR deployment. Never
+        // hide the game while an incomplete restore still needs the user's attention.
+        if (readManifest(game.dir)) {
+          const result=await installer.uninstall({gameDir:game.dir,removeSettings:false,scan:game.scan});
+          if (result?.removed !== true) throw appError('ERR_BACKUP_INVALID',{operation:'dismiss-uninstall',removed:false,warnings:result?.warnings||[]});
+        }
       }
-      }
-      const state = store.read();
-      const executable = game.scan?.chosen?.path || null;
+      await store.update(state => {
       const aliases = executableAliases(state, game.dir, executable);
       const removable = [...aliases.roots].filter(([key]) => !aliases.protectedRoots.has(key) && !aliases.sharedRoots.has(key));
       const hiddenRoots = removable.map(([, dir]) => dir);
@@ -1890,7 +2239,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       // With another receipt, use exact-directory exclusions so its recovery
       // row cannot be hidden by the shared executable or launcher identity.
       const exclusionDirs = [...new Set([game.dir, ...hiddenRoots])];
-      await store.write({
+      return {
         excludedRoots: [...state.excludedRoots, ...hiddenRoots.filter(dir => !hidesAnotherReceipt(dir))],
         excludedGames: [...state.excludedGames, ...exclusionDirs.map(dir => ({
           dir, executable: aliases.protectedRoots.size ? null : executable,
@@ -1899,22 +2248,24 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           appid: aliases.protectedRoots.size ? null : game.appid || null
         }))],
         manualGames: state.manualGames.filter(dir => !aliases.ownsRoot(dir) || aliases.sharedRoots.has(pathKey(dir))),
-        manualExecutables: state.manualExecutables.filter(row => !(aliases.ownsRoot(row.root) && (!executable || aliases.sameExe(row.file)))),
-        gameOverrides: Object.fromEntries(Object.entries(state.gameOverrides).filter(([dir, row]) => !aliases.ownsMetadata(dir, row)))
+        manualExecutables: keepFiles ? state.manualExecutables : state.manualExecutables.filter(row => !(aliases.ownsRoot(row.root) && (!executable || aliases.sameExe(row.file)))),
+        gameOverrides: keepFiles ? state.gameOverrides : Object.fromEntries(Object.entries(state.gameOverrides).filter(([dir, row]) => !aliases.ownsMetadata(dir, row)))
+      };
       });
-      return refreshCollection(games);
+      if (!keepFiles) return refreshCollection(games);
+      // A failed rescan must not keep an explicitly hidden row reachable by
+      // already queued actions. The original ownership files remain in place.
+      games = games.filter(row => row.id !== id);
+      return { removedFromLibrary: true, filesKept: true, restored: false, archiveFile, games: await refreshCollection(games),
+        notice: '已仅移出游戏库，游戏文件、备份、外置目录与未完成恢复记录均保留；这不是卸载或恢复。重新添加同一游戏可继续处理。' };
     },
     renameGame: async (id, name) => {
       const game = findGame(id);
       if (typeof name !== 'string') throw appError('ERR_BAD_REQUEST');
       const nextName = name.trim().slice(0, 160);
       if (!nextName) throw appError('ERR_BAD_REQUEST');
-      const state = store.read();
       const key = pathKey(game.dir);
-      await store.write({ gameOverrides: {
-        ...state.gameOverrides,
-        [key]: { ...state.gameOverrides[key], name: nextName }
-      } });
+      await updateGameOverride(key, { name: nextName });
       return refreshCollection(games);
     },
     updateSettings: async patch => {
@@ -1933,6 +2284,25 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return store.write(patch);
     },
     applyGameRoute,
+    setGameApiPreference: async (id, api) => {
+      if (!['auto', 'dx9', 'dx10', 'dx11', 'dx12', 'vulkan', 'opengl'].includes(api)) throw appError('ERR_BAD_REQUEST');
+      const game = findGame(id);
+      if (!game.scan?.chosen?.path) throw appError('ERR_NO_GAME_EXE');
+      const key = pathKey(game.dir), exe = game.scan.chosen.path;
+      await updateGameOverride(key, { api, apiExecutable: exe });
+      // Changing a preference does not require discovering the library again.
+      // Keep detection evidence separate and only project the bound choice.
+      const chosen = game.scan.chosen, detected = require('./operation-api').resolveOperationApi(game, { api: 'auto' }).detectedApi;
+      const effectiveApi = api === 'auto' ? detected : api;
+      const selected = { ...chosen, detectedApi: detected,
+        apiResolution: { ...(api === 'auto' ? chosen.detectedApiResolution : chosen.apiResolution), api: effectiveApi, source: api === 'auto' ? chosen.detectedApiResolution?.source || 'detection' : 'override' },
+        apiAssessment: { ...chosen.apiAssessment, effectiveApi, source: api === 'auto' ? 'detection' : 'override' } };
+      game.apiOverride = api; game.chosen = selected;
+      game.scan = { ...game.scan, chosen: selected, componentSelection: { ...game.scan.componentSelection, dx11Carrier: effectiveApi === 'dx11' } };
+      const support = assess(game.scan, { allowDx11: true });
+      game.supported = support.supported; game.supportCode = support.code; game.supportText = support.code ? MESSAGES[support.code] : '支持安装';
+      return { saved: true, api, exe, notice: '已记住本游戏的 API；组件变更在应用时执行。' };
+    },
     setGameApi: async (id, api, options = {}) => {
       if (!['auto', 'dx9', 'dx10', 'dx11', 'dx12', 'vulkan', 'opengl'].includes(api)) throw appError('ERR_BAD_REQUEST');
       const game = findGame(id);
@@ -1942,11 +2312,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (vulkanOwned(game) && nextApi !== 'vulkan' || readManifest(game.dir) && nextApi === 'vulkan') routeRestoreFirst();
       const state = store.read();
       const key = pathKey(game.dir);
-      let settingChange;
+      let settingChange, preferenceWritten;
       try {
         settingChange = await gameApiSettings.apply(game, api);
-        await store.write({ gameOverrides: { ...state.gameOverrides,
-          [key]: { ...state.gameOverrides[key], api, apiExecutable: game.scan.chosen.path } } });
+        preferenceWritten = await writeApiPreference(key, api, game.scan.chosen.path);
         if (readManifest(game.dir)) {
           const effectiveApi = api === 'auto' ? require('./operation-api').resolveOperationApi(game, { api: 'auto' }).detectedApi : api;
           const routedScan = { ...game.scan, chosen: { ...game.scan.chosen,
@@ -1962,7 +2331,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           }
         }
       } catch (error) {
-        await rollbackApiChoice(error, state, key, settingChange);
+        await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
         throw error;
       }
       return refreshCollection(games);
@@ -1974,6 +2343,22 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         throw appError('ERR_ADDON_INVALID');
       }
       if (/\.zip$/i.test(file)) {
+        let ota, otaError;
+        try { ota = await readOtaPackage(file); } catch (error) { otaError = error; }
+        if (ota?.canonicalCore) {
+          const core = ota.canonicalCore;
+          await componentLibrary.importVerifiedCore({ ...core, catalogIdentity:true, archiveSha256:ota.archiveSha256, files:[
+            { name:'nr-before-sr.zh-CN.addon64', bytes:ota.addon, sha256:ota.addonSha256 },
+            { name:'nrchain_nvngx.dll', bytes:ota.bridge, sha256:ota.bridgeSha256 },
+            ...(ota.carrier ? [{ name:ota.carrierName, bytes:ota.carrier, sha256:ota.carrierSha256 }] : []),
+            ...(ota.companions || []).map(row => ({ name:row.name, bytes:row.data, sha256:row.sha256 }))
+          ] });
+          const source = await componentLibrary.activateCore(core.id, bundledPayloadDir);
+          await selectPayloadSource(source.payloadDir);
+          await store.write({ addonVersion:core.id });
+          await refreshProviderSources({ selectDefault:true, force:true });
+          return listAddonVersions();
+        }
         let modern;
         try { modern = await componentLibrary.importComponent(file); } catch { /* Historical OTA packages retain their own reader. */ }
         if (modern?.packages.length === 1 && modern.packages[0].kind === 'core') {
@@ -1982,11 +2367,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           await refreshProviderSources({ selectDefault: true, force: true });
           return listAddonVersions();
         }
-        let ota;
-        try { ota = await readOtaPackage(file); }
-        catch (error) {
-          if (error?.code === 'ERR_OTA_CORE_ONLY') throw appError('ERR_OTA_CORE_ONLY');
-          throw appError('ERR_ADDON_INVALID', { reason: error && error.message ? error.message : 'invalid-ota' });
+        if (!ota) {
+          if (otaError?.code === 'ERR_OTA_CORE_ONLY') throw appError('ERR_OTA_CORE_ONLY');
+          throw appError('ERR_ADDON_INVALID', { reason: otaError?.message || 'invalid-ota' });
         }
         const digest = sha256(file);
         const id = `imported-${digest.slice(0, 12)}`;
@@ -2022,6 +2405,11 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         return listAddonVersions();
       }
       if (!/\.addon64$/i.test(file)) throw appError('ERR_ADDON_INVALID');
+      const clues = await require('./component-assessment').inspectComponentClues(file);
+      if (clues.classification !== 'core') {
+        await componentLibrary.importComponent(file);
+        return listAddonVersions();
+      }
       const digest = sha256(file);
       const id = `imported-${digest.slice(0, 12)}`;
       const dir = path.join(addonVersionsDir, id);
@@ -2054,6 +2442,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     install: async (id, options = {}) => {
       const game = findGame(id);
+      if (await inspectInstallationAdoption(id)) throw Object.assign(new Error('已有未受管安装，请先预览并确认具体备份接管清单。'), { code: 'ADOPTION_CONFIRM_REQUIRED' });
       if (externalOwned(game)) return refreshAfterMutation(await repairGame(game, options));
       if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
       if (feederOwned(game)) return refreshAfterMutation(await feeder.install(game, options));
@@ -2119,6 +2508,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     uninstall: async (id, request = false) => {
       const game = findGame(id);
       const { mode, removeSettings } = uninstallRequest(request);
+      await userAddons.removeAll(game);
       if (gameLayout(game).loadingBackend === 'hoyoshade' && feederOwned(game)) await feeder.restore(game);
       if (hasExternalRecord(game)) await externalDeployment.recover(game);
       if (externalDeployment.direct?.(game)) return refreshAfterMutation(await externalDeployment.remove(game, mode, { allowAntiCheat: true }));
@@ -2136,6 +2526,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     },
     restoreManagedForCleanup: async id => {
       const game = findGame(id);
+      await userAddons.removeAll(game);
       if (gameLayout(game).loadingBackend === 'hoyoshade' && feederOwned(game)) await feeder.restore(game);
       if (hasExternalRecord(game)) await externalDeployment.recover(game);
       if (externalOwned(game)) await externalDeployment.restore(game, { allowAntiCheat: true });
@@ -2177,12 +2568,10 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           // Feeder invokes this only after package, process, anti-cheat and
           // launch preflight, immediately before its existing file transaction.
           settingChange = await gameApiSettings.apply(game, options.api);
-          await store.write({ gameOverrides: { ...state.gameOverrides,
-            [key]: { ...state.gameOverrides[key], api: options.api, apiExecutable: game.scan.chosen.path } } });
-          preferenceWritten = true;
+          preferenceWritten = await writeApiPreference(key, options.api, game.scan.chosen.path);
         });
       } catch (error) {
-        if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange);
+        if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
         throw error;
       }
       return refreshAfterMutation({ ...result, appliedRoute: { api: classifyApi(routed.scan.chosen), version: result.coreVersion,
@@ -2238,7 +2627,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       try {
         if (game.scan && game.scan.chosen && game.scan.chosen.path) {
           const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
-          if (fs.existsSync(file)) settings = readConfig(file, nrConfigVersion(game));
+          const identity = await nrConfigVersion(game);
+          settings = { ...readConfig(file, identity), coreIdentity: identity };
         }
       } catch {}
       try {
@@ -2247,6 +2637,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         else if (reframeworkInput(game)) managedLogDirs = [await settingDirectory(game)];
       }
       catch { /* A broken binding must still allow exporting its diagnosis. */ }
+      let installationAdoption;
+      try { installationAdoption = { current: await inspectInstallationAdoption(id), lastProposal: adoptionProposals.get(id) || null }; }
+      catch (error) { installationAdoption = { error: { code: error.code, message: error.message }, lastProposal: adoptionProposals.get(id) || null }; }
       return feedback.buildReport({
         game,
         diagnostic,
@@ -2255,20 +2648,17 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         settings,
         gameId: id,
         includePaths,
-        managedLogDirs
+        managedLogDirs,
+        installationAdoption
       });
     },
     readNrSettings: async id => {
       const game = findGame(id);
       const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
-      return readConfig(file, nrConfigVersion(game));
+      const identity = await nrConfigVersion(game);
+      return { ...readConfig(file, identity), coreIdentity: identity };
     },
-    writeNrSettings: async (id, patch) => {
-      const game = findGame(id);
-      if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
-      const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
-      return writeConfig(file, patch, nrConfigVersion(game));
-    },
+    writeNrSettings: async (id, patch, options = {}) => changeNrSettings(findGame(id), patch, options),
     readGameHotkeys: async id => {
       const game = findGame(id);
       const executableDir = await settingDirectory(game, 'reshade');
@@ -2285,32 +2675,16 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return writeReShadeHotkey(path.join(executableDir, 'ReShade.ini'), binding);
     },
     applyDefault: async id => {
-      const game = findGame(id);
-      if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
-      const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
-      const version = nrConfigVersion(game), patch = defaultPatch(version);
-      let current = '';
-      try { current = fs.readFileSync(file, 'utf8'); } catch {}
-      if (!/^[ \t]*WorkMode\s*=/mi.test(current)) {
-        delete patch.WorkMode;
-        delete patch.CustomWorkScale;
-        patch.ColorStrength = 0;
-      }
-      return writeConfig(file, patch, version);
+      return changeNrSettings(findGame(id), (identity, current) => {
+        if (!current.contract.known) throw appError('ERR_BAD_REQUEST', { reason: '当前 Core 身份无法确认，未写入推测的默认值。' });
+        return Object.fromEntries(Object.entries(defaultPatch(identity)).filter(([key]) => current.capabilities[key] === true));
+      });
     },
     applyRecommended: async id => {
-      const game = findGame(id);
-      if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
-      const file = path.join(await settingDirectory(game), 'nr_before_sr.ini');
-      const version = nrConfigVersion(game), patch = defaultPatch(version);
-      let current = '';
-      try { current = fs.readFileSync(file, 'utf8'); } catch {}
-      if (!/^[ \t]*WorkMode\s*=/mi.test(current)) {
-        delete patch.WorkMode;
-        delete patch.CustomWorkScale;
-        patch.ColorStrength = 0;
-      }
-      return writeConfig(file, patch, version);
+      return changeNrSettings(findGame(id), (identity, current) => {
+        if (!current.contract.known) throw appError('ERR_BAD_REQUEST', { reason: '当前 Core 身份无法确认，未写入推测的推荐值。' });
+        return Object.fromEntries(Object.entries(defaultPatch(identity)).filter(([key]) => current.capabilities[key] === true));
+      });
     }
   };
 }

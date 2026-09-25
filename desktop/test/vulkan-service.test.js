@@ -81,6 +81,17 @@ function fixture(t, options = {}) {
     failClear() { bindingClearFailure = true; }, failArchivedSave() { archivedSaveFailure = true; }, failFirstBinding() { firstBindingFailure = true; } };
 }
 
+test('waiting source verification hashes Vulkan assets while running without activation, registry or profile publication', async t => {
+  const f = fixture(t), game = f.game('waiting'), service = f.create(); f.setRunning();
+  const verified = await service.verifySource(game, { version: f.runtime.coreVersion });
+  assert.equal(verified.ready, true); assert.equal(verified.packageId, f.runtime.id);
+  assert.equal(fs.existsSync(f.userData), false); assert.equal(fs.existsSync(f.bindingPath), false); assert.equal(f.values.size, 0);
+  assert.equal(f.calls.some(call => ['closed', 'profile-start', 'registry-add', 'activate'].includes(call)), false);
+  fs.appendFileSync(path.join(f.runtimeRoot, 'core.addon64'), 'changed');
+  await assert.rejects(service.verifySource(game), error => /HASH|SOURCE/.test(error.code));
+  assert.equal(fs.existsSync(f.userData), false); assert.equal(f.values.size, 0);
+});
+
 test('summary only reads metadata and missing/unaccepted packages stay unavailable', t => {
   const f = fixture(t), game = f.game('metadata'), service = f.create();
   assert.equal(service.summary(game).available, true);

@@ -13,7 +13,9 @@ app.disableHardwareAcceleration();
 function installMock() {
   const ok = value => ({ ok: true, value: structuredClone(value) });
   const mock = window.__launchMock = {
-    data: { hardware: { family: 'RTX40', series: ['RTX40'], names: ['NVIDIA GeForce RTX 4090'], source: 'fixture' }, requests: {}, applied: {}, pending: [], driverScope: { name: 'Fixture Shared Profile', applications: ['Game.exe', 'Launcher.exe'], predefined: true, shared: true }, fgComponents: { backend: 'mfgunlock', id: 'mfgunlock-0.6.1', route: 'compatibility', ready: true, canPrepare: false, missing: [], blockers: [] } },
+    data: { hardware: { family: 'RTX40', series: ['RTX40'], names: ['NVIDIA GeForce RTX 4090'], source: 'fixture' }, requests: {}, applied: {}, pending: [], driverScope: { name: 'Fixture Shared Profile', applications: ['Game.exe', 'Launcher.exe'], predefined: true, shared: true },
+      featureStates: { fg: { availableModes: ['follow', 'fixed'], availableMultipliers: [2, 3, 4] } },
+      fgComponents: { backend: 'mfgunlock', id: 'mfgunlock-0.9-zh-CN', route: 'compatibility', ready: true, canPrepare: false, missing: [], blockers: [] } },
     calls: [], failUpdate: false, listener: null
   };
   const game = { id: 'ui-fixture', name: 'SR / FG 界面验证', dir: 'C:\\UI-fixture\\游戏目录', installed: true, supported: true, launcher: '手动添加',
@@ -301,6 +303,7 @@ async function smoke() {
   for (const series of ['RTX40', 'RTX50']) {
     await hardware(series);
     mock.data.fgComponents = { backend: series === 'RTX40' ? 'mfgunlock' : 'native', route: series === 'RTX40' ? 'compatibility' : 'native', ready: true, missing: [], blockers: [] };
+    mock.data.featureStates = { fg: { availableModes: series === 'RTX40' ? ['follow', 'fixed', 'dynamic'] : ['off', 'fixed', 'dynamic'], availableMultipliers: [2, 3, 4, 5, 6] } };
     await controller.refresh(true);
     const expected = series === 'RTX40' ? 'mfgunlock' : 'nvidia';
     assert(controller.getState().drafts.fg.backend === expected, `${series} uses its current backend`);
@@ -308,10 +311,16 @@ async function smoke() {
     assert(saved('fg').backend === expected && saved('fg').multiplier === 6, `${series} 6x request uses the correct backend`);
     assert(panel('fg').textContent.includes('1 帧渲染 + 5 帧生成'), `${series} total multiplier includes the rendered frame`);
     if (series === 'RTX40') {
-      assert(![...field('fg', 'mode').options].some(row => ['dynamic', 'off'].includes(row.value)) && !field('fg', 'targetFps') && !field('fg', 'experimental56'),
-        'New RTX40 MFG has no legacy dynamic target, old experimental toggle, or unsupported off mode');
-      assert(panel('fg').textContent.includes('请求只会提高较低倍率') && panel('fg').textContent.includes('需要重启') && panel('fg').textContent.includes('Add-ons → MFG Unlock'),
-        'The MFG panel states raise-only requests, restart timing, and its independent in-game menu');
+      assert([...field('fg', 'mode').options].some(row => row.value === 'dynamic') && ![...field('fg', 'mode').options].some(row => row.value === 'off') && !field('fg', 'experimental56'),
+        'MFG 0.9 exposes verified Dynamic without the retired experimental toggle or unsupported off mode');
+      assert(panel('fg').textContent.includes('绝对倍率') && panel('fg').textContent.includes('可以提高或降低') && panel('fg').textContent.includes('Add-ons → MFG Unlock') && panel('fg').textContent.includes('mavismmg/MFGAdaUnlock-RenoDx'),
+        'The MFG 0.9 panel explains absolute multiplier behavior, its in-game menu, and upstream source');
+      set('fg', 'mode', 'dynamic'); set('fg', 'targetFps', 120); set('fg', 'runtimeMode', 'ota'); set('fg', 'hdrMode', 'automatic');
+      set('fg', 'depthEdgeGuard', 2); set('fg', 'freezeFallback', 'on'); set('fg', 'reflexSourceCap', 'on');
+      const beforeMfgDynamic = count('update'); await waitForAuto(beforeMfgDynamic);
+      assert(saved('fg').mode === 'dynamic' && saved('fg').targetFps === 120 && saved('fg').runtimeMode === 'ota' && saved('fg').hdrMode === 'automatic' &&
+        saved('fg').depthEdgeGuard === 2 && saved('fg').freezeFallback === true && saved('fg').reflexSourceCap === true && !('multiplier' in saved('fg')),
+        'MFG 0.9 Dynamic and selected Chinese advanced settings compile without a dormant fixed multiplier');
     } else {
       set('fg', 'mode', 'dynamic'); set('fg', 'targetFps', 144); const beforeDynamic = count('update'); await waitForAuto(beforeDynamic);
       assert(saved('fg').mode === 'dynamic' && saved('fg').targetFps === 144 && !('multiplier' in saved('fg')), 'RTX50 retains native dynamic mode without a dormant fixed multiplier');

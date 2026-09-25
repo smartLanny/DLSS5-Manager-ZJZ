@@ -27,6 +27,9 @@ function fixture(t, name = 'OnimushaWotS.exe') {
   fs.writeFileSync(path.join(storage, 'nr_before_sr.ini'), config.replace('Style=1', 'Style=2'));
   fs.writeFileSync(path.join(gameDir, 'ReShade.ini'), '[INPUT]\nKeyOverlay=36,0,0,0\n');
   const manifest = newManifest(gameDir, exe, 'dx12'); manifest.payloadVersion = '0.4.7beta';
+  const coreName = 'nr-before-sr.zh-CN.addon64', coreBytes = Buffer.from('synthetic installed 0.4.7 Core');
+  fs.writeFileSync(path.join(gameDir, coreName), coreBytes);
+  manifest.files.push({ rel: coreName, kind: 'addon', installedSha256: require('node:crypto').createHash('sha256').update(coreBytes).digest('hex'), original: { existed: false } });
   fs.mkdirSync(path.dirname(manifestPath(gameDir)), { recursive: true });
   fs.writeFileSync(manifestPath(gameDir), JSON.stringify(manifest));
   const chosen = { path: exe, name, bitness: 64, api: 'dx12', apiResolution: { api: 'dx12' } };
@@ -78,6 +81,7 @@ test('REFramework NR edits and 0.4.7 defaults target the effective storage INI a
   assert.match(fs.readFileSync(path.join(f.storage, 'nr_before_sr.ini'), 'utf8'), /Style=1/);
   await f.service.applyDefault('ref-game');
   assert.equal((await f.service.readNrSettings('ref-game')).Intensity, 1.2);
+  assert.equal((await f.service.readNrSettings('ref-game')).coreIdentity.identityStatus, 'verified');
   assert.deepEqual(fs.readFileSync(path.join(f.gameDir, 'nr_before_sr.ini')), rootBefore);
   await f.service.writeGameHotkey('ref-game', 'reshade', { key: 187, ctrl: true, shift: false, alt: false });
   assert.equal((await f.service.readGameHotkeys('ref-game')).reshade.key, 187);
@@ -98,8 +102,24 @@ test('an interrupted REFramework operation exposes the dedicated recovery route'
   assert.deepEqual(f.calls.map(row => row[0]), ['recover']);
 });
 
+test('an active REFramework Core mirror cannot borrow the root Core identity after its bytes diverge', async t => {
+  const f = fixture(t); await f.service.boot();
+  const core = 'nr-before-sr.zh-CN.addon64', mirror = path.join(f.storage, core);
+  fs.copyFileSync(path.join(f.gameDir, core), mirror);
+  const same = await f.service.readNrSettings('ref-game');
+  assert.equal(same.coreIdentity.identityStatus, 'verified'); assert.equal(same.coreIdentity.corePath, mirror);
+  fs.writeFileSync(mirror, 'different synthetic cached Core');
+  const changed = await f.service.readNrSettings('ref-game');
+  assert.equal(changed.coreIdentity.identityStatus, 'changed'); assert.equal(changed.contract.known, false);
+  const before = fs.readFileSync(path.join(f.storage, 'nr_before_sr.ini'));
+  await assert.rejects(f.service.applyDefault('ref-game'), { code: 'ERR_BAD_REQUEST' });
+  assert.deepEqual(fs.readFileSync(path.join(f.storage, 'nr_before_sr.ini')), before);
+});
+
 test('one-click install prepares detected REFramework automatically and existing upgrades prepare ownership first', async t => {
-  const fresh = fixture(t); fs.unlinkSync(manifestPath(fresh.gameDir)); await fresh.service.boot();
+  const fresh = fixture(t);
+  for (const file of [manifestPath(fresh.gameDir), ...['nr-before-sr.zh-CN.addon64', 'nr_before_sr.ini', 'ReShade.ini'].map(name => path.join(fresh.gameDir, name))]) fs.unlinkSync(file);
+  await fresh.service.boot();
   const result = await fresh.service.install('ref-game', { version: '0.4.7beta' });
   assert.equal(result.installed, true); assert.equal(result.reframework.ready, true);
   assert.deepEqual(fresh.order, ['native-install', 'prepare']);
@@ -112,7 +132,9 @@ test('one-click install prepares detected REFramework automatically and existing
 });
 
 test('automatic compatibility failure preserves the completed native result and exposes the exact error', async t => {
-  const f = fixture(t); fs.unlinkSync(manifestPath(f.gameDir)); await f.service.boot();
+  const f = fixture(t);
+  for (const file of [manifestPath(f.gameDir), ...['nr-before-sr.zh-CN.addon64', 'nr_before_sr.ini', 'ReShade.ini'].map(name => path.join(f.gameDir, name))]) fs.unlinkSync(file);
+  await f.service.boot();
   f.failPreparation(Object.assign(new Error('兼容文件被占用'), { code: 'REF_TARGET_BUSY' }));
   const result = await f.service.install('ref-game', { version: '0.4.7beta' });
   assert.equal(result.installed, true); assert.equal(result.reframework.ready, false);

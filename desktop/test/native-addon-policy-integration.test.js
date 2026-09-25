@@ -86,6 +86,7 @@ test('native install isolates only unknown active addons, preserves inactive sub
   assert.ok(fs.existsSync(path.join(f.exeDir, INSTALLED_NAMES.addon))); assertNoPending(f);
   await f.restore();
   for (const [file, bytes] of before) assert.deepEqual(fs.readFileSync(file), bytes);
+  assert.deepEqual(fs.readFileSync(path.join(f.gameDir, conflict.backupRel)), before.get(active), 'uninstall restores without consuming the conflict archive');
   assert.equal(fs.existsSync(path.join(f.exeDir, INSTALLED_NAMES.addon)), false); assertNoPending(f);
 });
 

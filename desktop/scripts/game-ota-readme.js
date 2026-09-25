@@ -28,7 +28,7 @@ HoYo：只以管理器当前游戏页面显示并核验的活动运行目录为�
 
 桥接器与补帧
 原生 DX11 默认是 NIGos Bridge 1.4.12 的本项目 NR 适配版。1.4.11 回退材料放在“独立组件/桥接器回退”，仅供明确需要回退时替换同名桥接器；不要将回退目录整体复制到 Addon 加载路径。原生 DX12 不安装 DX11 桥接器。
-“独立组件/RTX40-MFGUnlock-0.7-zh-CN.zip”是独立补帧解锁组件，按其中说明单独操作。原生 DLSS FG 必须已可用；安装此组件不会让不支持 FG 的游戏自动获得 FG。40 系列真实游戏倍帧及其与 NR 联用仍待用户实测。
+“独立组件/RTX40-MFGUnlock”提供官方 1.0 默认版与 0.9 回退版，来源为 https://github.com/mavismmg/MFGAdaUnlock-RenoDx/ 。旧 0.7 不进入新包，也不提供回退。原生 DLSS FG 必须已可用；安装此组件不会让不支持 FG 的游戏自动获得 FG。优先通过管理器预览、安装和恢复，手工安装仅供了解明确加载目录的用户。
 
 回退
 退出游戏后，移出本次新增组件，恢复更新前完整组件组与个人配置。若由管理器接管，使用管理器还原，保留备份和收据；不要在其下方手动替换文件。
@@ -58,6 +58,10 @@ function routeReadme(route) {
   return lines.join('\n');
 }
 
+function mfgReadme(provider) {
+  return `MFG Unlock ${provider.version}（RTX 40）\n\n来源：${provider.sourceRepository}\n下载：${provider.sourceUrl}\n\n这是官方 ${provider.version} Add-on 的中文安装说明，不是修改版二进制。管理器默认推荐 1.0，0.9 仅用于明确回退；管理器会核对显卡、DirectX 12、驱动、DLSS-G 与 Streamline 条件并提供可恢复安装。\n\n不要安装旧 0.7，也不要同时加载多个 MFG Unlock。游戏本身必须已有可用的原生 DLSS 帧生成；此组件不会为不支持 FG 的游戏凭空增加 FG。Dynamic 倍率只有在驱动 595.41+、DLSS-G 310.9.1、Streamline 2.14.1 且运行时确实报告支持时才可用；条件不明时保持固定倍率。任何检测或组件问题都不应阻止普通启动游戏，可先关闭 MFG 后启动。\n\n手工安装前必须完全退出游戏，把 renodx-mfgunlock.addon64 放到实际生效的 ReShade Add-on 目录。要删除时移出该文件并清理 ReShade.ini 的 [RenoDX.MFGUnlock] 配置；管理器接管的安装请用“恢复/卸载”，不要手动破坏收据。\n\nSHA-256：${provider.sha256}\n`;
+}
+
 function localFeederConfig(defaults) {
   return ensureDefaultReShadeHotkey(`[ADDON]\nAddonPath=.\\_DLSS5_Feeder15\\addons\n[GENERAL]\nEffectSearchPaths=.\\_DLSS5_Feeder15\\reshade-shaders\\Shaders\\**\nTextureSearchPaths=.\\_DLSS5_Feeder15\\reshade-shaders\\Textures\\**\nPresetPath=.\\_DLSS5_Feeder15\\ReShadePreset.ini\nPreprocessorDefinitions=${defaults.definitions}\n`);
 }
@@ -65,4 +69,4 @@ function hoyoFeederConfig(defaults) {
   return ensureDefaultReShadeHotkey(`[ADDON]\nAddonPath=.\\\n[GENERAL]\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\**\nTextureSearchPaths=.\\reshade-shaders\\Textures\\**\nPresetPath=.\\ReShadePreset.ini\nPreprocessorDefinitions=${defaults.definitions}\n`);
 }
 
-module.exports = { overview, routeReadme, localFeederConfig, hoyoFeederConfig };
+module.exports = { overview, routeReadme, mfgReadme, localFeederConfig, hoyoFeederConfig };

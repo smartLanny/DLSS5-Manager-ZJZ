@@ -9,7 +9,10 @@ const idRows = [...html.matchAll(/\bid=["']([^"']+)["']/g)].map(match => match[1
 const ids = new Set(idRows);
 const duplicates = [...new Set(idRows.filter((id, index) => idRows.indexOf(id) !== index))];
 const references = new Set([...renderer.matchAll(/\$\('([^']+)'\)/g)].map(match => match[1]));
-const missing = [...references].filter(id => !ids.has(id));
+// Renderer-owned notices intentionally create short-lived controls from fixed
+// template strings. Count those declared IDs as part of the same UI contract.
+const dynamicIds = new Set([...renderer.matchAll(/\bid=["']([^"']+)["']/g)].map(match => match[1]));
+const missing = [...references].filter(id => !ids.has(id) && !dynamicIds.has(id));
 
 if (duplicates.length || missing.length) {
   if (duplicates.length) console.error(`Duplicate HTML ids: ${duplicates.join(', ')}`);

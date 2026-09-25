@@ -23,9 +23,9 @@ when automatically rolling back could erase a newly appeared external file.
 REFramework recovery validates that ownership before using the shared journal.
 The upstream submodule remains at the original revision and is not patched.
 
-## Manager 0.4.8-beta.3 component boundaries
+## Manager 0.5.0-beta.2 component boundaries
 
-Manager `0.4.8-beta.3` / Windows build `0.4.8.3` keeps the existing foundation
+Manager `0.5.0-beta.2` / Windows build `0.5.0.2` keeps the existing foundation
 above and independently pins the following runtime components. A manager version
 does not change the Core, bridge, provider or GPU-specific runtime identity.
 
@@ -36,7 +36,7 @@ does not change the Core, bridge, provider or GPU-specific runtime identity.
 | ReShade | [6.8.0 full Add-on runtime](https://reshade.me/), BSD 3-Clause | Official x86/x64 bytes are pinned independently; the manager chooses the actual loader architecture. |
 | VORT | [`b410b9f0`](https://github.com/vortigern11/vort_Shaders/tree/b410b9f0c0fbb83c8cb42164aaf1655fab386f4a), MIT plus per-file CC BY-NC 4.0 | The required pixel-pass closure and original notices are retained; estimates remain Synthetic rather than native game motion vectors. |
 | HoYoShade | [V3.0.0-Beta.9 / `23761f93`](https://github.com/DuolaD/HoYoShade/tree/23761f935444a78388c028fbfda921965177c453), BSD 3-Clause | Configuration reference only; manager-owned profile/helper, verified launcher binding and official ReShade. Upstream injector/INI builder are not run or redistributed. |
-| MFG Unlock | [0.7 / `ffe6169b`](https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/0.7), MIT; [0.6.1](https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/0.6.1) fallback | Source-built simplified Chinese 0.7 is the default; official 0.7 and 0.6.1 remain independently pinned alternatives. Only one provider is active. |
+| MFG Unlock | [0.9 / `4a7b7bcd`](https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/0.9), MIT | Official 0.9 is the only new-install provider. Historical 0.7/0.6.1 digests are retained solely to restore old managed receipts and are not selectable or packaged. |
 | NIGos DX11 companion | NR-adapted 1.4.12 default / 1.4.11 fallback | Project-specific hashes and Core pairing in `src/product/component-registry.js`; a same-number upstream DLL is not a drop-in replacement. |
 
 The DX9 shim and relay are project-owned source. They use the Windows system

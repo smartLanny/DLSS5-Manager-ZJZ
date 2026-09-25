@@ -15,11 +15,23 @@ contextBridge.exposeInMainWorld('manager', Object.freeze({
   inspectComponentProviders: () => invoke('components-providers'),
   selectComponentProvider: id => invoke('components-provider-select', id),
   pickComponent: directory => invoke('components-pick', directory === true),
+  pickRuntimeDlc: () => invoke('components-runtime-pick'),
   activateComponentRuntime: id => invoke('components-runtime-activate', id),
   activateComponentCore: id => invoke('components-core-activate', id),
+  moveComponentLibrary: () => invoke('components-storage-pick'),
   componentChoices: id => invoke('game-components', id),
+  setUserAddon: (id, componentId, enabled) => invoke('game-user-addon-set', id, componentId, enabled === true),
   checkComponentUpdates: () => invoke('components-updates'),
   downloadComponent: id => invoke('components-download', id),
+  checkManagerUpdate: () => invoke('manager-update-check'),
+  prepareManagerUpdate: manifest => invoke('manager-update-prepare', manifest),
+  cancelManagerUpdate: () => invoke('manager-update-cancel'),
+  applyManagerUpdate: () => invoke('manager-update-apply'),
+  onManagerUpdateProgress: callback => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('manager-update-progress', listener);
+    return () => ipcRenderer.removeListener('manager-update-progress', listener);
+  },
   applyBridgeComponent: (id, bridge) => invoke('game-component-apply', id, bridge),
   refresh: () => invoke('games-refresh'),
   listGames: () => invoke('games-list'),
@@ -45,7 +57,7 @@ contextBridge.exposeInMainWorld('manager', Object.freeze({
   hoyoPickGame: () => invoke('hoyo-pick-game'),
   hoyoPickLauncher: id => invoke('hoyo-pick-launcher', id),
   hoyoBind: (id, input) => invoke('hoyo-bind', id, input),
-  hoyoPreview: (id, action) => invoke('hoyo-preview', id, action),
+  hoyoPreview: (id, action, options) => invoke('hoyo-preview', id, action, options),
   hoyoApply: (id, planId, consent) => invoke('hoyo-apply', id, planId, consent),
   hoyoRecover: id => invoke('hoyo-recover', id),
   hoyoStart: id => invoke('hoyo-start', id),
@@ -57,9 +69,24 @@ contextBridge.exposeInMainWorld('manager', Object.freeze({
   repair: (id, options) => invoke('game-repair', id, options),
   upgradeAddon: (id, version, options) => invoke('game-upgrade-addon', id, version, options),
   dismissGame: id => invoke('game-dismiss', id),
-  removeGame: id => invoke('game-library-remove', id),
+  removeGame: (id, options) => options === undefined ? invoke('game-library-remove', id) : invoke('game-library-remove', id, options),
+  previewDeploymentRescue: (id, mode = 'repair') => invoke('game-deployment-rescue-preview', id, mode),
+  applyDeploymentRescue: (id, planId, consent) => invoke('game-deployment-rescue-apply', id, planId, consent),
   renameGame: (id, name) => invoke('game-rename', id, name),
   setGameApi: (id, api, options) => invoke('game-api-set', id, api, options),
+  setGameApiPreference: (id, api) => invoke('game-api-preference', id, api),
+  requestOperation: (id, request, consent) => invoke('game-operation-submit', id, request, consent),
+  cancelWaitingOperation: id => invoke('game-operation-cancel-waiting', id),
+  onWaitingOperation: callback => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('waiting-operation-updated', listener);
+    return () => ipcRenderer.removeListener('waiting-operation-updated', listener);
+  },
+  onOperationProgress: callback => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('operation-progress', listener);
+    return () => ipcRenderer.removeListener('operation-progress', listener);
+  },
   applyGameRoute: (id, options) => invoke('game-route-apply', id, options),
   prepareGame: (id, options) => invoke('game-prepare-all', id, options),
   inspectPreparation: id => invoke('game-preparation-inspect', id),

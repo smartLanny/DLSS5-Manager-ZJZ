@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { PAYLOAD_FILES, DX11_COMPAT_CARRIER } = require('./constants');
 const { FAMILIES } = require('./gpu');
 const { appError } = require('./errors');
+const companionPolicy = require('./payload-companions');
 
 const OPTIONAL_PAYLOAD_FILES = Object.freeze({
   carrier: DX11_COMPAT_CARRIER
@@ -57,10 +58,11 @@ function validateBundlePaths(bundle) {
   if (bundle.version === 3 || bundle.version === 4) {
     const ids = Object.keys(bundle.versions);
     if (!ids.length || ids.length > 64 || ids.some(id => !VERSION_ID.test(id)) || !VERSION_ID.test(bundle.defaultVersion || '') || !Object.hasOwn(bundle.versions, bundle.defaultVersion)) throw appError('ERR_PAYLOAD_HASH', { file: 'bundle.json' });
-    for (const entry of Object.values(bundle.versions)) {
+    for (const [id, entry] of Object.entries(bundle.versions)) {
       if (!entry || typeof entry !== 'object' || (bundle.version === 3
         ? FAMILIES.some(family => !hashMap(entry.variants?.[family]?.files))
         : !hashMap(entry.files))) throw appError('ERR_PAYLOAD_HASH', { file: 'bundle.json' });
+      if (bundle.version === 4) companionPolicy.validateMap(entry.companions, id);
     }
     if (bundle.version === 4 && FAMILIES.some(family => !hashMap(bundle.fixed?.[family]?.files))) throw appError('ERR_PAYLOAD_HASH', { file: 'bundle.json' });
   }
@@ -71,12 +73,12 @@ function sha256(file) {
   return require('./streaming-digest-sync').sha256(file);
 }
 
-function inspectionHasher() {
+function inspectionHasher(onFileInspect) {
   const values = new Map();
   return file => {
     const resolved = path.resolve(file);
     const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-    if (!values.has(key)) values.set(key, sha256(resolved));
+    if (!values.has(key)) { if (typeof onFileInspect === 'function') onFileInspect(resolved); values.set(key, sha256(resolved)); }
     return values.get(key);
   };
 }
@@ -98,7 +100,7 @@ function readBundle(dir) {
   if (!legacy && !variants && !versions) {
     throw appError('ERR_PAYLOAD_HASH', { file: 'bundle.json' });
   }
-  return validateBundlePaths(bundle);
+  return require('./known-core-interfaces').reconcileBundle(validateBundlePaths(bundle));
 }
 
 function inspectFiles(dir, expectedFiles, digest = sha256, safetyRoot = dir) {
@@ -175,6 +177,9 @@ function inspectCompactVersion(root, id, entry, fixed, digest = sha256, families
       addon: path.join(versionDir, PAYLOAD_FILES.addon),
       config: path.join(versionDir, PAYLOAD_FILES.config)
     }, digest, root);
+    for (const [name, expectedHash] of Object.entries(companionPolicy.validateMap(entry.companions, id))) {
+      files.push(inspectOptionalFile(path.join(versionDir, name), expectedHash, 'companion', name, digest, root));
+    }
     variants[family] = {
       dir: versionDir,
       files,
@@ -217,7 +222,7 @@ function inspectPayload(dir, options = {}) {
   // each physical path once per inspection while keeping every invocation
   // fresh for requirePayload and mutation-time validation.
   dir = payloadDirectory(dir);
-  const digest = inspectionHasher();
+  const digest = inspectionHasher(options.onFileInspect);
   let bundle = null;
   try { bundle = readBundle(dir); }
   catch (error) {
@@ -299,7 +304,9 @@ function requirePayload(dir, hardwareFamily, version) {
   if (result.versions && !result.selectedVersion) throw appError('ERR_PAYLOAD_MISSING', { file: 'bundle.versions' });
   if (result.missing.length) throw appError('ERR_PAYLOAD_MISSING', { files: result.missing });
   if (!result.ready) throw appError('ERR_PAYLOAD_HASH', { files: result.invalid });
-  const payload = Object.fromEntries(result.files.map(row => [row.kind, row]));
+  const payload = Object.fromEntries(result.files.filter(row => row.kind !== 'companion').map(row => [row.kind, row]));
+  const companions = result.files.filter(row => row.kind === 'companion');
+  if (companions.length) payload.companions = companions;
   payload.hardwareFamily = hardwareFamily || null;
   payload.version = result.selectedVersion || null;
   payload.versionInfo = result.versions && result.versions[result.selectedVersion]
@@ -369,9 +376,18 @@ function createCompactBundle(dir, entries, defaultVersion) {
     if (fs.existsSync(bridge)) files[PAYLOAD_FILES.bridge] = sha256(bridge);
     const carrier = path.join(base, OPTIONAL_PAYLOAD_FILES.carrier);
     if (fs.existsSync(carrier)) files[OPTIONAL_PAYLOAD_FILES.carrier] = sha256(carrier);
+    const companions = {};
+    if (companionPolicy.required(id) || companionPolicy.NAMES.some(name => fs.existsSync(path.join(base, name)))) {
+      for (const name of companionPolicy.NAMES) {
+        const file = safePayloadPath(dir, path.join(base, name));
+        if (!fs.existsSync(file)) throw appError('ERR_PAYLOAD_MISSING', { file: `versions/${id}/${name}` });
+        companions[name] = sha256(file);
+      }
+    }
     return [id, { label: entry.label || id, notes: entry.notes || '', source: entry.source || '', compatibility: entry.compatibility || null, ota: Boolean(entry.ota),
       ...(entry.coreUpdateOnly === true ? { coreUpdateOnly: true } : {}),
-      ...(entry.comparisonOnly === true ? { comparisonOnly: true } : {}), files }];
+      ...(entry.comparisonOnly === true ? { comparisonOnly: true } : {}), files,
+      ...(Object.keys(companions).length ? { companions } : {}) }];
   }));
   return { version: 4, generatedAt: new Date().toISOString(), defaultVersion, fixed, versions };
 }

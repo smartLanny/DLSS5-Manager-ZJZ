@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { Worker } = require('node:worker_threads');
 const { inspectPayload } = require('./payload');
 
 const clone = value => structuredClone(value);
@@ -52,19 +53,50 @@ function complete(result) {
 function createPayloadInspectionCache(options = {}) {
   const maximum = Number.isInteger(options.maxEntries) && options.maxEntries > 0 ? Math.min(options.maxEntries, 32) : 8;
   const entries = new Map();
+  const pending = new Map(); let generation = 0;
   function keyFor(dir, inspectOptions) {
-    return JSON.stringify([pathKey(dir), Boolean(inspectOptions.allowMissingBundle), inspectOptions.hardwareFamily || null, inspectOptions.version || null]);
+    return JSON.stringify([pathKey(dir), Boolean(inspectOptions.allowMissingBundle), inspectOptions.hardwareFamily || null, inspectOptions.version || null, Boolean(inspectOptions.selectedOnly)]);
   }
   function touch(key, entry) { entries.delete(key); entries.set(key, entry); }
   function trim() { while (entries.size > maximum) entries.delete(entries.keys().next().value); }
+  function cachedResult(key) {
+    const entry = entries.get(key);
+    if (!entry) return null;
+    if (!sameFingerprint(fingerprint(entry.files), entry.fingerprint)) { entries.delete(key); return null; }
+    touch(key, entry); return clone(entry.result);
+  }
   return Object.freeze({
+    prime(dir, inspectOptions = {}) {
+      const key = keyFor(dir, inspectOptions), cached = cachedResult(key);
+      if (cached) return Promise.resolve(cached);
+      if (pending.has(key)) return pending.get(key).then(clone);
+      const epoch = generation;
+      const task = new Promise((resolve, reject) => {
+        const worker = new Worker(options.workerFile || path.join(__dirname, 'payload-inspection-worker.js'), {
+          workerData: { dir: path.resolve(dir), options: { allowMissingBundle: inspectOptions.allowMissingBundle === true,
+            hardwareFamily: inspectOptions.hardwareFamily, version: inspectOptions.version, selectedOnly: inspectOptions.selectedOnly === true } } });
+        let settled = false;
+        const finish = (error, result) => { if (settled) return; settled = true; void worker.terminate(); error ? reject(error) : resolve(result); };
+        worker.once('message', message => {
+          if (!message?.ok) { finish(Object.assign(new Error(message?.error?.message || '组件检查未完成。'), message?.error)); return; }
+          try {
+            const { result, files, states } = message;
+            if (!sameFingerprint(fingerprint(files), states)) throw Object.assign(new Error('组件在检查期间发生变化，请重新检查。'), { code: 'ERR_PAYLOAD_SOURCE_CHANGED' });
+            if (epoch === generation && complete(result)) { touch(key, { files, fingerprint: states, result: clone(result) }); trim(); }
+            finish(null, clone(result));
+          } catch (error) { finish(error); }
+        });
+        worker.once('error', error => finish(error));
+        worker.once('messageerror', error => finish(error));
+        worker.once('exit', code => { if (!settled) finish(Object.assign(new Error(`组件检查线程已退出（${code}）。`), { code: 'ERR_PAYLOAD_INSPECTION_WORKER' })); });
+      });
+      pending.set(key, task);
+      task.then(() => { if (pending.get(key) === task) pending.delete(key); }, () => { if (pending.get(key) === task) pending.delete(key); });
+      return task.then(clone);
+    },
     inspect(dir, inspectOptions = {}) {
-      const key = keyFor(dir, inspectOptions), cached = entries.get(key);
-      if (cached) {
-        const current = fingerprint(cached.files);
-        if (sameFingerprint(current, cached.fingerprint)) { touch(key, cached); return clone(cached.result); }
-        entries.delete(key);
-      }
+      const key = keyFor(dir, inspectOptions), cached = !inspectOptions.fresh && cachedResult(key);
+      if (cached) return cached;
       // A split base package intentionally has absent runtime files. Their
       // missing state participates in the fingerprint, so importing them
       // invalidates the UI snapshot. Corrupt files and exceptions are not cached.
@@ -77,6 +109,7 @@ function createPayloadInspectionCache(options = {}) {
       return clone(result);
     },
     invalidate(dir) {
+      generation++; pending.clear();
       if (dir === undefined) { entries.clear(); return; }
       const root = pathKey(dir);
       for (const [key] of entries) if (JSON.parse(key)[0] === root) entries.delete(key);
@@ -84,4 +117,4 @@ function createPayloadInspectionCache(options = {}) {
   });
 }
 
-module.exports = { createPayloadInspectionCache };
+module.exports = { createPayloadInspectionCache, referencedFiles, fileState, sameFingerprint };

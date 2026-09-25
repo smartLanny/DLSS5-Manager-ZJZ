@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createLibraryService, steamArtworkFor, normalizeUnityDynamicApi } = require('../src/product/library-service');
+const { INSTALLED_NAMES } = require('../src/product/constants');
 
 function absRoot(...parts) {
   return path.resolve(path.sep, 'abs-games', ...parts);
@@ -94,6 +95,24 @@ test('manual executable selection keeps the chosen deep game exe and metadata', 
   assert.equal(rows[0].supported, true);
   assert.equal(rows[0].name, '自定义名称');
   assert.match(rows[0].icon, /^data:/);
+});
+
+test('an exact pre-existing Core stays unowned but is exposed for conflict preview', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-unmanaged-library-'));
+  try {
+    const executable = path.join(root, 'Binaries', 'Win64', 'Game.exe');
+    fs.mkdirSync(path.dirname(executable), { recursive: true }); fs.writeFileSync(executable, 'exe');
+    fs.writeFileSync(path.join(path.dirname(executable), INSTALLED_NAMES.addon), 'old unmanaged core');
+    const scan = { async scanGame() { return scanFixture(root, true); }, selectPrimaryDlss(files) { return files[0]; } };
+    const library = createLibraryService({ scan, library: {
+      discover: () => ({ games: [{ launcher: '本地游戏', dir: root, name: 'Existing Core' }], roots: [] }), dedupe: rows => rows
+    } });
+    const rows = await library.scanAll({ scanFolders: [], scanDrives: false, excludedRoots: [], excludedGames: [], manualGames: [], manualExecutables: [], gameOverrides: {} });
+    assert.equal(rows[0].installed, false, 'ownership still requires a valid manager receipt');
+    assert.equal(rows[0].existingInstallation.detected, true);
+    assert.equal(rows[0].existingInstallation.corePresent, true);
+    assert.equal(rows[0].existingInstallation.version, null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('does not treat the manager NR runtime as the game native DLSS root', async () => {

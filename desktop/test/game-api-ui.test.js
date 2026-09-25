@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../src/renderer/renderer.js'), 'utf8');
+const gamePageSource = fs.readFileSync(path.join(__dirname, '../src/renderer/game-page-ui.js'), 'utf8');
 const operationApiSource = fs.readFileSync(path.join(__dirname, '../src/shared/api-resolution.js'), 'utf8');
 const product = JSON.parse(fs.readFileSync(path.join(__dirname, '../product.json'), 'utf8'));
 
@@ -15,6 +16,27 @@ test('DXGI awaiting confirmation is never labeled temporarily unsupported', () =
   context.game = { supported: false, installed: false, supportCode: 'ERR_API_SELECTION_REQUIRED' };
   const html = vm.runInContext('supportBadge(game)', context);
   assert.match(html, /API 待确认/); assert.doesNotMatch(html, /暂不支持/);
+});
+
+test('an unmanaged existing Core is visible before opening its required preview', () => {
+  const context = { state: { expanded: null }, escapeHtml: String, inlineGameDetails: new Map(), window: { manager: { assessGame() {} } } }; vm.createContext(context);
+  runRouteHelpers(context, 'function hardwareLabel(');
+  vm.runInContext(source.slice(source.indexOf('function cardAction('), source.indexOf('const API_LABELS')), context);
+  context.game = { supported: true, installed: false, existingInstallation: { detected: true } };
+  assert.match(vm.runInContext('supportBadge(game)', context), /已有插件待确认/);
+  const action = vm.runInContext('cardAction(game)', context);
+  assert.match(action, /检查已有安装/); assert.doesNotMatch(action, /安装与设置/);
+  assert.match(action, /unified-launch-btn[^>]*>应用/);
+  assert.doesNotMatch(action, /rename-game-btn|>改名</);
+});
+
+test('modern cards offer Apply before installation and keep rename inside expanded advanced controls', () => {
+  const context = { state: { expanded: null }, escapeHtml: String, inlineGameDetails: new Map(), window: { manager: { assessGame() {} } } }; vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('function cardAction('), source.indexOf('const API_LABELS')), context);
+  const html = vm.runInContext("cardAction({ installed:false, existingInstallation:{detected:false} })", context);
+  assert.match(html, /^<button[^>]*unified-launch-btn[^>]*>应用<\/button><button[^>]*open-game-page-btn[^>]*>安装与设置<\/button>$/);
+  assert.match(gamePageSource, /act\('rename-game', '修改游戏名称'/);
+  assert.match(source, /onRename: gameId => confirmRenameGame\(gameId\)/);
 });
 
 function uiContext() {
@@ -314,7 +336,7 @@ test('rename modal saves entered names and cancel leaves the manager untouched',
     modal: { classList: classList() }, modalTitle: { textContent: '' }, modalBody: { textContent: '' },
     renameGameLine: { classList: classList() }, renameGameInput: { value: '', focus() {}, select() {} },
     removeSettingsLine: { classList: classList() }, removeSettingsCheck: { checked: false },
-    modalConfirm: { textContent: '', disabled: false, onclick: null, click() { return this.onclick?.(); } },
+    modalConfirm: { textContent: '', disabled: false, onclick: null, classList: classList(), click() { return this.onclick?.(); } },
     modalCancel: { onclick: null }
   };
   const calls = [], notices = [];
@@ -325,6 +347,8 @@ test('rename modal saves entered names and cancel leaves the manager untouched',
     window: { manager: { renameGame: async (...args) => { calls.push(args); return { ok: true, value: [] }; } } },
     runAction: async work => work()
   };
+  context.showOverlay = element => element?.classList.remove('is-closing', 'hidden');
+  context.hideOverlay = element => element?.classList.add('hidden');
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../src/shared/api-resolution.js"), "utf8"), context);
   vm.runInContext(source.slice(source.indexOf('function confirmRenameGame('), source.indexOf('async function dismissGameFromList(')), context);

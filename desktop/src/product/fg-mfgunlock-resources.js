@@ -6,8 +6,8 @@ const PIN_CATALOG = require('./fg-mfgunlock-providers.json');
 
 const HASH = /^[a-f0-9]{64}$/;
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
-if (PIN_CATALOG.schemaVersion !== 1 || typeof PIN_CATALOG.backend !== 'string' || typeof PIN_CATALOG.defaultProvider !== 'string' ||
-    typeof PIN_CATALOG.addon !== 'string' || !Array.isArray(PIN_CATALOG.providers) || PIN_CATALOG.providers.length < 1)
+if (PIN_CATALOG.schemaVersion !== 2 || typeof PIN_CATALOG.backend !== 'string' || typeof PIN_CATALOG.defaultProvider !== 'string' ||
+    typeof PIN_CATALOG.addon !== 'string' || !Array.isArray(PIN_CATALOG.providers) || PIN_CATALOG.providers.length < 1 || !Array.isArray(PIN_CATALOG.legacyProviders))
   throw new Error('MFG Unlock provider pin catalog is invalid.');
 const BACKEND = PIN_CATALOG.backend;
 const ID = PIN_CATALOG.defaultProvider;
@@ -19,17 +19,24 @@ const PROVIDERS = Object.freeze(PIN_CATALOG.providers.map(row => {
     licenseSha256: files.license?.sha256, origin: row.origin || source.origin, addonOnly: Object.keys(files).length === 1,
     sourceRepository: source.repository, sourceUrl: source.url });
 }));
+const LEGACY_PROVIDERS = Object.freeze(PIN_CATALOG.legacyProviders.map(row => Object.freeze({
+  id: row.id, version: row.version, sha256: row.sha256, recoveryOnly: true
+})));
 if (!PROVIDERS.every(row => typeof row.id === 'string' && typeof row.version === 'string' && row.sha256 && HASH.test(row.sha256) &&
     row.origin && row.directory !== undefined) || new Set(PROVIDERS.map(row => row.id)).size !== PROVIDERS.length || !PROVIDERS.some(row => row.id === ID))
   throw new Error('MFG Unlock provider pin catalog contains an invalid provider.');
+if (!LEGACY_PROVIDERS.every(row => typeof row.id === 'string' && typeof row.version === 'string' && HASH.test(row.sha256)) ||
+    new Set([...PROVIDERS, ...LEGACY_PROVIDERS].map(row => row.id)).size !== PROVIDERS.length + LEGACY_PROVIDERS.length)
+  throw new Error('MFG Unlock legacy recovery catalog contains an invalid provider.');
 const DEFAULT_PROVIDER = PROVIDERS.find(row => row.id === ID);
 const SOURCE_BUILD_PROVIDER = PROVIDERS.find(row => row.origin === 'source-build') || null;
 const SHA256 = DEFAULT_PROVIDER.sha256;
 const SOURCE_BUILD_ID = SOURCE_BUILD_PROVIDER?.id || null;
 const SOURCE_BUILD_SHA256 = SOURCE_BUILD_PROVIDER?.sha256 || null;
 const LICENSE_SHA256 = PROVIDERS.find(row => row.licenseSha256)?.licenseSha256 || null;
-const knownProviderForHash = hash => PROVIDERS.find(row => row.sha256 === hash) || null;
+const knownProviderForHash = hash => [...PROVIDERS, ...LEGACY_PROVIDERS].find(row => row.sha256 === hash) || null;
 const providerById = id => PROVIDERS.find(row => row.id === id) || null;
+const recoveryProviderById = id => providerById(id) || LEGACY_PROVIDERS.find(row => row.id === id) || null;
 function readMfgUnlockResources(root, providerId = ID) {
   const fail = message => { throw Object.assign(new Error(message), { code: 'SETTINGS_FG_RESOURCES' }); };
   const selected = providerById(providerId); if (!selected) fail('未知 MFG Unlock 版本。');
@@ -80,4 +87,5 @@ function readMfgUnlockCatalog(root) {
     catch (error) { return { ...row, available: false, ready: false, blocker: error.message }; }
   });
 }
-module.exports = { ID, BACKEND, ADDON, SHA256, SOURCE_BUILD_ID, SOURCE_BUILD_SHA256, HASH, PROVIDERS, sha256, providerById, knownProviderForHash, readMfgUnlockResources, readMfgUnlockCatalog };
+module.exports = { ID, BACKEND, ADDON, SHA256, SOURCE_BUILD_ID, SOURCE_BUILD_SHA256, HASH, PROVIDERS, LEGACY_PROVIDERS, sha256,
+  providerById, recoveryProviderById, knownProviderForHash, readMfgUnlockResources, readMfgUnlockCatalog };

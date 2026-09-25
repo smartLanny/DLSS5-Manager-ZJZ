@@ -21,7 +21,7 @@ function fail(code, message, details) { throw Object.assign(new Error(message), 
 
 function createMfgUnlockComponents(options = {}) {
   const providerLibrary = require('./mfg-provider-library').createMfgProviderLibrary(options);
-  const { providerById, knownProviderForHash, readMfgUnlockResources, readMfgUnlockCatalog } = providerLibrary;
+  const { providerById, recoveryProviderById, knownProviderForHash, readMfgUnlockResources, readMfgUnlockCatalog } = providerLibrary;
   if (typeof options.gameDirectory !== 'function' || typeof options.gameExecutable !== 'function') fail('SETTINGS_FG_INIT', 'FG 组件服务缺少游戏路径依赖。');
   const journal = options.journal || journalDefault, pe = options.pe || peDefault;
   const guards = options.guards || createInstallGuards();
@@ -103,7 +103,7 @@ function createMfgUnlockComponents(options = {}) {
     catch { fail('SETTINGS_FG_RECEIPT', 'FG 组件恢复记录损坏。'); }
     if (value?.version === 1) return value;
     const row = value?.files?.[0];
-    const provider = providerById(value?.id), old = value?.version === 2;
+    const provider = recoveryProviderById(value?.id), old = value?.version === 2;
     if (![2, 3].includes(value?.version) || value.backend !== BACKEND || !provider || old && value.id !== 'mfgunlock-0.6.1' || !same(value.exe, t.exe) ||
         !Array.isArray(value.files) || value.files.length !== 1 || row?.role !== 'addon' ||
         row.rel !== path.relative(t.game, path.join(t.dir, ADDON)) || !(old ? ['created', 'adopted'] : ['created', 'adopted', 'replaced']).includes(row.mode) ||
@@ -111,7 +111,7 @@ function createMfgUnlockComponents(options = {}) {
     if (row.mode === 'replaced') {
       const original = row.original;
       if (!/^_DLSS5_Backup\/\.fg-originals\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/addon\.bin$/.test(original?.snapshot || '') ||
-          !knownProviderForHash(original?.sha256) || providerById(original?.providerId)?.sha256 !== original.sha256)
+          !knownProviderForHash(original?.sha256) || recoveryProviderById(original?.providerId)?.sha256 !== original.sha256)
         fail('SETTINGS_FG_RECEIPT', 'MFG 原组件快照身份无效。');
       await noLinks(journal.safePath(t.game, original.snapshot));
     } else if (row.original !== undefined) fail('SETTINGS_FG_RECEIPT', 'MFG 组件归属与原件记录不一致。');

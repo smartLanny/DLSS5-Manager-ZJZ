@@ -74,6 +74,36 @@ function fixture(t, controls = {}) {
     receipt: path.join(gameRoot, RECEIPT), pending: path.join(gameRoot, PENDING) };
 }
 
+test('waiting source verification pins the legacy recipe and never touches a running game', async t => {
+  const f = fixture(t); f.state.running = true;
+  const verified = await f.service.verifySource(f.game); assert.equal(verified.ready, true); assert.equal(verified.coreVersion, f.state.version);
+  assert.equal(exists(f.receipt), false); assert.equal(exists(f.pending), false);
+  assert.equal(fs.readFileSync(path.join(f.dir, 'ReShade.ini'), 'utf8'), f.original);
+  f.state.offline = true; await assert.rejects(f.service.verifySource(f.game), { code: 'POOL_OFFLINE' });
+  assert.equal(exists(f.layout.addonDirectory), false);
+});
+
+test('legacy transactions consume the verified shared-runtime path without changing receipt identity', async t => {
+  const f = fixture(t), shared = path.join(f.root, 'shared-dlc', 'runtime.dll');
+  f.runtime.verify = async value => {
+    const pkg = value?.recipe ? value : f.runtime.load(value), spec = pkg.recipe.files.find(row => row.role === 'nr-runtime');
+    f.runtime.validateStored(pkg.recipe);
+    const original = path.join(pkg.root, spec.source); fs.mkdirSync(path.dirname(shared), { recursive: true });
+    if (exists(original)) { fs.copyFileSync(original, shared); fs.unlinkSync(original); }
+    for (const item of pkg.recipe.files) assert.equal(hash(fs.readFileSync(item === spec ? shared : path.join(pkg.root, item.source))), item.sha256);
+    return { ...pkg, sources: { [spec.source]: shared } };
+  };
+  const preview = await f.service.previewInstall(f.game);
+  assert.equal(exists(f.receipt), false, 'preview cannot deploy the shared file');
+  await f.service.install(f.game, { expectedPlanId: preview.planId });
+  const saved = f.service.receipt(f.game), spec = saved.recipe.files.find(row => row.role === 'nr-runtime');
+  const target = saved.files.find(row => row.role === 'nr-runtime').path;
+  assert.equal(hash(fs.readFileSync(target)), spec.sha256); assert.equal(exists(path.join(f.pool, spec.source)), false);
+  assert.equal(JSON.stringify(saved.recipe).includes(shared), false, 'portable ownership does not persist component-library paths');
+  await f.service.restore(f.game); assert.equal(exists(target), false); assert.equal(exists(shared), true);
+  assert.equal(fs.readFileSync(path.join(f.dir, 'ReShade.ini'), 'utf8'), f.original);
+});
+
 test('local legacy owner previews without writes, installs full matching recipe, repairs pins and restores borrowed config', async t => {
   const f = fixture(t), config = path.join(f.layout.addonDirectory, 'nr_before_sr.ini'); fs.mkdirSync(path.dirname(config), { recursive: true });
   fs.writeFileSync(config, '[NRBeforeSR]\nIntensity=1.91\nPersonal=1\n'); const originalConfig = fs.readFileSync(config);
@@ -309,7 +339,8 @@ test('real HoYo profile owner and legacy owner keep the same selected Core throu
   const known = async game => legacy ? legacy.ownedModuleManifest(game) : [];
   const hoyo = createHoYoProfileService({ appDir, userData, externalRuntime: external, pe: f.options.pe, getKnownComponents: known });
   legacy = createLegacyService({ ...f.options, getLayout: game => hoyo.profile(game), getKnownComponents: known });
-  const reshade = path.join(appDir, 'payload/nr-before-sr/fixed/RTX50/ReShade64.dll'); assert.equal(hash(fs.readFileSync(reshade)), HOYO_RECIPE.loaderSha256);
+  const reshade = process.env.DLSS5_TEST_HOYO_LOADER || path.join(appDir, 'payload/nr-before-sr/fixed/RTX50/ReShade64.dll');
+  assert.equal(hash(fs.readFileSync(reshade)), HOYO_RECIPE.loaderSha256);
   const request = { hoyo: { family: 'genshin', channel: 'cn', launcher: { kind: 'hoyoplay', path: launcher } }, inputRoute: 'feeder', api: 'dx11',
     payload: { reshade: { file: reshade, actual: HOYO_RECIPE.loaderSha256 } } };
   const userAddon = path.join(f.dir, 'personal-addons', 'user.addon64'); fs.mkdirSync(path.dirname(userAddon)); fs.writeFileSync(userAddon, 'user kept addon');

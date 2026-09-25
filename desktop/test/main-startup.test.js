@@ -35,7 +35,7 @@ function harness(options = {}) {
     setAppUserModelId() {}
     quit() { this.quitCalls++; }
     exit(code) { this.exitCode = code; }
-    relaunch() { logs.push({ stage: 'relaunch' }); }
+    relaunch(details = {}) { logs.push({ stage: 'relaunch', details }); }
     async getFileIcon() { return { isEmpty: () => true }; }
   }
   const app = new App();
@@ -47,7 +47,8 @@ function harness(options = {}) {
   const ipcMain = new EventEmitter(); ipcMain.handle = (name, fn) => handles.set(name, (event, ...args) => fn(event && Object.hasOwn(event, 'sender') ? event : { ...event, sender: latestWindow?.webContents }, ...args));
   const dialog = { async showMessageBox(arg) { dialogs.push(arg); if (options.dialogFailure) throw new Error('dialog unavailable'); return { response: options.dialogResponse ?? 1 }; },
     async showSaveDialog() { return { canceled: true }; }, showErrorBox(title, detail) { errors.push({ title, detail }); }, async showOpenDialog() { return { canceled: true, filePaths: [] }; } };
-  const electron = { app, BrowserWindow, ipcMain, dialog, shell: { showItemInFolder() {}, async openExternal(url) { options.externalUrls?.push(url); }, async openPath() { return ''; } }, clipboard: { writeText() {} } };
+  const screen = { getPrimaryDisplay: () => ({ workAreaSize: options.workAreaSize || { width: 1920, height: 1080 } }) };
+  const electron = { app, BrowserWindow, ipcMain, dialog, screen, shell: { showItemInFolder() {}, async openExternal(url) { options.externalUrls?.push(url); }, async openPath() { return ''; } }, clipboard: { writeText() {} } };
   const service = { store: { readRecoveryStatus: () => ({ state: 'ok' }), read: () => ({ gameOverrides: {} }) }, withError: options.withError || (fn => fn()), install: options.install || (async () => ({})),
     boot: async () => ({}), refresh: async () => ({}), listGames: async () => [{ id: 'game', name: 'Fixture Game' }], product: {},
     getLayout: () => ({ mode: 'local', loadingMode: 'proxy', runtimeDir: 'C:\\game', activeConfigPath: 'C:\\game\\ReShade.ini' }),
@@ -70,16 +71,26 @@ function harness(options = {}) {
   const compatibilityFeedback = { ...defaultFeedback,
     ...(typeof options.compatibilityFeedback === 'function' ? options.compatibilityFeedback() : options.compatibilityFeedback || {}) };
   const business = {
-    './src/product/app-service': { createAppService: () => service }, './src/product/sr-model-service': { createSrModelService: () => ({ read() {}, migrationInfo: async () => ({ baselineCaptured: false }), ...options.srService }) },
-    './src/product/launch-settings-service': { createLaunchSettingsService: () => launchSettings },
+    './src/product/app-service': { createAppService: () => service }, './src/product/sr-model-service': { createSrModelService: input => { options.srFactory?.(input); return { read() {}, migrationInfo: async () => ({ baselineCaptured: false }), ...options.srService }; } },
+    './src/product/launch-settings-service': { createLaunchSettingsService: input => { options.launchFactory?.(input); return launchSettings; } },
+    './src/product/nvapi-drs': { createNvapiDrs: () => options.legacyDriver || {} },
+    './src/product/nvapi-profile': { createNvapiProfileAdapter: () => options.profileDriver || {} },
+    './src/product/work-scheduler': { createWorkScheduler: () => {
+      const scheduler = require('../src/product/work-scheduler').createWorkScheduler();
+      return { run: (key, work) => scheduler.run(key, () => options.serialize ? options.serialize(work) : work()) };
+    } },
+    './src/product/deferred-operations': { createDeferredOperations: input => {
+      options.deferredFactory?.(input); return { start() {}, dispose() {}, assertNoWaiting: async () => {}, ...options.deferredService };
+    } },
     './src/product/launch-coordinator': { createLaunchCoordinator: () => ({ serialize: options.serialize || (fn => fn()),
       assertMutationReady: options.assertMutationReady || (async () => {}), restoreForUninstall: options.restoreForUninstall || (async () => {}),
-      inspect: options.coordinatorInspect || (async () => ({})), removeLibraryEntry: options.removeLibraryEntry || (async () => ({})), launch: async () => ({ launchSettings: [] }) }) },
+      inspect: options.coordinatorInspect || (async () => ({})), removeLibraryEntry: options.removeLibraryEntry || (async () => ({})), launch: options.launch || (async () => ({ launchSettings: [] })) }) },
     './src/core/install-guards': { assertGameClosed: options.assertGameClosed || (async () => {}) }, './src/product/fg-components': { createFgComponents: () => fgComponents },
     './src/product/game-preparation': { createGamePreparation: () => ({ assertReady: async () => {}, inspect: async () => ({ pending: false }), ...options.preparationService }) },
     './src/product/game-environment': { createGameEnvironment: () => ({ assertReady: async () => {}, inspect: async () => ({ pending: false }), ...options.environmentService }) },
     './src/product/game-support': { classifyApi: () => 'dx12' },
-    './src/product/operation-plan': { createOperationPlans: () => ({ assertReady: async () => {}, ...options.operationService }) },
+    './src/product/operation-api': require('../src/product/operation-api'),
+    './src/product/operation-plan': { createOperationPlans: input => { options.operationFactory?.(input); return { assertReady: async () => {}, ...options.operationService }; } },
     './src/product/operation-elevation': { createOperationElevation: () => ({ assertAvailable: async () => {}, inspect: async () => ({ active: false, canRecover: false }), recover: async () => ({}), ...options.elevationService }) },
     './src/product/operation-worker': { workerArguments: require('../src/product/operation-worker').workerArguments,
       runOperationWorker: async opts => { logs.push({ stage: 'worker-entry', details: opts.args }); if (options.initializeWorker) await opts.initialize(); return options.workerResult || { ok: true }; } },
@@ -87,7 +98,7 @@ function harness(options = {}) {
     './src/product/native-enhancement-probe': { createNativeEnhancementProbe: () => ({ inspect: async (_id, domain) => ({
       support: { status: (domain === 'sr' ? options.noNativeDlss : options.noNativeFg) ? 'unknown' : 'supported' } }) }) },
     './src/product/hoyo-launcher': { createHoYoLauncher: () => ({}) },
-    './src/product/hoyo-workflow': { createHoYoWorkflow: () => ({ ...options.hoyoWorkflow }) },
+    './src/product/hoyo-workflow': { createHoYoWorkflow: input => { options.hoyoFactory?.(input); return { ...options.hoyoWorkflow }; } },
     './src/product/hoyo-launch-elevation': { createHoYoLaunchPlans: () => ({}),
       createHoYoElevatedSessions: ({ normal }) => ({ ...normal, assess: async () => null }) },
     './src/product/runtime-verification': { createRuntimeVerification: () => ({}), emptyVerification: require('../src/product/runtime-verification').emptyVerification },
@@ -112,6 +123,12 @@ function harness(options = {}) {
   const customRequire = request => {
     if (request === 'electron') return electron;
     if (request === './src/product/startup-diagnostics') return { ...realDiagnostics, createStartupDiagnostics: () => startup };
+    if (request === './src/product/portable-data') return { configurePortableData: () => null };
+    if (request === './src/product/startup-prerequisite') return { createStartupPrerequisite: () => ({
+      ensureReady: async () => ({ proceed:true, prompted:false, result:{ status:'available' } }) }) };
+    if (request === './src/product/manager-update') return { createManagerUpdate: () => ({ check:async()=>({available:false}),
+      prepare:async()=>({}),cancel:()=>false,launchApply:async()=>({launched:true}) }) };
+    if (request === './src/product/launcher-compatibility') return require('../src/product/launcher-compatibility');
     if (request === './src/product/startup-elevation') return require('../src/product/startup-elevation');
     if (request === './src/product/startup-handoff') return { createStartupHandoff: () => ({
       begin: () => ({ nonce: '22222222-2222-2222-2222-222222222222' }),
@@ -142,6 +159,116 @@ function harness(options = {}) {
 function saw(h, stage) { return h.logs.some(row => row.stage === stage); }
 function dialogTitle(h, text) { return h.dialogs.some(row => String(row.message || row.title).includes(text)); }
 
+function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
+
+test('ordinary and HoYo launch endpoints refuse pending applications before launching', async () => {
+  let launches = 0, starts = 0;
+  const h = harness({ deferredService: { assertNoWaiting: async () => { throw Object.assign(new Error('waiting'), { code: 'WAITING_OPERATION_PENDING' }); } },
+    launch: async () => { launches++; }, hoyoWorkflow: { inspect: async () => ({ gameId: 'game' }), start: async () => { starts++; } } });
+  await settle();
+  try {
+    await assert.rejects(h.handles.get('game-launch')({}, 'game'), { code: 'WAITING_OPERATION_PENDING' });
+    await assert.rejects(h.handles.get('hoyo-start')({}, 'client'), { code: 'WAITING_OPERATION_PENDING' });
+    assert.equal(launches, 0); assert.equal(starts, 0);
+  } finally { h.window?.emit('closed'); }
+});
+
+test('operation confirmation delegates to the deferred owner without nesting its game lock', async () => {
+  let input, applications = 0;
+  const h = harness({ deferredFactory: value => { input = value; }, deferredService: { apply: async (id, planId, consent) =>
+    input.run('C:\\game', async () => { applications++; return { id, planId, confirm: consent.confirm }; }) } });
+  await settle();
+  try {
+    assert.deepEqual(await h.handles.get('game-operation-apply')({}, 'game', 'plan', { confirm: true }), { id: 'game', planId: 'plan', confirm: true });
+    assert.equal(applications, 1);
+  } finally { h.window?.emit('closed'); }
+});
+
+test('launch mode saves merge current game fields and preserve another simultaneous game save', async t => {
+  const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'launch-mode-merge-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = require('../src/product/state-store').createStore(path.join(root, 'settings.json'));
+  const dir = id => path.join(root, id), exe = id => path.join(dir(id), 'Game.exe'); let operations;
+  const h = harness({ operationFactory: input => { operations = input; }, appService: { store,
+    gameDirectory: dir, gameExecutable: exe,
+    assessmentSeed: id => ({ id, dir: dir(id), scan: { chosen: { path: exe(id), api: 'dx12', dx12: true, bitness: 64 } } }) } });
+  await settle();
+  try {
+    await Promise.all([operations.setLaunchMode('first', 'exe'), operations.setLaunchMode('second', 'exe'),
+      store.update(state => ({ gameOverrides: { ...state.gameOverrides, [dir('first').toLowerCase()]: {
+        ...state.gameOverrides[dir('first').toLowerCase()], name: 'Kept name', api: 'dx12', apiExecutable: exe('first') } } }))]);
+    const saved = store.read().gameOverrides;
+    assert.equal(saved[dir('first').toLowerCase()].launchMode, 'exe');
+    assert.equal(saved[dir('first').toLowerCase()].name, 'Kept name');
+    assert.equal(saved[dir('first').toLowerCase()].api, 'dx12');
+    assert.equal(saved[dir('second').toLowerCase()].launchMode, 'exe');
+  } finally { h.window.emit('closed'); }
+});
+
+test('a launch blocks mutations for the same directory while another game remains usable', async () => {
+  const entered = deferred(), release = deferred(), calls = [];
+  const h = harness({ appService: { gameDirectory: id => id === 'other' ? 'C:\\other' : 'C:\\game',
+    renameGame: async id => { calls.push(id); } }, launch: async () => {
+    entered.resolve(); await release.promise; return { launchSettings: [] };
+  } });
+  await settle();
+  const launching = h.handles.get('game-launch')({}, 'game'); await entered.promise;
+  const same = h.handles.get('game-rename')({}, 'alias', 'Alias'), other = h.handles.get('game-rename')({}, 'other', 'Other');
+  try { await other; assert.deepEqual(calls, ['other']); }
+  finally { release.resolve(); await Promise.all([launching, same]); h.window.emit('closed'); }
+  assert.deepEqual(calls, ['other', 'alias']);
+});
+
+test('HoYo launch joins the game directory queue while cancel remains immediate', async () => {
+  const entered = deferred(), release = deferred(); let workflow, launches = 0, cancelled = 0;
+  const h = harness({ hoyoFactory: input => { workflow = input; }, hoyoWorkflow: { cancel: async () => { cancelled++; } },
+    launch: async () => { if (++launches === 1) { entered.resolve(); await release.promise; } return { launchSettings: [] }; } });
+  await settle();
+  const direct = h.handles.get('game-launch')({}, 'game'); await entered.promise;
+  const queued = workflow.launch('game', { cancelled: () => false });
+  try { await h.handles.get('hoyo-cancel')({}, 'client'); await settle(); assert.equal(launches, 1); assert.equal(cancelled, 1); }
+  finally { release.resolve(); await Promise.all([direct, queued]); h.window.emit('closed'); }
+  assert.equal(launches, 2);
+});
+
+test('legacy and current NVIDIA helpers share a short lock without blocking game metadata', async () => {
+  const entered = deferred(), release = deferred(), calls = []; let legacy, current;
+  const h = harness({ srFactory: input => { legacy = input.nvapi; }, launchFactory: input => { current = input.driver; },
+    legacyDriver: { applySrPreset: async () => { calls.push('legacy'); entered.resolve(); await release.promise; } },
+    profileDriver: { write: async () => { calls.push('current'); } },
+    appService: { renameGame: async () => { calls.push('rename'); } } });
+  await settle();
+  const old = legacy.applySrPreset(); await entered.promise; const modern = current.write();
+  try { await h.handles.get('game-rename')({}, 'game', 'Name'); assert.deepEqual(calls, ['legacy', 'rename']); }
+  finally { release.resolve(); await Promise.all([old, modern]); h.window.emit('closed'); }
+  assert.deepEqual(calls, ['legacy', 'rename', 'current']);
+});
+
+test('settings plans apply in their owning game queue and reject unregistered plans', async () => {
+  const entered = deferred(), release = deferred(); let applied = false;
+  const h = harness({ launchService: { preview: async () => ({ id: 'settings-plan' }), apply: async () => { applied = true; } },
+    launch: async () => { entered.resolve(); await release.promise; return { launchSettings: [] }; } });
+  await settle();
+  await h.handles.get('launch-settings-preview')({}, 'game', 'sr', {});
+  const launch = h.handles.get('game-launch')({}, 'game'); await entered.promise;
+  const apply = h.handles.get('launch-settings-apply')({}, 'settings-plan', { confirm: true });
+  try { await settle(); assert.equal(applied, false);
+    await assert.rejects(h.handles.get('launch-settings-apply')({}, 'unknown', { confirm: true }), { code: 'PLAN_EXPIRED' });
+  } finally { release.resolve(); await Promise.all([launch, apply]); h.window.emit('closed'); }
+  assert.equal(applied, true);
+});
+
+test('high-DPI compact work areas keep the first window fully on screen and resizable', async () => {
+  const h = harness({ workAreaSize: { width: 960, height: 520 } });
+  await settle();
+  const config = h.window.config;
+  assert.ok(config.width <= 960 && config.height <= 520);
+  assert.ok(config.minWidth <= config.width && config.minHeight <= config.height);
+  assert.ok(config.width >= 600 && config.height >= 420);
+  assert.equal(config.center, true);
+  h.window.emit('closed');
+});
+
 test('cleanup IPC serializes managed restoration before read-only external preview', async () => {
   const order = [];
   const h = harness({ serialize: async work => { order.push('lock'); const result = await work(); order.push('unlock'); return result; },
@@ -165,14 +292,29 @@ test('failed managed restoration never proceeds to external cleanup preview', as
 test('pending environment recovery blocks writes but its owner recovery remains reachable first', async () => {
   const order = []; const h = harness({
     environmentService: { assertReady: async () => { throw new Error('environment pending'); },
+      inspect: async () => ({ pending: true }),
       recoverPending: async () => { order.push('recovery'); return { recovered: true }; }, restore: async () => { order.push('undo'); return { restored: true }; } },
     preparationService: { assertReady: async () => order.push('preparation') },
     restoreForUninstall: async () => order.push('settings'),
-    appService: { restoreManagedForCleanup: async () => order.push('managed') } });
+    appService: { inspectDeployment: async () => ({ installed: false, pending: true, needsRecovery: true }), restoreManagedForCleanup: async () => order.push('managed') } });
   await settle(); await assert.rejects(h.handles.get('game-install')({}, 'g'), /environment pending/);
   const result = await h.handles.get('game-environment-restore')({}, 'g');
-  assert.deepEqual(order, ['recovery', 'preparation', 'settings', 'managed', 'undo']); assert.equal(result.interruptedFilesRecovered, true);
+  assert.deepEqual(order, ['recovery', 'preparation', 'undo']); assert.equal(result.interruptedFilesRecovered, true);
   h.window.emit('closed');
+});
+
+test('restoring isolated files requires explicit uninstall and never uninstalls or restores settings implicitly', async () => {
+  for (const state of [{ deployment: { installed: true } }, { deployment: { needsRecovery: true } }, { fgComponents: { managed: true } }, { ownedSettings: true }]) {
+    let writes = 0;
+    const forbidden = async () => { writes++; throw Error('must not mutate'); };
+    const h = harness({ appService: { inspectDeployment: async () => state.deployment || {}, restoreManagedForCleanup: forbidden },
+      coordinatorInspect: async () => ({ fgComponents: state.fgComponents || {} }), restoreForUninstall: forbidden,
+      launchService: { hasOwnedState: async () => state.ownedSettings === true },
+      environmentService: { recoverPending: forbidden, restore: forbidden } });
+    await settle();
+    try { await assert.rejects(h.handles.get('game-environment-restore')({}, 'g'), { code: 'ENVIRONMENT_RESTORE_FIRST' }); assert.equal(writes, 0); }
+    finally { h.window.emit('closed'); }
+  }
 });
 
 test('business-module require failure produces an early log and visible native dialog', async () => {
@@ -219,10 +361,10 @@ test('default startup retains sandbox protections and does not request a compati
   h.window.emit('closed');
 });
 
-test('GPU and renderer launch failures preserve their cause and offer manual compatibility guidance without software retry', async () => {
+test('GPU and renderer launch failures preserve their cause and offer one detected, non-persistent compatibility retry', async () => {
   for (const type of ['GPU', 'Renderer']) {
     for (const reason of ['launch-failed', 'integrity-failure']) {
-      const h = harness(); await settle();
+      const h = harness({dialogResponse:2}); await settle();
       if (type === 'GPU') h.app.emit('child-process-gone', {}, { type, reason, exitCode: 18 });
       else h.window.webContents.emit('render-process-gone', {}, { reason, exitCode: 18 });
       await settle();
@@ -230,12 +372,27 @@ test('GPU and renderer launch failures preserve their cause and offer manual com
       assert.equal(failure.type, type); assert.equal(failure.reason, reason); assert.equal(failure.exitCode, 18);
       const event = h.logs.find(row => row.stage === (type === 'GPU' ? 'child-process-gone' : 'render-process-gone')).details;
       assert.equal(event.type, type); assert.equal(event.reason, reason); assert.equal(event.exitCode, 18);
-      assert.match(h.dialogs.at(-1).detail, /兼容启动\.cmd/); assert.match(h.dialogs.at(-1).detail, /默认启动保留沙箱/);
+      assert.match(h.dialogs.at(-1).detail, /临时关闭沙箱/); assert.match(h.dialogs.at(-1).detail, /不会保存/);
+      assert.equal(h.dialogs.at(-1).buttons.includes('临时兼容重试'), true);
       assert.equal(h.dialogs.at(-1).buttons.includes('使用软件渲染重启'), false);
       assert.equal(saw(h, 'relaunch'), false); assert.equal(h.process.argv.includes('--no-sandbox'), false);
       h.window.emit('closed');
     }
   }
+});
+
+test('confirmed child-process failure can relaunch exactly once with transient sandbox switches', async () => {
+  const h = harness({dialogResponse:1}); await settle();
+  h.app.emit('child-process-gone', {}, { type:'GPU', reason:'launch-failed', exitCode:18 }); await settle();
+  const relaunch = h.logs.find(row => row.stage === 'relaunch');
+  assert.ok(relaunch);assert.ok(relaunch.details.args.includes('--no-sandbox'));assert.ok(relaunch.details.args.includes('--sandbox-retry-once'));
+  assert.equal(saw(h,'sandbox-retry-once-requested'),true);
+});
+
+test('manual no-sandbox startup is rejected unless it is the one-time detected retry', async () => {
+  const h = harness({argv:['electron',mainFile,'--no-sandbox']}); await settle();
+  assert.equal(h.window,null);assert.equal(h.errors.length,1);assert.match(h.errors[0].detail,/不能直接以无沙箱模式启动/);
+  assert.equal(saw(h,'relaunch'),false);
 });
 
 test('single-instance without acknowledgement explains the hidden-window condition without killing anything', async () => {
@@ -267,8 +424,8 @@ test('a portable launcher environment does not cause a whole-application elevate
   const h=harness({argv:['manager.exe','--as-admin'],env:{PORTABLE_EXECUTABLE_FILE:'C:\portable.exe'}});await settle();
   assert.equal(h.execCalls.length,0);assert.equal(h.app.quitCalls,0);assert.ok(h.window);h.window.emit('closed');
 });
-test('startup context is read-only, identifies compatibility mode and does not trust a packaged admin manifest', async () => {
-  const h = harness({ argv: ['manager.exe', '--no-sandbox'], execResults: [{ error: null, stdout: 'False' }] }); await settle();
+test('startup context is read-only, identifies the authorized one-time compatibility retry and does not trust a packaged admin manifest', async () => {
+  const h = harness({ argv: ['manager.exe', '--no-sandbox', '--sandbox-retry-once'], execResults: [{ error: null, stdout: 'False' }] }); await settle();
   const context = h.handles.get('startup-context');
   const foreign = await context({ sender: {} }); assert.equal(foreign.ok, false); assert.equal(h.execCalls.length, 0);
   const result = await context({ sender: h.window.webContents });
@@ -581,6 +738,68 @@ test('library removal cannot bypass any recovery guard, active worker, or the cu
   }
 });
 
+test('confirmed keep-files removal bypasses recovery guards, cancels waiting within the game lock and preserves options', async () => {
+  const calls = []; let locked = false;
+  const forbidden = async () => { throw new Error('generic recovery guard must not run'); };
+  const h = harness({ serialize: async work => { locked = true; try { return await work(); } finally { locked = false; } },
+    operationService: { assertReady: forbidden }, preparationService: { assertReady: forbidden }, environmentService: { assertReady: forbidden },
+    deferredService: { cancelWithinQueue: async id => { assert.equal(locked, true); calls.push('cancel:' + id); return { archiveFile: 'waiting-archive' }; } },
+    removeLibraryEntry: async (id, options) => { assert.equal(locked, true); calls.push('remove:' + id); assert.equal(options.keepFiles, true);
+      assert.equal(options.confirm, true); assert.equal(options.waitingArchive.archiveFile, 'waiting-archive'); return { removedFromLibrary: true }; } });
+  await settle();
+  try { const result = await h.handles.get('game-library-remove')({}, 'game', { keepFiles: true, confirm: true });
+    assert.equal(result.removedFromLibrary, true); assert.deepEqual(calls, ['cancel:game', 'remove:game']); }
+  finally { h.window.emit('closed'); }
+});
+
+test('keep-files removal and rescue apply require confirmation before cancelling queued work', async () => {
+  const calls = [], forbidden = async () => { throw new Error('generic recovery guard must not run'); };
+  const h = harness({ operationService: { assertReady: forbidden }, preparationService: { assertReady: forbidden }, environmentService: { assertReady: forbidden },
+    deferredService: { cancelWithinQueue: async () => calls.push('cancel') }, removeLibraryEntry: async () => calls.push('remove'),
+    appService: { applyDeploymentRescue: async () => calls.push('rescue') } }); await settle();
+  try {
+    await assert.rejects(h.handles.get('game-library-remove')({}, 'game', { keepFiles: true }), { code: 'LIBRARY_CONFIRM_REQUIRED' });
+    await assert.rejects(h.handles.get('game-deployment-rescue-apply')({}, 'game', 'plan', {}), { code: 'CONFIRM_REQUIRED' });
+    assert.deepEqual(calls, []);
+  } finally { h.window.emit('closed'); }
+});
+
+test('deployment rescue endpoints bypass total recovery gates but retain directory serialization and elevation checks', async () => {
+  const calls = []; let locked = false;
+  const forbidden = async () => { throw new Error('generic recovery guard must not run'); };
+  const h = harness({ serialize: async work => { locked = true; try { return await work(); } finally { locked = false; } },
+    operationService: { assertReady: forbidden }, preparationService: { assertReady: forbidden }, environmentService: { assertReady: forbidden },
+    elevationService: { assertAvailable: async () => { assert.equal(locked, true); calls.push('elevation'); } },
+    deferredService: { cancelWithinQueue: async () => calls.push('cancel') },
+    appService: { previewDeploymentRescue: async (id, mode) => { assert.equal(locked, true); calls.push('preview:' + mode); return { planId: id }; },
+      applyDeploymentRescue: async (id, planId, consent) => { assert.equal(locked, true); assert.equal(consent.confirm, true); calls.push('apply:' + planId); return { rescued: true }; } } }); await settle();
+  try {
+    assert.equal((await h.handles.get('game-deployment-rescue-preview')({}, 'game', 'clean')).planId, 'game');
+    assert.equal((await h.handles.get('game-deployment-rescue-apply')({}, 'game', 'plan', { confirm: true, fingerprint: 'fp' })).rescued, true);
+    assert.deepEqual(calls, ['elevation', 'preview:clean', 'elevation', 'cancel', 'apply:plan']);
+  } finally { h.window.emit('closed'); }
+});
+
+test('keep-files removal waits for an active same-game write and refuses active administrator jobs or foreign senders', async () => {
+  const gate = deferred(), calls = [];
+  const h = harness({ install: async () => { calls.push('write-start'); await gate.promise; calls.push('write-end'); },
+    deferredService: { cancelWithinQueue: async () => calls.push('cancel') }, removeLibraryEntry: async () => calls.push('remove') }); await settle();
+  try {
+    const writing = h.handles.get('game-install')({}, 'game'); await settle();
+    const removing = h.handles.get('game-library-remove')({}, 'game', { keepFiles: true, confirm: true }); await settle();
+    assert.deepEqual(calls, ['write-start']); gate.resolve(); await Promise.all([writing, removing]);
+    assert.deepEqual(calls, ['write-start', 'write-end', 'cancel', 'remove']);
+  } finally { gate.resolve(); h.window.emit('closed'); }
+  for (const entry of ['game-library-remove', 'game-deployment-rescue-preview', 'game-deployment-rescue-apply']) {
+    for (const reason of ['busy', 'unavailable', 'sender']) {
+      const h2 = harness({ elevationService: reason === 'busy' ? { busy: true } : reason === 'unavailable' ? { assertAvailable: async () => { throw Object.assign(new Error('worker pending'), { code: 'OPERATION_ELEVATION_PENDING' }); } } : {} }); await settle();
+      try { await assert.rejects(h2.handles.get(entry)(reason === 'sender' ? { sender: new EventEmitter() } : {}, 'game', { keepFiles: true, confirm: true }),
+        { code: reason === 'busy' ? 'ERR_JOB_BUSY' : reason === 'sender' ? 'IPC_SENDER' : 'OPERATION_ELEVATION_PENDING' }); }
+      finally { h2.window.emit('closed'); }
+    }
+  }
+});
+
 test('component assessment construction does not eagerly read a game or module owner', async () => {
   const reads = [], read = name => () => { reads.push(name); throw new Error('Eager component read: ' + name); };
   const h = harness({ appService: { getLayout: read('layout'), gameModuleManifest: read('modules') }, fgComponents: { ownedModuleManifest: read('fg-modules') } });
@@ -603,18 +822,19 @@ test('HoYo IPC serializes workflow actions, rejects foreign senders and forwards
     }];
   }));
   workflow.inspect = async (id, options) => {
+    if (!options) return { gameId: id };
     assert.equal(serialized, false); assert.equal(Object.keys(options).join(','), 'retry');
     calls.push({ name: 'inspect', args: [id, options.retry] }); return options.retry;
   };
   const h = harness({ hoyoWorkflow: workflow, serialize: async work => {
-    assert.equal(serialized, false); serialized = true;
-    try { return await work(); } finally { serialized = false; }
+    const previous = serialized; serialized = true;
+    try { return await work(); } finally { serialized = previous; }
   } });
   await settle();
   try {
     assert.equal(saw(h, 'startup-failure'), false);
     const binding = { channel: 'official', launcher: 'fixture-launcher' }, consent = { fingerprint: 'bound-plan' };
-    const args = { discover: [], bind: ['game', binding], preview: ['game', 'install'], apply: ['game', 'plan', consent], recover: ['game'] };
+    const args = { discover: [], bind: ['game', binding], preview: ['game', 'install', { version: '0.4.7beta' }], apply: ['game', 'plan', consent], recover: ['game'] };
     for (const name of methods) {
       const invoke = h.handles.get('hoyo-' + name); assert.equal(typeof invoke, 'function');
       const before = calls.length;
@@ -678,4 +898,12 @@ test('preload separates library-only removal and pure cleanup preview from resto
   new vm.Script(fs.readFileSync(file, 'utf8'), { filename: file }).runInNewContext({ require: name => { assert.equal(name, 'electron'); return electron; }, Object });
   assert.equal(await api.removeGame('game'), 'game-library-remove'); assert.equal(await api.previewEnvironmentCleanup('game'), 'game-environment-preview-clean');
   assert.deepEqual(calls, [['game-library-remove', 'game'], ['game-environment-preview-clean', 'game']]);
+  await api.removeGame('game', { keepFiles: true, confirm: true });
+  await api.previewDeploymentRescue('game'); await api.previewDeploymentRescue('game', 'recover');
+  await api.applyDeploymentRescue('game', 'plan', { confirm: true, fingerprint: 'fp' });
+  assert.deepEqual(calls.slice(2), [
+    ['game-library-remove', 'game', { keepFiles: true, confirm: true }],
+    ['game-deployment-rescue-preview', 'game', 'repair'], ['game-deployment-rescue-preview', 'game', 'recover'],
+    ['game-deployment-rescue-apply', 'game', 'plan', { confirm: true, fingerprint: 'fp' }]
+  ]);
 });

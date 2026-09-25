@@ -88,13 +88,15 @@ function createNativeEnhancementProbe(options = {}) {
     catch { return null; }
   }
   async function hostEvidence(exe, root) {
-    const pending = [{ file: exe, via: 'selected-executable' }], hosts = [], visited = new Set(); let bytes = 0;
+    const pending = [{ file: exe, via: 'selected-executable' }], hosts = [], skipped = [], visited = new Set(); let bytes = 0;
     while (pending.length && hosts.length < MAX_HOSTS) {
       const next = pending.shift(), file = next.file;
       if (visited.has(key(file)) || !inside(root, file) || EXCLUDED_DIR.test(file) || file !== exe && NOT_HOST.test(path.basename(file))) continue;
       visited.add(key(file));
-      let row; try { row = await identity(file); } catch { continue; }
-      if (bytes + row.size > MAX_TOTAL_HOST_BYTES || pe.getBitness(file) !== 64) continue;
+      let row; try { row = await identity(file); } catch { skipped.push({ path: file, reason: 'identity-unavailable' }); continue; }
+      if (bytes + row.size > MAX_TOTAL_HOST_BYTES || pe.getBitness(file) !== 64) {
+        skipped.push({ path: file, reason: bytes + row.size > MAX_TOTAL_HOST_BYTES ? 'byte-budget' : 'architecture-unverified' }); continue;
+      }
       bytes += row.size;
       const imports = [...new Set((pe.getImports(file) || []).map(name => String(name).toLowerCase()))];
       const markers = [...(pe.findMarkers?.(file, MARKERS) || [])];
@@ -112,7 +114,7 @@ function createNativeEnhancementProbe(options = {}) {
         if (local) pending.push({ file: local, via: `loader-reference:${file}` });
       }
     }
-    return { hosts, complete: pending.length === 0, bytes };
+    return { hosts, skipped, complete: pending.length === 0 && skipped.length === 0, bytes };
   }
   async function verifiedMod(id, domain, exeIdentity, root, components, api) {
     if (!trustedMods.length || typeof options.getLayout !== 'function') return null;
@@ -131,12 +133,12 @@ function createNativeEnhancementProbe(options = {}) {
     }
     return null;
   }
-  async function inspectAll(id) {
+  async function inspectAll(id, context) {
     const root = path.resolve(options.gameDirectory(id)), exe = path.resolve(options.gameExecutable(id));
     const scan = typeof options.scan === 'function' ? await options.scan(id) : {};
     if (!inside(root, exe) || path.extname(exe).toLowerCase() !== '.exe' || scan.chosen?.path && !same(scan.chosen.path, exe))
       throw new Error('扫描结果与所选游戏程序不一致。');
-    const game = { scan, apiOverride: scan.apiOverride }, selectedApi = resolveOperationApi(game).effectiveApi;
+    const game = { scan, apiOverride: scan.apiOverride }, selectedApi = resolveOperationApi(game, context).effectiveApi;
     const exeIdentity = await identity(exe), bits = pe.getBitness(exe);
     if (bits !== 64 || !['dx11', 'dx12', 'vulkan'].includes(selectedApi)) return { exeIdentity, api: selectedApi, components: [],
       sr: unavailable('SETTINGS_GAME_API', '所选程序的 x64 图形 API 尚未确认。'), fg: unavailable('SETTINGS_GAME_API', '所选程序的 x64 图形 API 尚未确认。') };
@@ -145,10 +147,11 @@ function createNativeEnhancementProbe(options = {}) {
       const file = row.path || row.file; if (typeof file === 'string' && path.isAbsolute(file)) candidates.set(key(file), file);
     }
     for (const name of COMPONENTS) { const file = await findLocal(path.dirname(exe), name); if (file) candidates.set(key(file), file); }
-    const components = [];
+    const components = [], componentFailures = [];
     for (const file of candidates.values()) {
-      if (components.length >= 32) break;
-      try { const row = await trustedComponent(file, root); if (row) components.push(row); } catch { /* Changed/unreadable evidence remains absent. */ }
+      if (components.length >= 32) { componentFailures.push({ path: file, reason: 'component-limit' }); break; }
+      try { const row = await trustedComponent(file, root); if (row) components.push(row); }
+      catch { componentFailures.push({ path: file, reason: 'identity-unavailable' }); }
     }
     const graph = await hostEvidence(exe, root);
     const has = (name, trusted = true) => components.filter(row => row.name === name && (!trusted || row.trusted));
@@ -168,15 +171,22 @@ function createNativeEnhancementProbe(options = {}) {
     const srOk = has('nvngx_dlss.dll').length === 1 && has('nvngx_dlss.dll', false).length === 1 && srLinked;
     const fgOk = has('nvngx_dlssg.dll').length === 1 && has('nvngx_dlssg.dll', false).length === 1 &&
       has('sl.dlss_g.dll').length === 1 && has('sl.dlss_g.dll', false).length === 1 && wrapper && fgLinked && ['dx12', 'vulkan'].includes(selectedApi);
-    const evidence = { exe: exeIdentity, api: selectedApi, hosts: graph.hosts, components, complete: graph.complete };
+    const evidence = { exe: exeIdentity, api: selectedApi, hosts: graph.hosts, components,
+      complete: graph.complete && componentFailures.length === 0, skipped: [...graph.skipped, ...componentFailures] };
     const positive = domain => ({ status: 'supported', source: 'native-integration', staticOnly: true, official: false,
       evidence: ['executable-linked-integration', 'verified-nvidia-components'], integration: evidence,
       capabilities: domain === 'fg' ? { multipliers: [2], dynamic: false,
         mfgUnlock: { available: selectedApi === 'dx12' && /^\d+\./.test(has('nvngx_dlssg.dll')[0]?.version || '') && Number.parseInt(has('nvngx_dlssg.dll')[0]?.version, 10) >= 310,
           multipliers: [2, 3, 4], api: selectedApi, runtimeVersion: has('nvngx_dlssg.dll')[0]?.version || null } } : {} });
-    const sr = srOk ? positive('sr') : await verifiedMod(id, 'sr', exeIdentity, root, components, selectedApi)
+    let sr = srOk ? positive('sr') : await verifiedMod(id, 'sr', exeIdentity, root, components, selectedApi)
       || unavailable('SETTINGS_GAME_SUPPORT_UNKNOWN', has('nvngx_dlss.dll', false).length
         ? '发现 DLSS 文件，但尚未确认它与所选游戏或受信任模组的集成关系。' : '尚未找到所选游戏的可信 DLSS 超分集成。', ['static-files-do-not-prove-integration']);
+    // This permits an input fallback after a complete scoped search. It is not
+    // a claim that the game cannot support DLSS, nor permission to change SR.
+    const srClues = graph.hosts.some(host => [...host.imports, ...host.markers].some(value =>
+      /nvngx|sl\.(?:interposer|dlss)|NVSDK_NGX|DLSS\.|slInit|slGetFeatureFunction|slDLSSSetOptions/i.test(value)));
+    if (sr.status === 'unknown' && evidence.complete && components.length === 0 && !srClues)
+      sr = unavailable('SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED', '本次扫描未检测到原生 DLSS 集成，可选择 Feeder 提供输入。', ['complete-scoped-integration-search']);
     let fg = fgOk ? positive('fg') : unavailable('SETTINGS_GAME_SUPPORT_UNKNOWN', '尚未确认所选游戏已集成可信的 Streamline 帧生成。');
     if (fgOk && options.gameMetadata) {
       const metadata = await options.gameMetadata(id);
@@ -185,18 +195,20 @@ function createNativeEnhancementProbe(options = {}) {
       if (row) fg = { ...fg, source: 'catalog', official: true, capabilities: { ...fg.capabilities, ...structuredClone(row.fg) },
         evidence: [...fg.evidence, row.source], catalogue: { id: row.id, checkedAt: row.checkedAt, source: row.source } };
     }
-    return { exeIdentity, api: selectedApi, components, graph, sr, fg };
+    return { exeIdentity, api: selectedApi, components, graph, sr, fg, coverage: { complete: evidence.complete, skipped: evidence.skipped } };
   }
-  async function inspect(id, domain) {
+  async function inspect(id, domain, context = {}) {
     if (!['sr', 'fg'].includes(domain)) throw new TypeError('Unknown enhancement domain.');
     // Coalesce only simultaneous SR/FG reads. No on-disk cache and no persistent
     // eligibility survives an EXE, DLL, API or driver change.
-    let task = scans.get(id);
-    if (!task) { task = inspectAll(id); scans.set(id, task); task.finally(() => { if (scans.get(id) === task) scans.delete(id); }).catch(() => {}); }
+    const request = { ...(context.api !== undefined ? { api: context.api } : {}) }, scanKey = JSON.stringify([id, request.api || 'auto']);
+    let task = scans.get(scanKey);
+    if (!task) { task = inspectAll(id, request); scans.set(scanKey, task); task.finally(() => { if (scans.get(scanKey) === task) scans.delete(scanKey); }).catch(() => {}); }
     try {
       const value = await task;
       return { support: value[domain], staticEvidence: { nativeDlssAvailable: value.sr.source === 'native-integration' || value.sr.source === 'catalog',
-        nativeFgAvailable: value.fg.status === 'supported', staticOnly: true, api: value.api, components: value.components },
+        nativeFgAvailable: value.fg.status === 'supported', staticOnly: true, api: value.api, components: value.components,
+        coverage: value.coverage || { complete: false } },
         gameSetting: { state: 'unknown', source: null }, exeIdentity: value.exeIdentity.sha256 };
     } catch (error) { return { support: unavailable('SETTINGS_EVIDENCE_UNAVAILABLE', error.message), staticEvidence: null,
       gameSetting: { state: 'unknown', source: null } }; }

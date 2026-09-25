@@ -36,6 +36,19 @@ function fixture(t, options = {}) {
     pending: path.join(gameRoot, PENDING), receipt: path.join(gameRoot, RECEIPT), request: { mode: 'external', loadingMode: 'proxy', api: 'dx12', payload } };
 }
 
+test('direct unified3 deployment owns only its seven nested resources and restore leaves game resources intact', async t => {
+  const f = fixture(t), names = require('../src/product/payload-companions').NAMES;
+  f.payload.version = '0.5-dline21-unified3';
+  f.payload.companions = names.map(name => { const file = path.join(f.root, 'resources', name), bytes = 'resource:' + name;
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes); return { name, file, actual: hash(bytes) }; });
+  const userFile = path.join(f.dir, names[0]); fs.mkdirSync(path.dirname(userFile), { recursive: true }); fs.writeFileSync(userFile, 'game original');
+  const plan = await f.service.preview(f.game, f.request); await f.service.apply(plan.planId);
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  assert.equal(JSON.parse(fs.readFileSync(f.receipt)).files.filter(row => row.kind === 'companion').length, 7);
+  await f.service.previewRemove(f.game, 'restore'); await f.service.remove(f.game, 'restore');
+  assert.equal(fs.readFileSync(userFile, 'utf8'), 'game original');
+});
+
 test('first external deployment handles Palworld missing directories without activating root HDR or owning existing runtime', async t => {
   const f = fixture(t), preset = fs.readFileSync(path.join(f.dir, 'ReShadePreset.ini'));
   const current = f.service.getLayout(f.game);
@@ -122,6 +135,105 @@ test('source changes after first external preview reject before a file WAL or pr
   await assert.rejects(f.service.apply(plan.planId), { code: 'DEPLOYMENT_PLAN_CHANGED' });
   assert.equal(fs.existsSync(f.pending), false); assert.equal(fs.existsSync(f.options.userData), false);
   assert.match(fs.readFileSync(path.join(f.dir, 'ReShade.ini'), 'utf8'), /new external edit/);
+});
+
+test('new external NR addons are previewed without writes, hash-bound, isolated across updates and restored only on uninstall', async t => {
+  const f = fixture(t), first = await f.service.preview(f.game, f.request); await f.service.apply(first.planId);
+  const runtime = f.service.getLayout(f.game).runtimeDir, plugin = path.join(runtime, 'external-dlsnr.addon64'), bytes = 'RenoDX NR original plugin';
+  fs.writeFileSync(plugin, bytes);
+  const cancelled = await f.service.preview(f.game, f.request);
+  assert.equal(cancelled.addonCompatibility.isolate.find(row => row.path === plugin)?.mandatory, true);
+  assert.equal(fs.readFileSync(plugin, 'utf8'), bytes, 'cancel/preview writes nothing');
+  fs.writeFileSync(plugin, bytes + ' changed');
+  await assert.rejects(f.service.apply(cancelled.planId), /改变|变化/);
+  assert.equal(fs.readFileSync(plugin, 'utf8'), bytes + ' changed'); assert.equal(fs.existsSync(f.pending), false);
+  fs.writeFileSync(plugin, bytes);
+  const plan = await f.service.preview(f.game, f.request); await f.service.apply(plan.planId);
+  assert.equal(fs.existsSync(plugin), false);
+  const saved = JSON.parse(fs.readFileSync(f.receipt)), isolated = saved.runtimeIsolatedAddons.find(row => row.path === plugin);
+  const backup = path.join(path.dirname(runtime), 'history', isolated.operation, isolated.snapshot);
+  assert.equal(fs.readFileSync(backup, 'utf8'), bytes);
+  const upgrade = await f.service.preview(f.game, f.request); await f.service.apply(upgrade.planId);
+  assert.equal(fs.existsSync(plugin), false, 'upgrade does not restore a conflicting NR plugin');
+  await f.service.remove(f.game, 'restore'); assert.equal(fs.readFileSync(plugin, 'utf8'), bytes);
+  assert.equal(fs.existsSync(path.join(runtime, INSTALLED_NAMES.addon)), false);
+});
+
+test('direct external isolation transfers its backup into native ownership and native uninstall restores exact bytes', async t => {
+  const f = fixture(t), ini = path.join(f.dir, 'ReShade.ini'), plugin = path.join(f.dir, 'renodx-dlsnr.addon64');
+  fs.writeFileSync(ini, '[ADDON]\nAddonPath=.\n'); fs.unlinkSync(path.join(f.dir, INSTALLED_NAMES.runtime));
+  fs.writeFileSync(plugin, 'renodx-dlssnr original');
+  const first = await f.service.preview(f.game, f.request); await f.service.apply(first.planId);
+  assert.equal(fs.existsSync(plugin), false);
+  const runtime = f.service.getLayout(f.game).runtimeDir, latePlugin = path.join(runtime, 'late-nr.addon64');
+  fs.writeFileSync(latePlugin, 'RenoDX NR later');
+  const isolate = await f.service.preview(f.game, f.request); await f.service.apply(isolate.planId);
+  let local = await f.service.preview(f.game, { mode: 'local' });
+  assert.ok(local.isolatedAddonTransfers.some(row => row.originPath === latePlugin && row.restorePath === path.join(f.dir, 'late-nr.addon64')));
+  assert.ok(local.warnings.some(row => /卸载恢复到/.test(row.message)));
+  assert.equal(fs.existsSync(path.join(f.gameRoot, '_DLSS5_Backup', 'conflicts')), false, 'migration preview creates no native backup');
+  const occupied = path.join(f.dir, 'late-nr.addon64'); fs.writeFileSync(occupied, 'new user file');
+  await assert.rejects(f.service.apply(local.planId), { code: 'DEPLOYMENT_PLAN_CHANGED' });
+  assert.equal(fs.readFileSync(occupied, 'utf8'), 'new user file'); assert.equal(fs.existsSync(f.pending), false);
+  fs.unlinkSync(occupied); local = await f.service.preview(f.game, { mode: 'local' });
+  await f.service.apply(local.planId); assert.equal(fs.existsSync(plugin), false);
+  const manifest = JSON.parse(fs.readFileSync(path.join(f.gameRoot, '_DLSS5_Backup/xiaofeng-manager.json')));
+  assert.equal(manifest.conflicts.find(row => row.originPath === latePlugin)?.sourceRel, path.relative(f.gameRoot, path.join(f.dir, 'late-nr.addon64')));
+  const installer = require('../src/product/installer').createInstaller({ guards: f.options.guards, pe: f.options.pe });
+  await installer.uninstall({ gameDir: f.gameRoot, scan: f.game.scan, mode: 'restore', removeSettings: false });
+  assert.equal(fs.readFileSync(plugin, 'utf8'), 'renodx-dlssnr original');
+  assert.equal(fs.readFileSync(path.join(f.dir, 'late-nr.addon64'), 'utf8'), 'RenoDX NR later');
+});
+
+test('a failed external update rolls new isolation back, and explicit DLL isolation removes its active load entry', async t => {
+  const f = fixture(t); await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = f.service.getLayout(f.game).runtimeDir, file = path.join(runtime, 'renodx-plugin.dll'), ini = path.join(runtime, 'ReShade.ini');
+  fs.writeFileSync(file, 'RenoDX NR explicit plugin'); fs.appendFileSync(ini, '[ADDON]\nLoadFromDllMain=renodx-plugin.dll\n');
+  const before = fs.readFileSync(ini), receipt = fs.readFileSync(f.receipt);
+  const failing = createExternalRuntime({ ...f.options, afterWrite: ({ row }) => { if (row.file === file) throw Error('synthetic isolation failure'); } });
+  await assert.rejects(failing.apply((await failing.preview(f.game, f.request)).planId), /synthetic isolation failure/);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'RenoDX NR explicit plugin'); assert.deepEqual(fs.readFileSync(ini), before);
+  assert.deepEqual(fs.readFileSync(f.receipt), receipt); assert.equal(fs.existsSync(f.pending), false);
+  await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  assert.equal(fs.existsSync(file), false); assert.equal(addonValues(fs.readFileSync(ini, 'utf8')).has('LoadFromDllMain'), false);
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  await f.service.remove(f.game, 'restore'); assert.equal(fs.readFileSync(file, 'utf8'), 'RenoDX NR explicit plugin');
+});
+
+test('isolating an explicit NR DLL preserves the original absolute path of a retained external DLL', async t => {
+  const f = fixture(t); await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = f.service.getLayout(f.game).runtimeDir, nr = path.join(runtime, 'conflict.dll'), ini = path.join(runtime, 'ReShade.ini');
+  const personal = path.join(f.root, 'personal'), hdr = path.join(personal, 'HDR.dll'); fs.mkdirSync(personal);
+  fs.writeFileSync(nr, 'RenoDX NR explicit plugin'); fs.writeFileSync(hdr, 'ordinary external HDR plugin');
+  fs.appendFileSync(ini, '[ADDON]\nLoadFromDllMain=conflict.dll,' + hdr + '\n');
+  const snapshot = await require('../src/product/addon-loading-layout').snapshotAddonLoadingLayout({ exeDir: f.dir,
+    gameId: f.game.id, architecture: 64 });
+  const request = { ...f.request, keepAddons: [{ path: hdr, sha256: hash('ordinary external HDR plugin'),
+    configFingerprint: snapshot.configFingerprint }] };
+  const preview = await f.service.preview(f.game, request); await f.service.apply(preview.planId);
+  assert.equal(fs.existsSync(nr), false);
+  assert.equal(addonValues(fs.readFileSync(ini, 'utf8')).get('LoadFromDllMain')[0], hdr);
+  assert.equal(fs.existsSync(path.join(runtime, 'HDR.dll')), false, 'the retained external module was never migrated');
+  assert.equal(fs.readFileSync(hdr, 'utf8'), 'ordinary external HDR plugin');
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  await f.service.remove(f.game, 'restore');
+  assert.equal(fs.readFileSync(nr, 'utf8'), 'RenoDX NR explicit plugin');
+  assert.equal(fs.readFileSync(hdr, 'utf8'), 'ordinary external HDR plugin');
+});
+
+test('a legacy retained user addon matching a known renamed Core cannot become the selected active Core', async t => {
+  const f = fixture(t); await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = f.service.getLayout(f.game).runtimeDir, file = path.join(runtime, 'renamed-old.addon64'), bytes = 'known historical Core';
+  fs.writeFileSync(file, bytes);
+  const saved = JSON.parse(fs.readFileSync(f.receipt));
+  saved.files.push({ name: path.basename(file), role: 'user-addon', kind: 'user-addon', mutable: false, localOwned: false,
+    originAbsent: true, sha256: hash(bytes), originHash: hash(bytes) });
+  fs.writeFileSync(f.receipt, JSON.stringify(saved));
+  const plan = await f.service.preview(f.game, { ...f.request, knownComponents: [{ sha256: hash(bytes), role: 'core' }] });
+  assert.equal(plan.addonCompatibility.retire.find(row => row.path === file)?.mandatory, true);
+  assert.equal(plan.addonCompatibility.keep.some(row => row.path === path.join(runtime, INSTALLED_NAMES.addon)), true);
+  await f.service.apply(plan.planId); assert.equal(fs.existsSync(file), false);
+  assert.equal((await f.service.inspect(f.game)).ready, true);
 });
 
 test('external source addons are isolated through their bound WAL and restored to original paths outside the game root', async t => {
@@ -253,6 +365,84 @@ test('UTF-8 BOM survives a first external round trip and a changed root proxy is
   assert.equal(fs.readFileSync(rootProxy, 'utf8'), 'external replacement proxy');
   fs.writeFileSync(rootProxy, loader); await f.service.remove(f.game, 'restore');
   assert.deepEqual(fs.readFileSync(path.join(f.dir, 'ReShade.ini')), original);
+});
+
+test('rescue repairs a changed loader path and missing Core without following the new path or resetting personal INI', async t => {
+  const f = fixture(t), installed = await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = installed.layout.runtimeDir, loader = path.join(f.dir, 'ReShade.ini');
+  const unrelated = path.join(f.root, 'foreign'); fs.mkdirSync(unrelated); fs.writeFileSync(path.join(unrelated, 'keep.dll'), 'unrelated');
+  const edited = `[GENERAL]\nBasePath=${unrelated}\n[ADDON]\nAddonPath=${unrelated}\n`;
+  fs.writeFileSync(loader, edited); fs.unlinkSync(path.join(runtime, INSTALLED_NAMES.addon));
+  const config = path.join(runtime, INSTALLED_NAMES.config); fs.writeFileSync(config, '[NRBeforeSR]\nIntensity=1.23456\n');
+  const state = await f.service.inspect(f.game); assert.equal(state.ready, false); assert.equal(state.rescue.available, true); assert.equal(state.rescue.pending, false);
+  await assert.rejects(f.service.previewRemove(f.game), { code: 'DEPLOYMENT_FILE_CHANGED' });
+  const preview = await f.service.previewRescue(f.game, 'repair');
+  assert.equal(fs.readFileSync(loader, 'utf8'), edited); assert.equal(fs.existsSync(preview.archiveDirectory), false);
+  assert.equal(preview.changes.some(row => row.path.startsWith(unrelated)), false);
+  await assert.rejects(f.service.applyRescue(f.game, preview.planId), { code: 'DEPLOYMENT_RESCUE_CONFIRM_REQUIRED' });
+  const result = await f.service.applyRescue(f.game, preview.planId, { confirm: true });
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  assert.equal(fs.readFileSync(config, 'utf8'), '[NRBeforeSR]\nIntensity=1.23456\n');
+  const archive = JSON.parse(fs.readFileSync(path.join(result.archiveDirectory, 'operation.json')));
+  const row = archive.files.find(item => item.file === loader);
+  assert.equal(fs.readFileSync(path.join(result.archiveDirectory, row.snapshot), 'utf8'), edited);
+  assert.equal(fs.readFileSync(path.join(unrelated, 'keep.dll'), 'utf8'), 'unrelated');
+});
+
+test('rescue clean archives modified owned bytes, tolerates deleted files and leaves unrelated plugins intact', async t => {
+  const f = fixture(t), installed = await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const runtime = installed.layout.runtimeDir, addon = path.join(runtime, INSTALLED_NAMES.addon);
+  fs.writeFileSync(addon, 'outside replacement Core'); fs.unlinkSync(path.join(runtime, INSTALLED_NAMES.runtime));
+  fs.writeFileSync(path.join(f.dir, 'ReShade.ini'), '[ADDON]\nAddonPath=untrusted-path\n');
+  fs.writeFileSync(path.join(runtime, 'unrelated.addon64'), 'private unrelated addon');
+  const preview = await f.service.previewRescue(f.game, 'clean');
+  assert.equal(fs.readFileSync(addon, 'utf8'), 'outside replacement Core');
+  const result = await f.service.applyRescue(f.game, preview.planId, { confirm: true });
+  assert.equal(result.removed, true); assert.equal(fs.existsSync(addon), false);
+  assert.equal(fs.readFileSync(path.join(runtime, 'unrelated.addon64'), 'utf8'), 'private unrelated addon');
+  assert.equal(fs.readFileSync(path.join(f.dir, 'ReShade.ini'), 'utf8'), f.original);
+  assert.equal((await f.service.inspect(f.game)).installed, false);
+  const archive = JSON.parse(fs.readFileSync(path.join(result.archiveDirectory, 'operation.json'))), row = archive.files.find(item => item.file === addon);
+  assert.equal(fs.readFileSync(path.join(result.archiveDirectory, row.snapshot), 'utf8'), 'outside replacement Core');
+  const reinstalled = await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  assert.equal(reinstalled.applied, true); assert.equal((await f.service.inspect(f.game)).ready, true);
+});
+
+test('rescue rechecks preview hashes, process state and receipt identity before writing', async t => {
+  let running = false;
+  const f = fixture(t, { guards: { antiCheatPresent: () => false, assertGameClosed: async () => { if (running) throw Object.assign(new Error('game running'), { code: 'ERR_GAME_RUNNING' }); } } });
+  await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const file = path.join(f.dir, 'ReShade.ini'); fs.writeFileSync(file, 'edited');
+  const stale = await f.service.previewRescue(f.game, 'repair'); fs.writeFileSync(file, 'edited again');
+  await assert.rejects(f.service.applyRescue(f.game, stale.planId, { confirm: true }), { code: 'DEPLOYMENT_PLAN_CHANGED' });
+  assert.equal(fs.existsSync(stale.archiveDirectory), false); assert.equal(fs.readFileSync(file, 'utf8'), 'edited again');
+  const live = await f.service.previewRescue(f.game, 'repair'); running = true;
+  await assert.rejects(f.service.applyRescue(f.game, live.planId, { confirm: true }), { code: 'ERR_GAME_RUNNING' });
+  assert.equal(fs.existsSync(f.pending), false); assert.equal(fs.readFileSync(file, 'utf8'), 'edited again');
+});
+
+test('failed rescue publication rolls back to the edited pre-rescue bytes and leaves a retryable plan', async t => {
+  let fail = false;
+  const f = fixture(t, { afterWrite: () => { if (fail) throw new Error('injected rescue failure'); } });
+  await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const file = path.join(f.dir, 'ReShade.ini'); fs.writeFileSync(file, 'edited before rescue');
+  const preview = await f.service.previewRescue(f.game, 'repair'); fail = true;
+  await assert.rejects(f.service.applyRescue(f.game, preview.planId, { confirm: true }), /injected rescue failure/);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'edited before rescue'); assert.equal(fs.existsSync(f.pending), false);
+  fail = false; await f.service.applyRescue(f.game, (await f.service.previewRescue(f.game, 'repair')).planId, { confirm: true });
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+});
+
+test('rescue refuses a linked owned file and cannot turn damaged payload snapshots into a repair', async t => {
+  const f = fixture(t), installed = await f.service.apply((await f.service.preview(f.game, f.request)).planId);
+  const addon = path.join(installed.layout.runtimeDir, INSTALLED_NAMES.addon), saved = JSON.parse(fs.readFileSync(f.receipt));
+  const history = path.join(path.dirname(installed.layout.runtimeDir), 'history', saved.generation), wal = JSON.parse(fs.readFileSync(path.join(history, 'operation.json')));
+  const row = wal.files.find(item => item.file === addon); fs.unlinkSync(addon);
+  fs.writeFileSync(path.join(history, row.prepared), 'damaged backup');
+  await assert.rejects(f.service.previewRescue(f.game, 'repair'), { code: 'DEPLOYMENT_RESCUE_SOURCE_MISSING' });
+  const other = path.join(f.root, 'outside.addon64'); fs.writeFileSync(other, 'foreign'); fs.linkSync(other, addon);
+  await assert.rejects(f.service.previewRescue(f.game, 'clean'), /链接|link/i);
+  assert.equal(fs.readFileSync(other, 'utf8'), 'foreign'); assert.equal(fs.existsSync(f.pending), false);
 });
 
 test('an invalid output prefix and a partial initial copy never leave a live component or file WAL', async t => {

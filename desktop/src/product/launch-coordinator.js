@@ -11,7 +11,7 @@ function createLaunchCoordinator({ service, settings, legacySrModel, guards, com
     return current;
   }
   const closed = id => guards.assertGameClosed(service.gameDirectory(id), service.gameExecutable(id));
-  const hasComponentReceipt = id => fs.existsSync(path.join(service.gameDirectory(id), '_DLSS5_Backup', 'xiaofeng-fg-components.json'));
+  const hasComponentReceipt = id => ['xiaofeng-fg-components.json', 'xiaofeng-fg-sm86.json'].some(name => fs.existsSync(path.join(service.gameDirectory(id), '_DLSS5_Backup', name)));
   async function launchFailure(id, error, phase, launchSettings) {
     const outcomes = Array.isArray(launchSettings) ? launchSettings : [];
     let ownedDomains = null;
@@ -140,7 +140,11 @@ function createLaunchCoordinator({ service, settings, legacySrModel, guards, com
       return { ...snapshot, fgComponents };
     },
     assertMutationReady: id => settings.assertReady(id),
-    async removeLibraryEntry(id) {
+    async removeLibraryEntry(id, options = {}) {
+      if (options.keepFiles === true) {
+        if (options.confirm !== true) throw Object.assign(new Error('请确认仅移出游戏库；游戏文件、备份与未完成恢复记录都会保留。'), { code: 'LIBRARY_CONFIRM_REQUIRED' });
+        return service.dismissGame(id, { keepFiles: true, confirm: true, waitingArchive: options.waitingArchive });
+      }
       await settings.assertReady(id);
       if (await settings.hasOwnedState(id) || hasComponentReceipt(id) || (await legacySrModel.migrationInfo(id))?.baselineCaptured)
         throw Object.assign(new Error('请先恢复超分补帧设置与组件，再移出游戏库。'), { code: 'LIBRARY_RESTORE_FIRST' });
@@ -160,7 +164,7 @@ function createLaunchCoordinator({ service, settings, legacySrModel, guards, com
       if (!selection || typeof selection.root !== 'string' || typeof selection.executable !== 'string') {
         return service.addManualSelection(selection);
       }
-      for (const name of ['xiaofeng-launch-settings.json', 'xiaofeng-fg-components.json']) {
+      for (const name of ['xiaofeng-launch-settings.json', 'xiaofeng-fg-components.json', 'xiaofeng-fg-sm86.json']) {
         const file = path.join(selection.root, '_DLSS5_Backup', name);
         if (!fs.existsSync(file)) continue;
         let record; try { record = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {

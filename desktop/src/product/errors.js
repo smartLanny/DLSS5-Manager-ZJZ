@@ -9,6 +9,7 @@ const MESSAGES = Object.freeze({
   CORE_UPDATE_BASE_REQUIRED: '此测试 Core 仅更新已有的 DX12 原生安装。请先使用默认 Core 完成 DX12 安装，再预览切换。',
   ERR_UNSUPPORTED_API: '所选组件不支持这条图形路线。DirectX 11 需要包含配套 carrier 的兼容包；其他图形 API 暂不支持。',
   ERR_API_SELECTION_REQUIRED: '图形 API 证据不足或存在多条路线，请进入游戏详情，按游戏的实际启动设置选择 API。',
+  INPUT_ROUTE_UNCONFIRMED: '尚未确认原生 DLSS 输入，请在安装页选择“使用原生 DLSS”或“使用 Feeder”。当前 Core 和 API 选择会保留。',
   ERR_API_ROUTE_PENDING: '游戏 API 选择与已部署组件不一致，请先点击修复或应用版本，再启动游戏。',
   ERR_CARRIER_NOT_SELECTED: 'DX11 兼容桥接尚未就绪。请确认游戏 API 为 DirectX 11，再使用完整配套组件安装或修复；桥接会自动配置。',
   ERR_UNSUPPORTED_BITNESS: '当前基础版只支持 64 位游戏。',
@@ -128,7 +129,7 @@ function normalizeError(error) {
     errBackendRecovery: 'ERR_BACKUP_INVALID'
   };
   const code = Object.hasOwn(codeMap, originalCode) ? codeMap[originalCode] : originalCode || 'ERR_INTERNAL';
-  const vulkanError = /^(VULKAN_|FEEDER_|SPECIAL_|GAME_LAUNCH_|GAME_API_|RDR2_|REGISTRY_|REF_|PREPARATION_|ENVIRONMENT_|DEPLOYMENT_|OPERATION_|LAUNCH_|HELPER_|ASSESSMENT_)[A-Z_]+$/.test(code);
+  const vulkanError = /^(VULKAN_|FEEDER_|LEGACY_|EXTERNAL_PROVIDER_|SPECIAL_|GAME_LAUNCH_|GAME_API_|RDR2_|REGISTRY_|REF_|PREPARATION_|ENVIRONMENT_|DEPLOYMENT_|OPERATION_|LAUNCH_|HELPER_|ASSESSMENT_|LIBRARY_|WAITING_)[A-Z_]+$/.test(code);
   const details = safeDetails(incoming.details || incoming.params || {});
   for (const field of ['phase', 'gameStarted', 'recoveryStateKnown', 'recoverableDomains']) {
     if (details[field] === undefined && incoming[field] !== undefined) Object.assign(details, safeDetails({ [field]: incoming[field] }));

@@ -69,12 +69,17 @@ test('RenoDX HDR, Generic NR, DLSS5 Tool, project Core and MFG declarations stay
   f.put('neutral-generic.addon64', 'RenoDX Generic NR'); f.put('neutral-dlss5.addon64', 'renodx-dlss5');
   f.put('neutral-core.addon64', 'NRBeforeSR'); f.put('neutral-fg.addon64', 'MFG Unlock');
   f.put('neutral-unknown.addon64', 'DLSS NVNGX HDR success=800');
+  f.put('neutral-nr.addon64', 'RenoDX NR'); f.put('neutral-dlssnr.addon64', '', { metadata: 'renodx-dlssnr' });
+  f.put('renodx-dlssnr.addon64', 'ordinary binary DLSS NGX references');
   const result = await f.inspect(), row = name => result.files.find(value => value.name === name);
   assert.equal(row('renodx-hdr.addon64').classification, 'renodx-hdr'); assert.equal(row('renodx-hdr.addon64').source, 'filename'); assert.equal(row('renodx-hdr.addon64').confidence, 'hint');
   assert.equal(row('neutral-hdr.addon64').source, 'pe-metadata'); assert.equal(row('neutral-hdr.addon64').confidence, 'declared');
   assert.equal(row('neutral-generic.addon64').classification, 'renodx-generic-nr'); assert.equal(row('neutral-dlss5.addon64').classification, 'renodx-dlss5');
   assert.equal(row('neutral-core.addon64').classification, 'core'); assert.equal(row('neutral-core.addon64').source, 'content-declaration');
   assert.equal(row('neutral-fg.addon64').classification, 'mfgunlock'); assert.equal(row('neutral-unknown.addon64').classification, 'unknown');
+  assert.equal(row('neutral-nr.addon64').classification, 'renodx-generic-nr'); assert.equal(row('neutral-nr.addon64').confidence, 'declared');
+  assert.equal(row('neutral-dlssnr.addon64').classification, 'renodx-generic-nr'); assert.equal(row('neutral-dlssnr.addon64').source, 'pe-metadata');
+  assert.equal(row('renodx-dlssnr.addon64').confidence, 'hint');
   assert.equal(result.conflicts.length, 0); assert.ok(result.files.every(value => value.runtimeVerified === false));
   const coexistence = result.warnings.find(value => value.code === 'COMPONENT_NR_COEXISTENCE_UNVERIFIED'); assert.ok(coexistence);
   assert.equal(coexistence.paths.some(file => /hdr/i.test(file)), false); assert.equal(coexistence.paths.some(file => /fg\.addon64/.test(file)), false);

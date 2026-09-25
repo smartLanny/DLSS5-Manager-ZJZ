@@ -42,7 +42,10 @@ function runtimeFixture(root, pe, loader) {
     coreFileName: 'fixture-feeder-core.addon64', coreVariant: { requiredInterface: 'NRExternalProviderV1', genericCoreInterchangeable: false }, assets };
   put(path.join(pool, 'manifest.json'), JSON.stringify(manifest));
   const lock = { manifestFingerprint: fingerprint(manifest), restorableRecipeFingerprints: [] };
-  const runtime = createLegacyRuntime({ appDir: root, root: pool, pe, lock });
+  const runtime = createLegacyRuntime({ appDir: root, root: pool, pe, lock,
+    // Exercise the explicitly constructed 0.15.1 owner, independent of any
+    // external-provider selection that AppService may import for other tests.
+    externalProviders: { selectedId: () => null } });
   for (const loadingBackend of ['local', 'hoyoshade']) lock.restorableRecipeFingerprints.push(runtime.load({ api: 'dx11', architecture: 'x64', hardwareFamily: 'RTX50', loadingBackend }).fingerprint);
   return runtime;
 }

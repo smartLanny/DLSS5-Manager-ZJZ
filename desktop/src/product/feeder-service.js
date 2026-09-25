@@ -175,6 +175,14 @@ function createFeederService(options) {
     const evidence = await readFeederEvidence({ exeDir: target.dir, lastLaunch: row.lastLaunch });
     return { ...info, ...evidence, ready, components: files, blockers, reason: info.reason || blockers[0] || null };
   }
+  async function verifySource(game, request = {}) {
+    const target = selected(game), info = summary(game);
+    if (!info.available) fail(info.needsRecovery ? 'FEEDER_RECOVERY_FIRST' : 'FEEDER_UNAVAILABLE', info.reason);
+    const pkg = await runtime.verify(); pathBudget(target, pkg.recipe);
+    if (pe.getBitness(target.exe) !== 64) fail('FEEDER_GAME_ARCH', 'Feeder 首批只支持真实 x64 EXE。');
+    if (request.version !== undefined && ![pkg.recipe.id, pkg.recipe.coreVersion].includes(request.version)) fail('FEEDER_PACKAGE_LOCKED', 'Feeder 必须使用完整固定配套。');
+    return { ready: true, packageId: pkg.recipe.id, coreVersion: pkg.recipe.coreVersion, identity: pkg.fingerprint, runtimeVerified: false };
+  }
   async function previewInstall(game, installOptions = {}) {
     const target = selected(game), info = summary(game);
     if (!info.available) fail(info.needsRecovery ? 'FEEDER_RECOVERY_FIRST' : 'FEEDER_UNAVAILABLE', info.reason);
@@ -352,6 +360,6 @@ function createFeederService(options) {
     await noLinks(target.addonDir);
     return target.addonDir;
   }
-  return Object.freeze({ summary, inspect, diagnose: inspect, install, restore, previewInstall, previewRestore, launch, configDir, feedbackLogDirectory });
+  return Object.freeze({ summary, inspect, diagnose: inspect, verifySource, install, restore, previewInstall, previewRestore, launch, configDir, feedbackLogDirectory });
 }
 module.exports = { createFeederService, PRODUCT, PROXIES };

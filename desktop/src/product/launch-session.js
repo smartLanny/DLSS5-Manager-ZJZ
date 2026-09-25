@@ -36,7 +36,7 @@ function createLaunchSessions({ userData, game, broker, processes, helper = null
     if (active.has(id)) fail('LAUNCH_BUSY', '该游戏正在启动，请等待或取消本次等待。');
     const target = await game(id);
     assertLaunchNotCancelled(controls);
-    if (!target || !path.isAbsolute(target.exe || '') || !['steam', 'exe', 'hoyoplay', 'starward'].includes(target.launchMode)) fail('LAUNCH_TARGET', '没有可验证的启动入口。');
+    if (!target || !path.isAbsolute(target.exe || '') || !['steam', 'exe', 'official', 'hoyoplay', 'starward'].includes(target.launchMode)) fail('LAUNCH_TARGET', '没有可验证的启动入口。');
     const hoyo = ['hoyoplay', 'starward'].includes(target.launchMode);
     if (hoyo && (!target.helper || !launchHoYo)) fail('LAUNCH_HELPER_UNAVAILABLE', '米哈游路线需要已绑定的启动器和加载助手。');
     const row = { version: 1, sessionId: crypto.randomUUID(), gameId: id, targetExe: target.exe, mode: target.launchMode,
@@ -78,12 +78,16 @@ function createLaunchSessions({ userData, game, broker, processes, helper = null
         const steamExe = path.join(target.steamRoot, 'steam.exe');
         row._launchRequested = true;
         await broker.launch({ exe: steamExe, args: ['-applaunch', String(target.steamAppId)], cwd: target.steamRoot }, cancellation);
+      } else if (row.mode === 'official') {
+        if (!target.launchRequest || !path.isAbsolute(target.launchRequest.exe || '')) fail('LAUNCH_OFFICIAL_UNVERIFIED', '没有可验证的官方启动器入口。');
+        row._launchRequested = true;
+        await broker.launch(target.launchRequest, cancellation);
       } else {
         row._launchRequested = true;
         if (launchDirect) await launchDirect(id);
         else await broker.launch({ exe: target.exe, args: target.args || [], cwd: path.dirname(target.exe) }, cancellation);
       }
-      await save(row, row.mode === 'steam' || hoyo ? 'waiting-launcher' : 'waiting-game');
+      await save(row, row.mode === 'steam' || row.mode === 'official' || hoyo ? 'waiting-launcher' : 'waiting-game');
       const deadline = now() + (hoyo ? hoyoTimeoutMs : timeoutMs), requested = Date.parse(row.requestedAt);
       while (now() <= deadline) {
         if (cancellation.cancelled()) fail('LAUNCH_CANCELLED', '已取消等待；已发送的启动请求不会撤回，也不会结束游戏。');

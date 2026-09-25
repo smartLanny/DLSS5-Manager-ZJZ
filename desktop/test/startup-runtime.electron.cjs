@@ -10,6 +10,13 @@ const arg = name => process.argv.find(value => value.startsWith(`--${name}=`))?.
 const root = arg('startup-smoke-root'), mainFile = arg('startup-smoke-main');
 if (!root || !mainFile || !path.isAbsolute(root) || !path.isAbsolute(mainFile)) throw new Error('Startup smoke requires explicit isolated paths.');
 const appRoot = path.dirname(mainFile), userData = path.join(root, 'user-data');
+// When the tested entry lives inside a packaged app.asar, Electron was still
+// launched from the development runtime and would otherwise expose that
+// runtime's resources directory. Point resource lookups at the candidate so
+// helpers and extraResources are exercised from the actual package.
+if (path.basename(appRoot).toLowerCase() === 'app.asar') {
+  Object.defineProperty(process, 'resourcesPath', { value: path.dirname(appRoot), configurable: true });
+}
 fs.mkdirSync(userData, { recursive: true });
 app.setPath('userData', userData);
 app.setPath('sessionData', userData);
@@ -27,7 +34,7 @@ async function finish(ok, message) {
   const window = BrowserWindow.getAllWindows()[0];
   let documentState = null;
   if (ok) {
-    try { documentState = await window.webContents.executeJavaScript('(async()=>{const startupContext=await window.manager?.getStartupContext?.();await Promise.resolve();return {title:document.title,readyState:document.readyState,preloadConnected:typeof window.manager?.startupReady==="function",bodyVisible:Boolean(document.body&&document.body.getClientRects().length),startupContext:startupContext?.value,startupPrivilege:document.getElementById("startupPrivilege")?.textContent,startupMode:document.getElementById("startupMode")?.textContent};})()'); }
+    try { documentState = await window.webContents.executeJavaScript('(async()=>{const deadline=Date.now()+3000;let startupContext,privilege,mode;do{startupContext=await window.manager?.getStartupContext?.();privilege=document.getElementById("startupPrivilege")?.textContent;mode=document.getElementById("startupMode")?.textContent;if(privilege!=="正在读取…"&&mode!=="正在读取…")break;await new Promise(resolve=>setTimeout(resolve,50));}while(Date.now()<deadline);return {title:document.title,readyState:document.readyState,preloadConnected:typeof window.manager?.startupReady==="function",bodyVisible:Boolean(document.body&&document.body.getClientRects().length),startupContext:startupContext?.value,startupPrivilege:privilege,startupMode:mode};})()'); }
     catch (error) { ok = false; message = error.message; }
   }
   const preferences = window?.webContents.getLastWebPreferences();

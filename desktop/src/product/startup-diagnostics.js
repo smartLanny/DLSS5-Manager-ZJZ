@@ -7,7 +7,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const MAX_LOG = 64 * 1024;
 const LOG_NAME = /^startup-[a-f0-9-]{36}[.]log$/;
-const PROCESS_LAUNCH_GUIDANCE = '请先导出启动诊断；可手动运行独立的“兼容启动.cmd”进行临时排障。默认启动保留沙箱，不会自动切换兼容模式。';
+const PROCESS_LAUNCH_GUIDANCE = '已记录 Electron 子进程启动失败；错误框可提供一次临时兼容重试。正常启动始终保留沙箱，重试选择不会保存。';
 
 function createStartupDiagnostics(options = {}) {
   const sessionId = crypto.randomUUID();
@@ -55,7 +55,7 @@ function createStartupDiagnostics(options = {}) {
     try {
       const old = fs.readdirSync(directory).filter(name => LOG_NAME.test(name)).map(name => ({ name, stat: fs.lstatSync(path.join(directory, name)) }))
         .filter(row => row.stat.isFile() && !row.stat.isSymbolicLink()).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
-      for (const row of old.slice(4)) if (row.name !== path.basename(file || '')) fs.unlinkSync(path.join(directory, row.name));
+      for (const row of old.slice(10)) if (row.name !== path.basename(file || '')) fs.unlinkSync(path.join(directory, row.name));
     } catch {}
   }
   function report() {
@@ -64,7 +64,7 @@ function createStartupDiagnostics(options = {}) {
     if (directory) {
       try {
         const files = fs.readdirSync(directory).filter(name => LOG_NAME.test(name)).map(name => ({ name, stat: fs.lstatSync(path.join(directory, name)) }))
-          .filter(row => row.stat.isFile() && !row.stat.isSymbolicLink()).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs).slice(0, 4);
+          .filter(row => row.stat.isFile() && !row.stat.isSymbolicLink()).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs).slice(0, 10);
         for (const row of files) {
           const fd = fs.openSync(path.join(directory, row.name), 'r');
           try {
@@ -123,7 +123,8 @@ function watchWindow(window, { log, fail, onReady }, timeoutMs = 25000) {
     const launchFailure = ['launch-failed', 'integrity-failure'].includes(details.reason);
     const message = `${details.reason}; exitCode=${details.exitCode}${launchFailure ? `。${PROCESS_LAUNCH_GUIDANCE}` : ''}`;
     fail(launchFailure ? '界面子进程无法启动' : '界面进程意外退出',
-      Object.assign(new Error(message), { type: 'Renderer', reason: details.reason, exitCode: details.exitCode }), !launchFailure);
+      Object.assign(new Error(message), { type: 'Renderer', reason: details.reason, exitCode: details.exitCode,
+        sandboxFailure:launchFailure }), !launchFailure);
   });
   window.on('unresponsive', () => { startupFailed = true; log('window-unresponsive', { visible }); fail('界面暂时无响应', new Error('界面没有响应，请先导出诊断。'), true); });
   window.once('closed', () => { startupFailed = true; clear(); });

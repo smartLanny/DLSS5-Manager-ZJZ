@@ -49,6 +49,59 @@ function fixture(t, alter = value => value) {
     packages: createExternalProviderPackages({ root, currentCore, currentRuntime }) };
 }
 
+test('verified bundled Providers are usable and per-operation selection leaves global choices intact', t => {
+  const f = fixture(t), row = f.inventory.packages[0];
+  Object.assign(row, { source: 'bundled', verifiedSource: true, immutable: true });
+  fs.writeFileSync(path.join(f.root, 'inventory.json'), JSON.stringify(f.inventory));
+  const before = fs.readFileSync(path.join(f.root, 'inventory.json'), 'utf8');
+  let chosen = row.id;
+  const packages = createExternalProviderPackages({ root: f.root, currentCore: f.currentCore, currentRuntime: f.currentRuntime,
+    selectCandidate: () => chosen });
+  const selection = { api: 'dx11', architecture: 'x64', hardwareFamily: 'RTX50', loadingBackend: 'local' };
+  assert.equal(packages.load({ selection }).recipe.coreVersion, 'D15');
+  assert.equal(fs.readFileSync(path.join(f.root, 'inventory.json'), 'utf8'), before);
+  chosen = undefined;
+  assert.equal(packages.selectedId(selection), null);
+  row.verifiedSource = false;
+  fs.writeFileSync(path.join(f.root, 'inventory.json'), JSON.stringify(f.inventory));
+  assert.equal(packages.inspect().packages[0].selectable, false);
+});
+
+test('a compatible Core never converts a local Provider route into an undeclared HoYo or helper route', t => {
+  const capabilities = ['same-frame-output', 'source-frame-claims', 'external-exact-fence-completion', 'present-color-depth-motion'];
+  const f = fixture(t, value => { value.interface.requiredCoreCapabilities = capabilities; return value; });
+  f.currentCore.capabilities = [...capabilities];
+  const selection = { api: 'dx11', architecture: 'x64', hardwareFamily: 'RTX50', loadingBackend: 'local' };
+  const before = fs.readFileSync(path.join(f.root, 'inventory.json'));
+  const pkg = f.packages.load({ id: 'provider-v1-fixture', selection });
+  assert.equal(pkg.recipe.loadingBackend, 'local');
+  for (const loadingBackend of ['hoyoshade', 'helper'])
+    assert.throws(() => f.packages.load({ id: 'provider-v1-fixture', selection: { ...selection, loadingBackend } }),
+      { code: 'EXTERNAL_PROVIDER_ROUTE_UNAVAILABLE' });
+  const forged = structuredClone(pkg.recipe); forged.selection.loadingBackend = forged.loadingBackend = 'hoyoshade';
+  assert.throws(() => f.packages.validateRecipe(forged));
+  assert.deepEqual(fs.readFileSync(path.join(f.root, 'inventory.json')), before);
+});
+
+test('an explicitly ABI-compatible Core carries only complete whitelisted resources; Feature1-only unified3 remains refused', async t => {
+  const f = fixture(t), names = require('../src/product/payload-companions').NAMES;
+  for (const name of names) {
+    const bytes = Buffer.from('resource:' + name), sha256 = hash(bytes), file = `objects/${sha256}/${path.basename(name)}`;
+    const target = path.join(f.root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, bytes);
+    const row = { name, file, sha256, bytes: bytes.length };
+    f.inventory.packages[1].files.push(row); f.currentCore.companions.push({ ...row, role: 'core-resource' });
+  }
+  fs.writeFileSync(path.join(f.root, 'inventory.json'), JSON.stringify(f.inventory));
+  const selection = { api: 'dx11', architecture: 'x64', hardwareFamily: 'RTX50', loadingBackend: 'local' };
+  const load = () => f.packages.load({ id: 'provider-v1-fixture', selection });
+  const recipe = load().recipe;
+  assert.equal(recipe.files.filter(row => row.role === 'core-resource').length, 7);
+  assert.deepEqual(f.packages.validateRecipe(recipe), recipe);
+  f.currentCore.companions.pop(); assert.throws(load);
+  f.currentCore.id = '0.5-dline21-unified3'; f.currentCore.inputInterfaces = ['NGX-D3D12-Feature1'];
+  assert.throws(load, { code: 'EXTERNAL_PROVIDER_CORE_INCOMPATIBLE' });
+});
+
 test('a selected v1 provider injects the current ABI-compatible Core and shared runtime by exact digest', async t => {
   const f = fixture(t), before = f.packages.inspect();
   assert.equal(before.packages[0].selectable, true); assert.equal(before.packages[0].runtimeVerified, false);
