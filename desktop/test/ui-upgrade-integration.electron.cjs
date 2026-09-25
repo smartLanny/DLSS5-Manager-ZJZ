@@ -75,9 +75,13 @@ app.whenReady().then(async () => {
     });
     await check(() => document.querySelector('[data-gp-group="route"][data-gp-field="version"]').value === '0.5-dline12', 'installed D12 survives curated menu');
     await check(() => {
-      const options = [...document.querySelector('[data-gp-group="route"][data-gp-field="version"]').options];
+      // Older Cores such as D21 are listed under the rollback section, not the main picker.
+      const options = [...document.querySelectorAll('[data-gp-group="route"][data-gp-field="version"] option')];
       return options.some(row => row.value === 'unavailable-core-d21' && row.disabled) && options.some(row => row.value === '0.5-dline12' && !row.disabled);
     }, 'unavailable D21 cannot masquerade as installed D12');
+    // NR controls live on their own tab since the unified settings layout.
+    await evaluate(() => document.querySelector('.game-detail [data-gp-tab="nr"]').click());
+    await until(() => document.querySelector('.game-detail [data-gp-group="nr"][data-gp-field="Intensity"]'), 'NR tab');
     for (const motion of ['on', 'off']) for (const [width, height] of [[1100, 780], [900, 620]]) {
       win.setContentSize(width, height);
       await evaluate(motion => {
