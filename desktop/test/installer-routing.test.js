@@ -163,7 +163,8 @@ function fixture(t, api = 'dx12', options = {}) {
     scan: scanModule,
     guards: options.guards || { antiCheatPresent: () => false, assertGameClosed: async () => {} },
     pe: { getBitness: () => 64 },
-    ...(options.copyFile ? { copyFile: options.copyFile } : {})
+    ...(options.copyFile ? { copyFile: options.copyFile } : {}),
+    ...(options.bridges ? { bridges: options.bridges } : {})
   });
   return { root, gameDir, exeDir, exePath, payload, scan, installer };
 }
@@ -283,6 +284,23 @@ test('ReShade case-sensitive keys stay untouched and the fixed carrier registrat
       carrier: repaired.components.find(row => row.key === 'carrier')
     }, null, 2)}\n`);
   }
+});
+
+test('name-only carrier exclusion follows the registration name of the installed Bridge', async t => {
+  // #224: BG3 keeps the 1.4.11 fallback Bridge, whose ReShade name differs from 1.4.12.
+  const registry = require('../src/product/component-registry');
+  const fallback = registry.BRIDGES.find(row => row.upstreamVersion === '1.4.11');
+  const carrierHash = require('crypto').createHash('sha256').update('payload-carrier').digest('hex');
+  const f = fixture(t, 'dx11', { bridges: { BRIDGES: registry.BRIDGES, bridgeByHash: hash => hash === carrierHash ? fallback : null } });
+  const reshadeIni = path.join(f.exeDir, 'ReShade.ini');
+  await f.installer.install({ gameDir: f.gameDir, payload: f.payload, scan: f.scan });
+  fs.writeFileSync(reshadeIni, '[ADDON]\nDisabledAddons=DLSS 5 Bridge 1.4.11\n');
+  const disabled = await f.installer.diagnose({ gameDir: f.gameDir, payload: f.payload, scan: f.scan });
+  assert.equal(disabled.complete, false, 'the 1.4.11 name disables the installed 1.4.11 carrier');
+  assert.match(disabled.components.find(row => row.key === 'carrier').detail, /注册名.*手动启用/);
+  fs.writeFileSync(reshadeIni, '[ADDON]\nDisabledAddons=DLSS 5 Bridge 1.4.12\n');
+  const other = await f.installer.diagnose({ gameDir: f.gameDir, payload: f.payload, scan: f.scan });
+  assert.equal(other.components.find(row => row.key === 'carrier').ok, true, 'another Bridge name does not disable this carrier');
 });
 
 test('real PR160 receipt refuses restore after Manager changes its applied INI', {
