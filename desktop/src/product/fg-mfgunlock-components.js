@@ -208,8 +208,12 @@ function createMfgUnlockComponents(options = {}) {
       if (support?.status !== 'supported' || !['native-integration', 'catalog', 'trusted-mod', 'runtime'].includes(support?.source) ||
           support?.capabilities?.mfgUnlock?.available !== true)
         blockers.push(support?.message || '未确认所选游戏已有可信 Streamline 帧生成集成及兼容 MFG 运行库；此组件不会添加游戏原本没有的 FG。');
-      if (observed?.reshadeAddon !== true) blockers.push('请先准备并确认支持完整 Add-on 的 ReShade。');
-      if (observed?.reshadeAddonDirectory && !same(observed.reshadeAddonDirectory, t.dir)) blockers.push('扫描到的 Add-on 目录与已确认活动布局不同，请先刷新布局。');
+      // HoYoShade layouts load the Manager's fixed full add-on ReShade from their
+      // external runtime directory (its hash is checked when the layout is read),
+      // so the game-directory scan cannot see that loader.
+      const managedExternalLoader = t.layout?.mode === 'external' && t.layout.verified === true && t.layout.loadingBackend === 'hoyoshade';
+      if (observed?.reshadeAddon !== true && !managedExternalLoader) blockers.push('请先准备并确认支持完整 Add-on 的 ReShade。');
+      if (!managedExternalLoader && observed?.reshadeAddonDirectory && !same(observed.reshadeAddonDirectory, t.dir)) blockers.push('扫描到的 Add-on 目录与已确认活动布局不同，请先刷新布局。');
       const iniFile = t.configFile; await noLinks(iniFile);
       const layout = t.layout ? { ok: true } : inspectAddonLayout(t.dir, options.environment || process.env);
       // NR owns its own direct-load compatibility checks. MFG needs the actual
