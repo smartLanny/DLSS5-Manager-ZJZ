@@ -33,6 +33,7 @@ function createInstaller(overrides = {}) {
   const scanModule = overrides.scan || require('../core/scan');
   const guards = overrides.guards || require('../core/install-guards');
   const pe = overrides.pe || require('../core/pe');
+  const bridges = overrides.bridges || require('./component-registry');
   const copy = overrides.copyFile || ((source, target) => fs.promises.copyFile(source, target));
   const refDigest = overrides.reframeworkFileDigest || sha256;
 
@@ -467,10 +468,16 @@ function createInstaller(overrides = {}) {
     return items;
   }
 
-  function editCarrierDisabled(text, remove = false) {
+  // Registered NAME exports of the fixed paired carriers; the add-on is never
+  // loaded to discover them. A receipt-bound carrier uses its own Bridge name.
+  function carrierRegisteredNames(manifest) {
+    const recorded = manifest?.files?.find(row => row.kind === 'carrier');
+    const known = recorded ? bridges.bridgeByHash(recorded.installedSha256) : null;
+    return known ? [known.registeredName] : [...new Set(bridges.BRIDGES.map(row => row.registeredName))];
+  }
+
+  function editCarrierDisabled(text, remove = false, registeredNames = carrierRegisteredNames(null)) {
     const carrierFile = path.basename(INSTALLED_NAMES.carrier);
-    // Fixed 28aed409 paired carrier NAME export; do not load an add-on to discover it.
-    const carrierRegisteredName = 'DLSS 5 Bridge 1.4.12';
     let section = '';
     let found = false;
     let nameOnly = false;
@@ -494,7 +501,7 @@ function createInstaller(overrides = {}) {
       let lineChanged = false;
       const kept = items.filter(item => {
         const value = item;
-        if (value === carrierRegisteredName) {
+        if (registeredNames.includes(value)) {
           found = true;
           nameOnly = true;
           return true;
@@ -515,7 +522,7 @@ function createInstaller(overrides = {}) {
   async function enableCarrier(gameDir, exeDir, manifest) {
     const file = path.join(exeDir, 'ReShade.ini');
     if (!fs.existsSync(file)) return;
-    const edited = editCarrierDisabled(fs.readFileSync(file, 'utf8'), true);
+    const edited = editCarrierDisabled(fs.readFileSync(file, 'utf8'), true, carrierRegisteredNames(manifest));
     if (!edited.changed) return;
     await captureAddonConfigOriginal(gameDir, manifest, file);
     await sidecarBackup(gameDir, file, manifest);
@@ -761,7 +768,7 @@ function createInstaller(overrides = {}) {
     components.push({ key: 'addon-layout', label: '插件加载位置', ok: addonLayout.ok,
       detail: addonLayout.ok ? null : MESSAGES[addonLayout.code] });
     const carrierDisabledState = carrierRequired && fs.existsSync(reshadeIni)
-      ? editCarrierDisabled(fs.readFileSync(reshadeIni, 'utf8'))
+      ? editCarrierDisabled(fs.readFileSync(reshadeIni, 'utf8'), false, carrierRegisteredNames(manifest))
       : { found: false, nameOnly: false };
     const carrierDisabled = carrierDisabledState.found;
 

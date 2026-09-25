@@ -418,6 +418,24 @@ test('confirmed external layout installs and restores only the pinned addon insi
   assert.equal(fs.existsSync(journal.pendingPath(active)), false); assert.equal(fs.existsSync(journal.pendingPath(f.game)), false);
 });
 
+test('HoYoShade layout counts its managed external ReShade loader as add-on support', async t => {
+  // #271: the game-directory scan cannot see the HoYoShade loader, which blocked every Apply.
+  const f = fixture(t), active = path.join(f.root, 'hoyo', 'active');
+  fs.mkdirSync(active, { recursive: true });
+  const ini = path.join(active, 'ReShade.ini'); fs.writeFileSync(ini, '[GENERAL]\nPresetPath=user.ini\n');
+  f.observed.reshadeAddon = false;
+  const external = { verified: true, mode: 'external', exe: f.exe, addonDirectory: active, activeConfigPath: ini };
+  const ordinary = createFgComponents({ ...f.options, getLayout: () => external });
+  await assert.rejects(ordinary.prepare('g'), { code: 'SETTINGS_FG_BLOCKED' }, 'an unmanaged external loader still needs add-on evidence');
+  assert.equal(fs.existsSync(path.join(active, ADDON)), false);
+  const hoyo = createFgComponents({ ...f.options, getLayout: () => ({ ...external, loadingBackend: 'hoyoshade' }) });
+  assert.equal((await hoyo.inspect('g')).blockers.some(message => message.includes('完整 Add-on')), false);
+  assert.equal((await hoyo.prepare('g')).prepared, true);
+  assert.equal(sha256(bytes(path.join(active, ADDON))), SHA256);
+  await hoyo.restore('g');
+  assert.equal(fs.existsSync(path.join(active, ADDON)), false);
+});
+
 test('external MFG interrupted copy is recoverable by its own owner without touching game peer files', async t => {
   const f = fixture(t), active = path.join(f.root, 'active'); fs.mkdirSync(active);
   const layout = { verified: true, mode: 'external', exe: f.exe, addonDirectory: active, activeConfigPath: path.join(active, 'ReShade.ini') };
