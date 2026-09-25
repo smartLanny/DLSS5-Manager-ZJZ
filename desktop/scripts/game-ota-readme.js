@@ -2,6 +2,9 @@
 const { ensureDefaultReShadeHotkey } = require('../src/product/hotkeys');
 
 const slash = value => value.replaceAll('\\', '/');
+const MFG_CATALOG = require('../src/product/fg-mfgunlock-providers.json');
+const MFG_DEFAULT = MFG_CATALOG.providers.find(row => row.id === MFG_CATALOG.defaultProvider);
+const MFG_FALLBACKS = MFG_CATALOG.providers.filter(row => row !== MFG_DEFAULT).map(row => row.version);
 function overview(plan) {
   return `游戏插件手动更新包：Core ${plan.coreVersion} / Feeder ${plan.feederVersion}
 
@@ -28,7 +31,7 @@ HoYo：只以管理器当前游戏页面显示并核验的活动运行目录为�
 
 桥接器与补帧
 原生 DX11 默认是 NIGos Bridge 1.4.12 的本项目 NR 适配版。1.4.11 回退材料放在“独立组件/桥接器回退”，仅供明确需要回退时替换同名桥接器；不要将回退目录整体复制到 Addon 加载路径。原生 DX12 不安装 DX11 桥接器。
-“独立组件/RTX40-MFGUnlock”提供官方 1.0 默认版与 0.9 回退版，来源为 https://github.com/mavismmg/MFGAdaUnlock-RenoDx/ 。旧 0.7 不进入新包，也不提供回退。原生 DLSS FG 必须已可用；安装此组件不会让不支持 FG 的游戏自动获得 FG。优先通过管理器预览、安装和恢复，手工安装仅供了解明确加载目录的用户。
+“独立组件/RTX40-MFGUnlock-${MFG_DEFAULT.version}”提供官方 ${MFG_DEFAULT.version} 默认版；${MFG_FALLBACKS.join('、')} 回退版在管理器中选择，来源为 https://github.com/mavismmg/MFGAdaUnlock-RenoDx/ 。旧 0.7 不进入新包，也不提供回退。原生 DLSS FG 必须已可用；安装此组件不会让不支持 FG 的游戏自动获得 FG。优先通过管理器预览、安装和恢复，手工安装仅供了解明确加载目录的用户。
 
 回退
 退出游戏后，移出本次新增组件，恢复更新前完整组件组与个人配置。若由管理器接管，使用管理器还原，保留备份和收据；不要在其下方手动替换文件。

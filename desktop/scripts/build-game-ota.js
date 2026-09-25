@@ -18,6 +18,8 @@ const { verify: verifyArchive } = require('./verify-release-archive');
 const readme = require('./game-ota-readme');
 const { ensureDefaultReShadeHotkey } = require('../src/product/hotkeys');
 const { ID: MFG_ID, PROVIDERS: MFG_PROVIDERS } = require('../src/product/fg-mfgunlock-resources');
+const MFG_PIN_CATALOG = require('../src/product/fg-mfgunlock-providers.json');
+const DEFAULT_MFG_FILE = `resources/fg-mfgunlock/${MFG_PROVIDERS.find(row => row.id === MFG_ID).directory}/renodx-mfgunlock.addon64`;
 
 const CORE_VERSION = '0.4.7beta';
 const HASH = /^[a-f0-9]{64}$/;
@@ -240,16 +242,17 @@ async function collectPlan({ root, mfg }) {
   await addFile(path.join(nativeRoot, 'versions', fallback.sourceVersion, INSTALLED_NAMES.carrier),
     `独立组件/桥接器回退/${INSTALLED_NAMES.carrier}`, fallback.sha256, 'x64', fallback);
   addText('仅供原生 DX11 Core 0.4.7beta 配套明确回退。退出游戏，备份并移出活动目录中的 1.4.12 桥接器后，以本文件替换同名文件；不要同时加载两版，不替换 Core／nrchain，不用于 Feeder 或 DX12。\n来源：https://github.com/smartLanny/dlss5-nr-before-sr-lab/issues/224\n实际游戏 NR 状态仍需验证。\n', '独立组件/桥接器回退/说明.txt');
-  // Manual update material follows the current 1.0 default. The Manager keeps
-  // 0.9 as a separately selectable fallback; 0.7/0.6.1 remain recovery-only.
+  // Manual update material follows the current default provider. The Manager
+  // keeps the other pinned providers selectable; 0.7/0.6.1 remain recovery-only.
   const provider = MFG_PROVIDERS.find(row => row.id === MFG_ID);
-  if (!provider || provider.version !== '1.0' || provider.sha256 !== 'f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e')
-    fail('MFG 1.0 固定记录无效。');
+  const pinnedAddon = MFG_PIN_CATALOG.providers.find(row => row.id === MFG_ID)?.files?.addon;
+  if (!provider || !pinnedAddon || provider.sha256 !== pinnedAddon.sha256) fail(`MFG ${provider?.version || MFG_ID} 固定记录无效。`);
+  const mfgFolder = `独立组件/RTX40-MFGUnlock-${provider.version}`;
   const mfgFile = path.resolve(root, mfg); await safeSource(root, mfgFile);
-  const mfgRow = await addFile(mfgFile, '独立组件/RTX40-MFGUnlock-1.0/renodx-mfgunlock.addon64', provider.sha256, 'x64',
+  const mfgRow = await addFile(mfgFile, `${mfgFolder}/renodx-mfgunlock.addon64`, provider.sha256, 'x64',
     { id: provider.id, version: provider.version, source: provider.sourceRepository, sourceUrl: provider.sourceUrl });
-  if (mfgRow.bytes !== 710144) fail('MFG 1.0 长度不符。');
-  addText(readme.mfgReadme(provider), '独立组件/RTX40-MFGUnlock-1.0/说明.txt');
+  if (mfgRow.bytes !== pinnedAddon.bytes) fail(`MFG ${provider.version} 长度不符。`);
+  addText(readme.mfgReadme(provider), `${mfgFolder}/说明.txt`);
   addText(json({ schema: 1, id: provider.id, version: provider.version, file: mfgRow.packagePath, bytes: mfgRow.bytes,
     sha256: mfgRow.sha256, source: provider.sourceRepository, download: provider.sourceUrl }), '独立组件/MFG-来源与校验.json');
   addText(readme.overview(plan), '请先阅读-更新与回退说明.txt');
@@ -303,7 +306,7 @@ async function writePackage({ root, output, plan, zipExecutable }) {
   return report;
 }
 function parseArgs(args) {
-  const options = { root: path.resolve(__dirname, '..'), mfg: 'resources/fg-mfgunlock/versions/1.0/renodx-mfgunlock.addon64' };
+  const options = { root: path.resolve(__dirname, '..'), mfg: DEFAULT_MFG_FILE };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--check') options.check = true;
     else if (['--output', '--mfg'].includes(args[i]) && args[i + 1] && !args[i + 1].startsWith('--')) {
@@ -311,7 +314,7 @@ function parseArgs(args) {
     }
     else fail(`未知或不完整参数：${args[i]}`);
   }
-  if (!options.check && !options.output) fail('用法：node scripts/build-game-ota.js --check | --output build/全新目录 [--mfg resources/fg-mfgunlock/versions/1.0/renodx-mfgunlock.addon64]');
+  if (!options.check && !options.output) fail(`用法：node scripts/build-game-ota.js --check | --output build/全新目录 [--mfg ${DEFAULT_MFG_FILE}]`);
   return options;
 }
 if (require.main === module) (async () => {

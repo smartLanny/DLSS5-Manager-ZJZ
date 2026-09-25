@@ -28,9 +28,15 @@ The configuration code itself does not implement rendering or frame generation.
 ## RTX 40 frame-generation compatibility components
 
 The current default is the official MIT-licensed
-[MFG Unlock 0.9](https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/0.9)
-ReShade Add-on, fixed at 601088 bytes and SHA-256
-`64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`.
+[MFG Unlock 1.1.5](https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/1.1.5)
+ReShade Add-on, fixed at 931328 bytes and SHA-256
+`0d04d858a62d3d19e7e3d478c0b8c46fe3ac43ec9fd11e4abb15617bd291d71a`.
+The official [1.0](https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/1.0)
+(`f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e`) and
+[0.9](https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/0.9)
+(`64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`) builds remain
+selectable fallbacks. The official 1.1 digest is recognized only so that a manual
+installation can be upgraded.
 The pinned 0.7 source-build and official 0.6.1/0.7 digests remain only for
 identifying and restoring historical managed installations. They are not
 selectable providers and do not enter new packages.
