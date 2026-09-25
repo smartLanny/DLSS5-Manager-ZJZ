@@ -6,18 +6,29 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { assertHistoricalEntry } = require('./prepare-historical-core-catalog');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_MANIFEST = process.env.DLSS5_MANAGER_STAGING ||
   path.resolve(REPO_ROOT, '..', 'manager-distribution-staging.json');
 const FAMILIES = ['RTX40', 'RTX50'];
 const FIXED_FILES = ['ReShade64.dll', 'nrchain_nvngx.dll', 'nvngx_dlssnr.dll'];
-const CORE_FILES = new Set(['nr-before-sr.zh-CN.addon64', 'nrchain_nvngx.dll', 'nr_before_sr.ini']);
+const CORE_FILES = new Set([
+  'nr-before-sr.zh-CN.addon64',
+  'nrchain_nvngx.dll',
+  'nr_before_sr.ini',
+  'dlss5-native-carrier-045-dx11-compat.addon64',
+  'dlss5-native-carrier-exp1.addon64'
+]);
+const REQUIRED_CORE_FILES = ['nr-before-sr.zh-CN.addon64', 'nr_before_sr.ini'];
 const SMALL_COMPONENT_KINDS = new Set(['bridge', 'feeder', 'host', 'vulkan']);
 const COMPONENT_ID = /^[a-z0-9][a-z0-9._+-]{0,127}$/i;
 const COMPONENT_MAX_FILE = 128 * 1024 * 1024;
 const COMPONENT_MAX_TOTAL = 512 * 1024 * 1024;
 const BUNDLED_RESOURCE_TARGETS = new Set([
+  'core-notices/unified5/LICENSES.txt',
+  'core-notices/unified5/NVIDIA-NGX-LICENSE.txt',
+  'core-notices/d13/LICENSES.txt',
   'hoyoshade/component.json',
   'loading-helper/component.json',
   'loading-helper/dlss5-load-helper.exe',
@@ -32,6 +43,7 @@ const BUNDLED_RESOURCE_TARGETS = new Set([
 const FORBIDDEN_CORE_VERSION = /(?:dline\s*13|dline\s*14|0\.5[-_.]?dline(?:13|14))/i;
 const BINARY_SUFFIX = /\.(?:dll|exe|asi|addon32|addon64|pdb)$/i;
 const HASH = /^[a-f0-9]{64}$/i;
+const STAGE_MARKER = '.dlss5-manager-stage';
 
 function fail(message, details = {}) {
   const error = new Error(message);
@@ -109,13 +121,21 @@ function forbidBundledNrRuntime(relative, label) {
   }
 }
 
-function removeExistingStage(stageRoot) {
-  const relative = path.relative(path.join(REPO_ROOT, '.packaging-stage'), path.resolve(stageRoot));
-  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    fail('stage 输出必须位于 desktop/.packaging-stage 下，避免误删源码或交付目录。', { stageRoot });
+function prepareStageRoot(stageRoot, allowedRoot = path.join(REPO_ROOT, '.packaging-stage')) {
+  const resolvedRoot = path.resolve(allowedRoot), resolvedStage = path.resolve(stageRoot);
+  const relative = path.relative(resolvedRoot, resolvedStage);
+  if (resolvedRoot === path.parse(resolvedRoot).root || !relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    fail('stage 输出必须严格位于已指定的 Manager 工作目录内。', { stageRoot: resolvedStage, allowedRoot: resolvedRoot });
   }
-  fs.rmSync(stageRoot, { recursive: true, force: true });
-  fs.mkdirSync(stageRoot, { recursive: true });
+  if (fs.existsSync(resolvedStage)) {
+    ensurePlainDirectory(resolvedStage, '既有 stage 输出');
+    if (!fs.existsSync(path.join(resolvedStage, STAGE_MARKER))) {
+      fail(`既有目录不是 Manager 生成的 stage，拒绝清理：${resolvedStage}`);
+    }
+    fs.rmSync(resolvedStage, { recursive: true, force: true });
+  }
+  fs.mkdirSync(resolvedStage, { recursive: true });
+  fs.writeFileSync(path.join(resolvedStage, STAGE_MARKER), 'DLSS5 Manager generated staging directory\n', { encoding: 'utf8', flag: 'wx' });
 }
 
 function copyTextTree(sourceRoot, targetRoot) {
@@ -150,22 +170,28 @@ function readPayloadBundle(payloadRoot) {
     if (!bundle.fixed[family]?.files || typeof bundle.fixed[family].files !== 'object') fail(`Core bundle 缺少 ${family} fixed 清单。`, { file });
     for (const name of FIXED_FILES) if (!HASH.test(String(bundle.fixed[family].files[name] || ''))) fail(`Core bundle 的 ${family}/${name} 哈希无效。`, { file });
   }
-  return bundle;
+  return require('../src/product/known-core-interfaces').reconcileBundle(bundle);
 }
 
-function assertAllowedCoreEntry(entry, version) {
+function assertPackageCoreEntry(entry, version) {
   if (!entry || typeof entry !== 'object' || !entry.files || typeof entry.files !== 'object') fail(`Core 版本没有文件清单：${version}`);
-  if (entry.coreUpdateOnly === true) fail(`选中的 Core 被标记为仅更新，不能作为首次安装默认 Core：${version}`);
-  if (entry.supportsPresent !== true || !Array.isArray(entry.inputInterfaces) || !entry.inputInterfaces.includes('NGX-D3D12-Feature1')) {
-    fail(`选中的 Core 不是当前 Manager 认可的 D15 Present/输入接口：${version}`, { supportsPresent: entry.supportsPresent, inputInterfaces: entry.inputInterfaces });
-  }
+  assertHistoricalEntry(version, entry);
   const names = Object.keys(entry.files);
   for (const name of names) {
     if (path.basename(name) !== name || !CORE_FILES.has(name)) {
-      fail(`选中的 Core 版本含未登记的 carrier/二进制，不能作为基础包默认 Core：${version}/${name}`, { version, file: name });
+      fail(`Core 版本含未登记的文件：${version}/${name}`, { version, file: name });
     }
+    if (!HASH.test(String(entry.files[name]))) fail(`Core 版本文件哈希无效：${version}/${name}`);
   }
-  for (const name of CORE_FILES) if (!entry.files[name] || !HASH.test(String(entry.files[name]))) fail(`选中的 Core 版本缺少固定文件：${version}/${name}`);
+  for (const name of REQUIRED_CORE_FILES) if (!entry.files[name]) fail(`Core 版本缺少固定文件：${version}/${name}`);
+}
+
+function assertAllowedCoreEntry(entry, version) {
+  assertPackageCoreEntry(entry, version);
+  if (entry.coreUpdateOnly === true) fail(`选中的 Core 被标记为仅更新，不能作为首次安装默认 Core：${version}`);
+  if (entry.supportsPresent !== true || !Array.isArray(entry.inputInterfaces) || !entry.inputInterfaces.includes('NGX-D3D12-Feature1')) {
+    fail(`选中的 Core 不是当前 Manager 认可的 Present/输入接口：${version}`, { supportsPresent: entry.supportsPresent, inputInterfaces: entry.inputInterfaces });
+  }
 }
 
 async function buildPayload({ stageRoot, manifest, manifestFile, flavor }) {
@@ -182,6 +208,12 @@ async function buildPayload({ stageRoot, manifest, manifestFile, flavor }) {
   }
   const entry = sourceBundle.versions[version];
   assertAllowedCoreEntry(entry, version);
+  const versions = payloadSpec.versions === undefined ? [version] : payloadSpec.versions;
+  if (!Array.isArray(versions) || versions.length < 1 || versions.length > 16 || !versions.includes(version) ||
+      new Set(versions).size !== versions.length || versions.some(id => typeof id !== 'string' || !COMPONENT_ID.test(id) || FORBIDDEN_CORE_VERSION.test(id) && id !== '0.5-dline13')) {
+    fail('core.versions 必须是包含默认版本的唯一 Core ID 数组；D13 仅允许精确历史身份，D14 不支持。', { version, versions });
+  }
+  for (const id of versions) assertPackageCoreEntry(sourceBundle.versions[id], id);
 
   const runtime = manifest.runtime || {};
   const runtimeRoot = resolveInput(manifestFile, runtime.sourceRoot, 'runtime.sourceRoot');
@@ -202,6 +234,9 @@ async function buildPayload({ stageRoot, manifest, manifestFile, flavor }) {
       sourceFixed[family][name] = { source: runtimeSource, expected, bytes: checked.bytes };
     }
   }
+  const chainHashes = new Set(FAMILIES.map(family => sourceFixed[family]['nrchain_nvngx.dll'].expected));
+  if (chainHashes.size !== 1) fail('多 Core 原子包要求 RTX40/RTX50 共用同一份 nrchain；当前 fixed 清单不一致。');
+  const sharedChain = sourceFixed.RTX40['nrchain_nvngx.dll'];
 
   const outputRoot = path.join(stageRoot, 'payload', 'nr-before-sr');
   fs.mkdirSync(outputRoot, { recursive: true });
@@ -213,16 +248,35 @@ async function buildPayload({ stageRoot, manifest, manifestFile, flavor }) {
       files: Object.fromEntries(FIXED_FILES.map(name => [name, sourceFixed[family][name].expected])),
       ...(flavor === 'offline' ? { paths: { runtime: `fixed/${family}/nvngx_dlssnr.dll` } } : {})
     }])),
-    versions: { [version]: { ...structuredClone(entry), coreUpdateOnly: false, files: {} } },
-    distribution: { flavor, sourceVersion: version, runtimeSplit: true, coreSource: payloadRoot }
+    versions: {},
+    distribution: { flavor, sourceVersion: version, includedVersions: [...versions], runtimeSplit: true, coreSource: 'verified-external-staging' }
   };
-  const targetVersion = path.join(outputRoot, 'versions', version);
-  fs.mkdirSync(targetVersion, { recursive: true });
-  for (const name of CORE_FILES) {
-    const source = path.join(payloadRoot, 'versions', version, name);
-    const checked = await verifyFile(source, { sha256: entry.files[name] }, `Core/${version}/${name}`);
-    copyFile(source, path.join(targetVersion, name));
-    stagedBundle.versions[version].files[name] = checked.sha256;
+  for (const id of versions) {
+    const sourceEntry = sourceBundle.versions[id];
+    const stagedEntry = { ...structuredClone(sourceEntry), files: {} };
+    stagedBundle.versions[id] = stagedEntry;
+    const targetVersion = path.join(outputRoot, 'versions', id);
+    fs.mkdirSync(targetVersion, { recursive: true });
+    for (const name of Object.keys(sourceEntry.files)) {
+      const source = path.join(payloadRoot, 'versions', id, name);
+      const checked = await verifyFile(source, { sha256: sourceEntry.files[name] }, `Core/${id}/${name}`);
+      copyFile(source, path.join(targetVersion, name));
+      stagedEntry.files[name] = checked.sha256;
+    }
+    if (!Object.hasOwn(stagedEntry.files, 'nrchain_nvngx.dll')) {
+      copyFile(sharedChain.source, path.join(targetVersion, 'nrchain_nvngx.dll'));
+      stagedEntry.files['nrchain_nvngx.dll'] = sharedChain.expected;
+    }
+    if (sourceEntry.companions) {
+      const allowed = new Set(['LICENSE', 'onnxruntime_providers_shared.dll', 'onnxruntime.dll', 'ThirdPartyNotices.txt', 'yunet-dynamic.json', 'yunet-dynamic.onnx', 'YUNET-LICENSE'].map(name => 'nr_face/' + name));
+      if (Object.keys(sourceEntry.companions).length !== allowed.size || Object.keys(sourceEntry.companions).some(name => !allowed.has(name))) fail('Core 人脸配套清单不完整或含未知文件。');
+      for (const [name, expected] of Object.entries(sourceEntry.companions)) {
+        if (!HASH.test(expected)) fail('Core 配套摘要无效。');
+        const source = path.join(payloadRoot, 'versions', id, name);
+        await verifyFile(source, { sha256: expected }, `Core/${id}/${name}`);
+        copyFile(source, path.join(targetVersion, name));
+      }
+    }
   }
   for (const family of FAMILIES) {
     const targetFamily = path.join(outputRoot, 'fixed', family);
@@ -235,27 +289,54 @@ async function buildPayload({ stageRoot, manifest, manifestFile, flavor }) {
   const readme = path.join(payloadRoot, 'README.md');
   if (fs.existsSync(readme)) copyFile(readme, path.join(outputRoot, 'README.md'));
   fs.writeFileSync(path.join(outputRoot, 'bundle.json'), `${JSON.stringify(stagedBundle, null, 2)}\n`, 'utf8');
-  return { payloadRoot: outputRoot, sourcePayloadRoot: payloadRoot, version, bundle: stagedBundle, sourcePackage };
+  return { payloadRoot: outputRoot, sourcePayloadRoot: payloadRoot, version, versions: [...versions], bundle: stagedBundle, sourcePackage };
 }
 
 async function buildMfg({ stageRoot, manifest, manifestFile }) {
   const spec = manifest.mfg;
-  if (!spec) fail('清单缺少 mfg；基础包必须明确 MFG 0.9 来源。');
-  const source = resolveInput(manifestFile, spec.file, 'mfg.file');
-  const checked = await verifyFile(source, { sha256: spec.sha256, bytes: spec.bytes }, 'MFG 0.9 addon');
-  if (checked.bytes !== 601088 || checked.sha256 !== '64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da') {
-    fail('MFG 0.9 必须匹配已批准的 601088 bytes / SHA-256。', checked);
-  }
+  if (!spec || spec.defaultProvider !== 'mfgunlock-1.0' || !Array.isArray(spec.providers) || spec.providers.length !== 2)
+    fail('清单必须包含 MFG 1.0 默认版与 0.9 回退版。');
+  const pins = new Map([
+    ['mfgunlock-1.0', { version:'1.0', bytes:710144, sha256:'f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e' }],
+    ['mfgunlock-0.9', { version:'0.9', bytes:601088, sha256:'64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da' }]
+  ]);
   const sourceResources = path.join(REPO_ROOT, 'resources', 'fg-mfgunlock');
   const targetResources = path.join(stageRoot, 'resources', 'fg-mfgunlock');
   copyTextTree(sourceResources, targetResources);
-  const target = path.join(targetResources, 'versions', '0.9', 'renodx-mfgunlock.addon64');
-  copyFile(source, target);
-  fs.writeFileSync(path.join(targetResources, 'staging-mfg-0.9.json'), `${JSON.stringify({
-    id: 'mfgunlock-0.9', version: '0.9', bytes: checked.bytes, sha256: checked.sha256,
-    source: spec.url || null, status: 'staged-for-manager-catalog'
-  }, null, 2)}\n`, 'utf8');
-  return { file: target, ...checked };
+  const providers = [];
+  for (const provider of spec.providers) {
+    const pin = pins.get(provider.id);
+    if (!pin || provider.version !== pin.version || provider.bytes !== pin.bytes || provider.sha256 !== pin.sha256)
+      fail(`MFG ${provider.id || 'unknown'} 不符合固定发布身份。`, { provider });
+    const source = resolveInput(manifestFile, provider.file, `mfg.providers.${provider.id}.file`);
+    const checked = await verifyFile(source, pin, `MFG ${pin.version} addon`);
+    const target = path.join(targetResources, 'versions', pin.version, 'renodx-mfgunlock.addon64');
+    copyFile(source, target);
+    const record = { id:provider.id, version:pin.version, file:`versions/${pin.version}/renodx-mfgunlock.addon64`, bytes:checked.bytes, sha256:checked.sha256,
+      source:provider.url || null, recommended:provider.id === spec.defaultProvider, status:'staged-for-manager-catalog' };
+    fs.writeFileSync(path.join(targetResources, `staging-mfg-${pin.version}.json`), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+    providers.push(record);
+  }
+  return { defaultProvider:spec.defaultProvider, providers };
+}
+
+async function buildSm86({ stageRoot, manifest, manifestFile }) {
+  if (!manifest.sm86 && manifest.packageVersion === '0.5.0-beta.2') return null;
+  const { ID, PIN, SOURCE } = require('../src/product/fg-sm86-components');
+  const sourceRoot = resolveInput(manifestFile, manifest.sm86?.sourceRoot, 'sm86.sourceRoot');
+  ensurePlainDirectory(sourceRoot, 'SM86 来源');
+  const target = path.join(stageRoot, 'resources', 'fg-sm86');
+  const result = { schemaVersion: 1, id: ID, backend: 'dlssg-sm86', version: '0.3.5',
+    source: { repository: 'sdli1995/dlssg_for_sm86', commit: SOURCE,
+      url: `https://github.com/sdli1995/dlssg_for_sm86/tree/${SOURCE}` }, files: {} };
+  for (const [role, pin] of Object.entries(PIN)) {
+    const source = path.join(sourceRoot, pin.name);
+    await verifyFile(source, pin, 'SM86/' + pin.name);
+    copyFile(source, path.join(target, pin.name));
+    result.files[role] = { ...pin, source: `https://github.com/sdli1995/dlssg_for_sm86/blob/${SOURCE}/${pin.name}` };
+  }
+  fs.writeFileSync(path.join(target, 'manifest.json'), JSON.stringify(result, null, 2) + '\n');
+  return result;
 }
 
 async function buildSmallComponents({ stageRoot, manifest, manifestFile, flavor }) {
@@ -325,16 +406,64 @@ async function buildSmallComponents({ stageRoot, manifest, manifestFile, flavor 
       gameApis: Array.isArray(component.gameApis) ? component.gameApis : [],
       hardwareFamilies: Array.isArray(component.hardwareFamilies) ? component.hardwareFamilies : [],
       inputInterfaces: Array.isArray(component.inputInterfaces) ? component.inputInterfaces : [component.interface],
+      compatibleCoreInterfaces: Array.isArray(component.compatibleCoreInterfaces) ? component.compatibleCoreInterfaces : [],
       capabilities: Array.isArray(component.capabilities) ? component.capabilities : [],
       supportsPresent: component.supportsPresent === true,
       validation: component.validation || 'candidate',
       ...(typeof component.defaultEligible === 'boolean' ? { defaultEligible: component.defaultEligible } : {}),
+      ...(component.sourceType === 'official-release' ? { sourceType:'official-release' } : {}),
+      ...(component.immutable === true ? { immutable:true } : {}),
+      ...(typeof component.repository === 'string' ? { repository:component.repository } : {}),
+      ...(typeof component.commit === 'string' ? { commit:component.commit } : {}),
+      ...(typeof component.downloadUrl === 'string' ? { downloadUrl:component.downloadUrl } : {}),
       source: 'external-staging', files
     });
   }
   const result = { schemaVersion: 1, flavor, packages: catalog };
   fs.writeFileSync(path.join(targetRoot, 'catalog.json'), `${JSON.stringify(result, null, 2)}\n`, 'utf8');
   return { count: catalog.length, totalBytes, packages: catalog };
+}
+
+async function buildLegacyRuntime({ stageRoot, manifest, manifestFile }) {
+  // Native HoYo loads the normal Core through its own profile and helper. Only
+  // legacy Feeder routes depend on this pool; an explicit declaration is strict.
+  if (!Object.hasOwn(manifest, 'legacyRuntime')) return {
+    declared: false, bundled: false, ready: false, status: 'not-bundled', files: [],
+    reason: '未配置可选旧版 Feeder 资源池；依赖该池的路线不可用，普通和原生 HoYo 路线不依赖此池。'
+  };
+  const { fingerprint, resolveFile } = require('../src/product/feeder-runtime');
+  const { createLegacyRuntime } = require('../src/product/legacy-runtime');
+  const catalog = require('../src/product/legacy-runtime-catalog');
+  const sourceRoot = resolveInput(manifestFile, manifest.legacyRuntime?.root, 'legacyRuntime.root');
+  const runtime = createLegacyRuntime({ root: sourceRoot });
+  // Loading every supported recipe validates the immutable pool identity and
+  // yields its precise deployable allow-list, excluding private acceptance logs.
+  const assets = new Map();
+  for (const selection of catalog.list()) {
+    const recipe = runtime.load({ api: selection.gameApi, architecture: selection.architecture,
+      hardwareFamily: selection.hardwareFamily, loadingBackend: selection.loadingBackend }).recipe;
+    for (const asset of recipe.files) assets.set(asset.source, asset);
+  }
+  const targetRoot = path.join(stageRoot, 'resources', 'legacy-runtime'), files = [];
+  for (const asset of assets.values()) {
+    if (asset.role === 'nr-runtime') {
+      const family = asset.id === 'runtime-rtx40' ? 'RTX40' : asset.id === 'runtime-rtx50' ? 'RTX50' : null;
+      const shared = manifest.runtime?.families?.[family];
+      if (!family || shared?.sha256 !== asset.sha256 || shared.bytes !== asset.bytes)
+        fail(`legacy-runtime 的 ${asset.id} 与共享 NR DLC 身份不符。`);
+      continue;
+    }
+    const source = resolveFile(sourceRoot, asset.source), target = resolveFile(targetRoot, asset.source);
+    const checked = await verifyFile(source, asset, `legacy-runtime/${asset.source}`);
+    copyFile(source, target);
+    await verifyFile(target, asset, `legacy-runtime/${asset.source}`);
+    files.push({ path: `resources/legacy-runtime/${asset.source}`, bytes: checked.bytes, sha256: checked.sha256 });
+  }
+  const sourceManifest = path.join(sourceRoot, 'manifest.json'), pool = readJson(sourceManifest);
+  if (fingerprint(pool) !== runtime.lock.manifestFingerprint) fail('legacy-runtime 清单在复制期间发生变化。');
+  copyFile(sourceManifest, path.join(targetRoot, 'manifest.json'));
+  return { declared: true, bundled: true, status: 'bundled', manifestFingerprint: runtime.lock.manifestFingerprint,
+    files, runtime: 'shared-verified-nr-dlc' };
 }
 
 async function buildBundledResources({ stageRoot, manifest, manifestFile }) {
@@ -355,8 +484,20 @@ async function buildBundledResources({ stageRoot, manifest, manifestFile }) {
     }
     const source = resolveInput(manifestFile, row.source, `resources.${targetRelative}.source`);
     const checked = await verifyFile(source, { bytes: row.bytes, sha256: row.sha256 }, `resources/${targetRelative}`);
-    copyFile(source, path.join(targetRoot, ...targetRelative.split('/')));
-    files.push({ path: `resources/${targetRelative}`, bytes: checked.bytes, sha256: checked.sha256 });
+    const target=path.join(targetRoot, ...targetRelative.split('/'));
+    if (targetRelative === 'vulkan-reshade/recipe.json') {
+      const recipe=readJson(source);
+      // The packaged recipe is relocated at runtime by vulkan-service. Never
+      // leak the build machine's original absolute sourceRoot into a release.
+      recipe.sourceRoot='.';
+      fs.mkdirSync(path.dirname(target),{recursive:true});
+      fs.writeFileSync(target,`${JSON.stringify(recipe,null,2)}\n`,{encoding:'utf8',flag:'wx'});
+      const packaged=await verifyFile(target,null,'packaged Vulkan ReShade recipe');
+      files.push({path:`resources/${targetRelative}`,bytes:packaged.bytes,sha256:packaged.sha256,sourceSha256:checked.sha256});
+    } else {
+      copyFile(source,target);
+      files.push({ path: `resources/${targetRelative}`, bytes: checked.bytes, sha256: checked.sha256 });
+    }
   }
   return { count: files.length, files };
 }
@@ -395,50 +536,64 @@ function buildBridgeReservation({ stageRoot, manifest, components = null }) {
 async function inspectManifest(manifestFile, flavor = 'base') {
   const manifest = readJson(manifestFile);
   if (manifest.schemaVersion !== 1) fail('staging 清单 schemaVersion 必须为 1。');
-  if (!manifest.packageVersion || !/^0\.5\.0-beta\.1$/i.test(String(manifest.packageVersion))) fail('staging 清单 packageVersion 必须为 0.5.0-beta.1。');
+  if (!manifest.packageVersion || !/^0\.5\.0-beta\.(?:[23456789]|10)$/i.test(String(manifest.packageVersion))) fail('staging 清单 packageVersion 必须为已支持的 0.5.0-beta.2–10。');
   if (!['base', 'offline'].includes(flavor)) fail(`未知打包 flavor：${flavor}`);
   const payloadRoot = resolveInput(manifestFile, manifest.core?.payloadRoot, 'core.payloadRoot');
-  if (FORBIDDEN_CORE_VERSION.test(String(manifest.core?.version || ''))) fail('清单显式选择了 D13/D14 Core。');
+  const selectedCoreIds = [manifest.core?.version, ...(Array.isArray(manifest.core?.versions) ? manifest.core.versions : [])];
+  if (FORBIDDEN_CORE_VERSION.test(String(manifest.core?.version || '')) ||
+      selectedCoreIds.some(id => FORBIDDEN_CORE_VERSION.test(String(id || '')) && id !== '0.5-dline13')) fail('D13/D14 不能作为默认 Core；额外 D13 必须使用精确历史身份。');
   return { manifest, manifestFile, flavor, payloadRoot };
 }
 
-async function stageDistribution({ manifestFile = DEFAULT_MANIFEST, flavor = 'base', outputRoot = path.join(REPO_ROOT, '.packaging-stage', flavor), checkOnly = false } = {}) {
+async function stageDistribution({ manifestFile = DEFAULT_MANIFEST, flavor = 'base', outputRoot = path.join(REPO_ROOT, '.packaging-stage', flavor), allowedRoot = path.join(REPO_ROOT, '.packaging-stage'), checkOnly = false } = {}) {
   manifestFile = path.resolve(manifestFile);
   const input = await inspectManifest(manifestFile, flavor);
   if (checkOnly) {
-    const checkRoot = path.join(REPO_ROOT, '.packaging-stage', `check-${process.pid}`);
+    const resolvedAllowed = path.resolve(allowedRoot);
+    if (resolvedAllowed === path.parse(resolvedAllowed).root) fail('校验工作目录不能是磁盘根目录。');
+    fs.mkdirSync(resolvedAllowed, { recursive: true });
+    const checkRoot = fs.mkdtempSync(path.join(resolvedAllowed, '.check-'));
     try {
       const payload = await buildPayload({ stageRoot: checkRoot, manifest: input.manifest, manifestFile, flavor });
       const mfg = await buildMfg({ stageRoot: checkRoot, manifest: input.manifest, manifestFile });
+      const sm86 = await buildSm86({ stageRoot: checkRoot, manifest: input.manifest, manifestFile });
       const components = await buildSmallComponents({ stageRoot: checkRoot, manifest: input.manifest, manifestFile, flavor });
       const resources = await buildBundledResources({ stageRoot: checkRoot, manifest: input.manifest, manifestFile });
-      return { ok: true, flavor, manifest: manifestFile, coreVersion: payload.version, sourcePackage: payload.sourcePackage, mfg, components, resources };
+      const legacyRuntime = await buildLegacyRuntime({ stageRoot: checkRoot, manifest: input.manifest, manifestFile });
+      return { ok: true, flavor, manifest: manifestFile, coreVersion: payload.version, coreVersions: payload.versions, sourcePackage: payload.sourcePackage, mfg, sm86, components, resources, legacyRuntime };
     } finally {
       fs.rmSync(checkRoot, { recursive: true, force: true });
     }
   }
-  removeExistingStage(outputRoot);
+  prepareStageRoot(outputRoot, allowedRoot);
   const payload = await buildPayload({ stageRoot: outputRoot, manifest: input.manifest, manifestFile, flavor });
   const mfg = await buildMfg({ stageRoot: outputRoot, manifest: input.manifest, manifestFile });
+  const sm86 = await buildSm86({ stageRoot: outputRoot, manifest: input.manifest, manifestFile });
   const components = await buildSmallComponents({ stageRoot: outputRoot, manifest: input.manifest, manifestFile, flavor });
   const resources = await buildBundledResources({ stageRoot: outputRoot, manifest: input.manifest, manifestFile });
+  const legacyRuntime = await buildLegacyRuntime({ stageRoot: outputRoot, manifest: input.manifest, manifestFile });
   const bridge = buildBridgeReservation({ stageRoot: outputRoot, manifest: input.manifest, components: components.packages });
   const report = { schemaVersion: 1, packageVersion: input.manifest.packageVersion, flavor, manifest: manifestFile,
-    stageRoot: path.resolve(outputRoot), coreVersion: payload.version, sourcePackage: payload.sourcePackage, mfg, components, resources, bridge,
+    stageRoot: path.resolve(outputRoot), coreVersion: payload.version, coreVersions: payload.versions, sourcePackage: payload.sourcePackage, mfg, sm86, components, resources, legacyRuntime, bridge,
     runtimeFiles: FAMILIES.map(family => path.join('payload', 'nr-before-sr', 'fixed', family, 'nvngx_dlssnr.dll')) };
   fs.writeFileSync(path.join(outputRoot, 'staging-report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   return report;
 }
 
 function parseArgs(args) {
-  const result = { flavor: 'base', manifestFile: DEFAULT_MANIFEST, checkOnly: false };
+  const result = { flavor: 'base', manifestFile: DEFAULT_MANIFEST, checkOnly: false, workRoot: null };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--manifest' && args[i + 1]) result.manifestFile = args[++i];
     else if (args[i] === '--flavor' && args[i + 1]) result.flavor = args[++i];
     else if (args[i] === '--out' && args[i + 1]) result.outputRoot = args[++i];
+    else if (args[i] === '--work-root' && args[i + 1]) result.workRoot = args[++i];
     else if (args[i] === '--check') result.checkOnly = true;
     else if (args[i] === '--json') result.json = true;
-    else throw new Error('用法：node scripts/stage-manager-distribution.cjs [--manifest <json>] [--flavor base|offline] [--out <stage>] [--check]');
+    else throw new Error('用法：node scripts/stage-manager-distribution.cjs [--manifest <json>] [--flavor base|offline] [--work-root <目录>] [--out <stage>] [--check]');
+  }
+  if (result.workRoot) {
+    result.allowedRoot = path.resolve(result.workRoot);
+    if (!result.outputRoot) result.outputRoot = path.join(result.allowedRoot, 'stage', result.flavor);
   }
   return result;
 }
@@ -452,4 +607,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { stageDistribution, inspectManifest, parseArgs, FAMILIES, FIXED_FILES, FORBIDDEN_CORE_VERSION, SMALL_COMPONENT_KINDS, buildSmallComponents, buildBundledResources };
+module.exports = { stageDistribution, inspectManifest, parseArgs, prepareStageRoot, FAMILIES, FIXED_FILES, FORBIDDEN_CORE_VERSION, SMALL_COMPONENT_KINDS, buildPayload, buildSmallComponents, buildBundledResources, buildLegacyRuntime };

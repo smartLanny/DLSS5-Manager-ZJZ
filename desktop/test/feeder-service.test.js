@@ -62,6 +62,16 @@ function fixture(t, options = {}) {
     setAntiCheat: value => antiCheat = value, setElevated: value => elevated = value };
 }
 
+test('waiting source verification checks fixed Feeder bytes while running without writing game files', async t => {
+  const f = fixture(t), service = f.service(); f.setRunning(true);
+  const verified = await service.verifySource(f.game, { version: f.recipe.coreVersion });
+  assert.equal(verified.ready, true); assert.equal(verified.identity, f.lock.recipeFingerprint);
+  assert.equal(fs.existsSync(f.receipt), false); assert.equal(fs.existsSync(f.file(DIRECTORY)), false);
+  fs.appendFileSync(path.join(f.packageRoot, f.recipe.files.find(row => row.role === 'core').source), 'changed');
+  await assert.rejects(service.verifySource(f.game), error => /HASH|SIZE|SOURCE/.test(error.code));
+  assert.equal(fs.existsSync(f.receipt), false);
+});
+
 function apiFixture(t, options = {}) {
   const f = fixture(t, { rdr2: options.rdr2 === true }), userData = path.join(f.root, 'user');
   const documentsDir = path.join(f.root, 'documents');

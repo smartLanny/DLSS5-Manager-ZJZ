@@ -24,7 +24,8 @@ function createMfgProviderLibrary(options = {}) {
     return [...bundled.PROVIDERS, ...external.filter(row => !bundled.PROVIDERS.some(pin => pin.id === row.id))];
   }
   const providerById = id => providers().find(row => row.id === id) || null;
-  const knownProviderForHash = hash => providers().find(row => row.sha256 === hash) || null;
+  const recoveryProviderById = id => providerById(id) || bundled.recoveryProviderById(id);
+  const knownProviderForHash = hash => providers().find(row => row.sha256 === hash) || bundled.knownProviderForHash(hash);
   function readMfgUnlockResources(resourceRoot, id = bundled.ID) {
     const row = providerById(id);
     if (!row?.external) return bundled.readMfgUnlockResources(resourceRoot, id);
@@ -47,6 +48,6 @@ function createMfgProviderLibrary(options = {}) {
       catch (error) { return { ...row, available: false, ready: false, blocker: error.message }; }
     });
   }
-  return { providers, providerById, knownProviderForHash, readMfgUnlockResources, readMfgUnlockCatalog };
+  return { providers, providerById, recoveryProviderById, knownProviderForHash, readMfgUnlockResources, readMfgUnlockCatalog };
 }
 module.exports = { createMfgProviderLibrary };

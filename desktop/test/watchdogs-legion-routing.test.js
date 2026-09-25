@@ -162,15 +162,22 @@ test('Watch Dogs Legion DXGI evidence waits for the bound EXE and keeps the DX12
   assert.equal(boot.games[0].chosen.via, 'imports');
   assert.equal(boot.games[0].chosen.apiResolution.api, 'unknown');
   assert.equal(boot.games[0].supportCode, 'ERR_API_SELECTION_REQUIRED');
-  await assert.rejects(f.service.install(id, { version: DX11_COMPAT_VERSION }), { code: 'ERR_API_SELECTION_REQUIRED' });
+  await assert.rejects(f.service.install(id, { version: DX11_COMPAT_VERSION }), { code: 'ADOPTION_CONFIRM_REQUIRED' });
+  const operations = require('../src/product/operation-plan').createOperationPlans({ userData: path.join(f.root, 'user-data'), service: f.service,
+    settings: { assertReady: async () => {}, inspect: async () => ({ requests: {}, applied: {}, pending: [] }) },
+    preparation: { assertReady: async () => {} }, environment: { assertReady: async () => {} },
+    guards: { assertGameClosed: async () => {} } });
+  await assert.rejects(operations.preview(id, { version: DX11_COMPAT_VERSION }), { code: 'OPERATION_API_SELECTION_REQUIRED' });
 
   await f.service.setGameApi(id, 'dx12');
   boot = await f.service.boot();
   assert.equal(boot.games[0].apiOverride, 'dx12');
   assert.equal(boot.games[0].chosen.apiResolution.api, 'dx12');
 
-  const installed = await f.service.install(id, { version: DX11_COMPAT_VERSION });
-  assert.equal(installed.complete, true);
+  const proposal = await operations.preview(id, { api: 'dx12', version: DX11_COMPAT_VERSION });
+  assert.equal(proposal.requiresAdoptionConfirmation, true);
+  const installed = await operations.apply(proposal.planId, { confirm: true, fingerprint: proposal.fingerprint });
+  assert.equal(installed.applied, true);
   assert.equal(fs.readFileSync(bridge, 'utf8'), 'compat:nrchain');
   assert.equal(fs.existsSync(path.join(f.exeDir, DX11_COMPAT_CARRIER)), false, 'DX12 does not deploy the compatibility carrier');
   assert.equal(fs.existsSync(oldCarrier), false, 'the old carrier leaves the active game directory');

@@ -41,7 +41,7 @@ function fixture(t, overrides = {}) {
 
 test('unowned custom outside AddonPath returns an empty read-only manifest while MFG writes remain blocked', async t => {
   const f = fixture(t), original = f.custom(), unowned = path.join(f.outside, ADDON);
-  fs.copyFileSync(path.join(COMPONENT_RESOURCES, 'fg-mfgunlock', ADDON), unowned);
+  fs.copyFileSync(path.join(COMPONENT_RESOURCES, 'fg-mfgunlock', 'versions', '0.9', ADDON), unowned);
   const before = fs.readFileSync(unowned);
   assert.deepEqual(await f.service.ownedModuleManifest('game'), []);
   await assert.rejects(f.service.prepare('game'), { code: 'SETTINGS_FG_LAYOUT_UNVERIFIED' });

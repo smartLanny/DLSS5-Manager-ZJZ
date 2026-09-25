@@ -143,7 +143,7 @@ function createVulkanService(options = {}) {
     const runtimeFile = recipeFile('vulkan-runtime'), layerFile = recipeFile('vulkan-reshade');
     let external = null;
     if (!row || row.sourceKind === 'external-provider')
-      external = options.getExternalProviderPackage?.(game, row ? { providerId: row.providerPackageId, providerRouteId: row.providerRouteId } : {}) || null;
+      external = options.getExternalProviderPackage?.(game, row ? { providerId: row.providerPackageId, providerRouteId: row.providerRouteId, coreVersion: row.coreVersion } : {}) || null;
     if (row?.sourceKind === 'external-provider' && !external)
       fail('VULKAN_PACKAGE_MISSING', '原外部 Provider Vulkan 配套当前不完整；已安装 profile 仍可恢复。');
     const recipe = external?.recipe || readJson(runtimeFile), layer = readJson(layerFile);
@@ -293,6 +293,20 @@ function createVulkanService(options = {}) {
         blockers: info.needsRecovery ? [info.reason] : [], components: {} };
     }
     return inspectBound(row);
+  }
+  async function verifySource(game, request = {}) {
+    const target = selected(game), row = bound(game); assertSelected(row, target);
+    if (game.scan.chosen.bitness !== 64 || pe.getBitness(target.exe) !== 64) fail('VULKAN_GAME_ARCH', '当前 Vulkan 配套仅支持 x64 游戏。');
+    const source = packages(target.exe, game, row); await assertHardware(source);
+    if (!vulkanRoute(game)) fail('VULKAN_API_REQUIRED', '请先确认所选 EXE 使用 Vulkan。');
+    if (request.version !== undefined && ![source.recipe.id, source.recipe.coreVersion, source.providerPackageId].includes(request.version))
+      fail('VULKAN_PACKAGE_LOCKED', 'Vulkan Core 必须使用当前固定配套。');
+    // Existing preview-only owners verify source hashes and the layer without
+    // creating runtime directories, activation or registry entries.
+    await profile.previewPrepare({ exe: target.exe, recipe: source.recipe, packageRoot: source.packageRoot });
+    await getDeployment().previewPrepare({ id: target.id, exe: target.exe }, source.layer);
+    return { ready: true, packageId: source.recipe.id, coreVersion: source.recipe.coreVersion,
+      identity: JSON.stringify({ recipe: source.recipe, layer: source.layer }), runtimeVerified: false };
   }
   async function previewInstall(game, installOptions = {}) {
     const target = selected(game), state = bindings(), row = bound(game, state);
@@ -467,7 +481,7 @@ function createVulkanService(options = {}) {
       return { ...launched, gameStarted: true, evidenceSaved, loaded: 'unknown', processed: 'unknown', runtimeVerified: false };
     });
   }
-  return Object.freeze({ summary, install, diagnose, restore, previewInstall, previewRestore, launch, configDir, bindingPath });
+  return Object.freeze({ summary, verifySource, install, diagnose, restore, previewInstall, previewRestore, launch, configDir, bindingPath });
 }
 
 module.exports = { createVulkanService };

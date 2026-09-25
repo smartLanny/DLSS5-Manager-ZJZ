@@ -45,6 +45,31 @@ function fixture() {
   return { root, gameDir, exeDir, exePath, payload, scan };
 }
 
+test('unified3 resources join the existing backup transaction, preserve INI and restore exact originals', async t => {
+  const f = fixture(); t.after(() => fs.rmSync(f.root, { recursive: true, force: true }));
+  const names = require('../src/product/payload-companions').NAMES;
+  const installer = createInstaller({ scan: { scanGame: async () => f.scan, inspectReShade: dir => {
+    const file = path.join(dir, 'dxgi.dll'); return { installed: fs.existsSync(file), addonSupport: fs.existsSync(file), file: fs.existsSync(file) ? 'dxgi.dll' : null };
+  } }, guards: { antiCheatPresent: () => false, assertGameClosed: async () => {} }, pe: { getBitness: () => 64 } });
+  const original = path.join(f.exeDir, names[0]); fs.mkdirSync(path.dirname(original), { recursive: true }); fs.writeFileSync(original, 'pre-existing resource');
+  f.payload.version = '0.5-dline21-unified3';
+  f.payload.companions = names.map(name => { const file = path.join(f.root, 'resources', name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'new:' + name); return { kind: 'companion', name, file, actual: sha256(file) }; });
+  await installer.install({ gameDir: f.gameDir, payload: f.payload, scan: f.scan });
+  const ini = path.join(f.exeDir, PAYLOAD_FILES.config); fs.appendFileSync(ini, '\n; personal choice'); const originalIni = fs.readFileSync(ini);
+  const addon = { id: f.payload.version, file: f.payload.addon.file, addonSha256: f.payload.addon.actual, companions: f.payload.companions };
+  await installer.upgradeAddon({ gameDir: f.gameDir, addon, scan: f.scan });
+  assert.deepEqual(fs.readFileSync(ini), originalIni);
+  const resource = f.payload.companions[1]; fs.appendFileSync(resource.file, 'corrupt source');
+  await assert.rejects(installer.upgradeAddon({ gameDir: f.gameDir, addon, scan: f.scan }), { code: 'ERR_PAYLOAD_HASH' });
+  fs.appendFileSync(path.join(f.exeDir, names[2]), 'user change');
+  const blocked = await installer.uninstall({ gameDir: f.gameDir, scan: f.scan }); assert.equal(blocked.removed, false);
+  fs.writeFileSync(path.join(f.exeDir, names[2]), 'new:' + names[2]);
+  assert.equal((await installer.uninstall({ gameDir: f.gameDir, scan: f.scan })).removed, true);
+  assert.equal(fs.readFileSync(original, 'utf8'), 'pre-existing resource');
+  for (const name of names.slice(1)) assert.equal(fs.existsSync(path.join(f.exeDir, name)), false);
+  assert.deepEqual(fs.readFileSync(ini), originalIni);
+});
+
 test('installs, diagnoses, repairs and uninstalls without deleting kept settings', async () => {
   const f = fixture();
   const scanModule = {

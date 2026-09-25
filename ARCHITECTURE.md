@@ -10,7 +10,7 @@
 | Electron Manager | `desktop/` | 游戏选择、API/Core 路由、安装/恢复 UI、外部组件来源 | 源码可公开；构建资源必须来自 staging 白名单 |
 | Core | 外部活动任务产物 | NR 算法与 Addon | 默认 Core 必须在 staging 清单中明确版本；拒绝 D13/D14 冒充最新 |
 | NR runtime | 外部授权目录 | RTX20–40 共享 RTX40 runtime、RTX50 runtime | 基础包不嵌入；offline 包各放一份，禁止 Feeder/Vulkan/legacy 重复携带 |
-| MFG | 外部官方 0.9 Addon | RTX40 的 MFG Unlock 入口 | 0.9 固定 bytes/SHA；0.7 仅回滚，由 Manager 清单登记 |
+| MFG | 外部官方 0.9 Addon | RTX40 的 MFG Unlock 入口 | 0.9 固定 bytes/SHA；0.7/0.6.1 仅识别历史收据，不可安装或回退 |
 | DX11 Bridge | `bridge-dlc/manifest.json` 与小组件清单（stage） | 候选来源、逐游戏 pin 和接口预检 | 缺包时 `reserved`；已暂存包为 `candidate-staged`，不据此宣称游戏兼容 |
 | 可选小组件 | `resources/components/`（stage） | 外部清单提供的 Bridge、Feeder、host、Vulkan 文件 | 必须逐文件 pin；不允许 `nvngx_dlssnr.dll` 混入 |
 

@@ -136,7 +136,9 @@ function createGamePreparation({ userData, service, settings, components, fgWork
       else if (!capabilities.nativeFgAvailable) row('fg', 'unavailable', '未检测到原生 Streamline 补帧；本配套不会为游戏添加原生 FG。');
       else {
         const current = await components.inspect(id);
-        if (current.route === 'compatibility' && (current.ready || current.canPrepare)) {
+        if (current.backend === 'dlssg-sm86') {
+          row('fg', 'available', 'RTX20/30 多帧生成已随包准备，可在补帧设置中主动启用实验组件。');
+        } else if (current.route === 'compatibility' && (current.ready || current.canPrepare)) {
           await begin('fg'); await fgWorkflow.apply(id, { backend: 'mfgunlock', mode: 'follow' }, { allowAntiCheat: options.allowAntiCheat === true });
           row('fg', 'prepared', '已准备 MFG Unlock，默认跟随游戏；按 ReShade 菜单键（新安装默认 Home）→ Add-ons → MFG Unlock 可设置倍率。');
         } else if (current.route === 'native' && current.ready && !current.needsCleanup) {

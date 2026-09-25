@@ -179,6 +179,14 @@ async function verifyManagerRelease({ directory, sourceRoot = path.resolve(__dir
   const expectedFiles = new Set([...rows.filter(row => row.kind !== 'app-source').map(row => row.file), 'resources/app.asar', path.basename(executable)]);
   const unexpectedFiles = inventory.filter(file => !expectedFiles.has(file));
   contracts.push({ name: 'no-unaccounted-package-files', ok: unexpectedFiles.length === 0, unexpectedFiles });
+  const privatePaths=[];
+  for (const file of inventory.filter(name=>/\.(?:json|txt|md|ini|cfg|ps1|cmd)$/i.test(name))) {
+    const absolute=path.join(directory,file), stat=fs.lstatSync(absolute);
+    if (!stat.isFile() || stat.size > 2*1024*1024) continue;
+    const content=fs.readFileSync(absolute,'utf8');
+    if (/[A-Za-z]:\\(?:Users|CodexTemp|ChatGPT)\\/i.test(content) || /(?:^|["'\s])\/(?:home|Users)\/[^/\s"']+/m.test(content)) privatePaths.push(file);
+  }
+  contracts.push({name:'no-build-machine-private-paths',ok:privatePaths.length===0,files:privatePaths});
   const failed = [...contracts.filter(row => !row.ok), ...rows.filter(row => !row.ok)];
   return { ok: executionLevel.ok && !failed.length, staticOnly: true, launched: false,
     scope: 'Files and hashes versus trusted build source and Electron runtime; actual EXE RT_MANIFEST; no startup or NSIS success claim.',

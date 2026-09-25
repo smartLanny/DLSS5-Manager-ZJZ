@@ -53,6 +53,54 @@ async function toExternal(f) {
   return f.service.apply(plan.planId);
 }
 
+test('explicit rescue archives an external edit to an interrupted transaction and normal recovery remains restartable', async t => {
+  let interrupt = true;
+  const f = fixture(t, 'dx12', { afterWrite: () => { if (interrupt) throw Object.assign(new Error('interrupted'), { preservePending: true }); } });
+  await assert.rejects(toExternal(f), /interrupted/);
+  const wal = JSON.parse(fs.readFileSync(f.pending)), row = wal.files[0];
+  fs.writeFileSync(row.file, 'user edited pending target');
+  await assert.rejects(f.service.recover(f.game), { code: 'DEPLOYMENT_FILE_CHANGED' });
+  const restarted = createExternalRuntime({ ...f.options, afterWrite: undefined });
+  const preview = await restarted.previewRescue(f.game, 'recover');
+  assert.equal(fs.readFileSync(row.file, 'utf8'), 'user edited pending target');
+  const result = await restarted.applyRescue(f.game, preview.planId, { confirm: true });
+  assert.equal(result.recovered, true); assert.equal(fs.existsSync(f.pending), false);
+  const archive = JSON.parse(fs.readFileSync(path.join(result.archiveDirectory, 'rescue.json')));
+  const saved = archive.conflicts.find(item => item.path === row.file);
+  assert.equal(fs.readFileSync(saved.archive, 'utf8'), 'user edited pending target');
+  assert.equal(fs.existsSync(row.file), row.before !== null);
+  assert.equal(fs.readFileSync(path.join(f.dir, 'ReShade.ini'), 'utf8'), f.originalIni);
+  assert.equal((await restarted.preview(f.game, { mode: 'external' })).requiresConfirmation, true);
+});
+
+test('rescue cannot bypass a damaged original snapshot or another manager process', async t => {
+  const f = fixture(t, 'dx12', { afterWrite: () => { throw Object.assign(new Error('interrupted'), { preservePending: true }); } });
+  await assert.rejects(toExternal(f), /interrupted/);
+  const wal = JSON.parse(fs.readFileSync(f.pending)), row = wal.files.find(item => item.before !== null);
+  const source = path.join(f.options.userData, 'external-runtime', wal.id, 'history', wal.operation, row.snapshot);
+  const original = fs.readFileSync(source); fs.writeFileSync(source, 'damaged');
+  await assert.rejects(f.service.previewRescue(f.game, 'recover'), { code: 'DEPLOYMENT_BACKUP_CHANGED' });
+  fs.writeFileSync(source, original); wal.pid = process.ppid; fs.writeFileSync(f.pending, JSON.stringify(wal));
+  await assert.rejects(f.service.previewRescue(f.game, 'recover'), { code: 'DEPLOYMENT_BUSY' });
+});
+
+test('rescue interrupted during rollback keeps its adjusted WAL and archived external edit for the next manager', async t => {
+  const f = fixture(t, 'dx12', { afterWrite: () => { throw Object.assign(new Error('first interruption'), { preservePending: true }); } });
+  await assert.rejects(toExternal(f), /first interruption/);
+  const wal = JSON.parse(fs.readFileSync(f.pending)), originalIni = path.join(f.dir, 'ReShade.ini');
+  assert.ok(wal.files.some(row => row.file === originalIni));
+  fs.writeFileSync(originalIni, 'outside edit while pending');
+  const restart = createExternalRuntime({ ...f.options, afterWrite: undefined,
+    copyFile: async () => { throw Object.assign(new Error('locked during rescue rollback'), { code: 'EBUSY' }); } });
+  const preview = await restart.previewRescue(f.game, 'recover');
+  await assert.rejects(restart.applyRescue(f.game, preview.planId, { confirm: true }), { code: 'EBUSY' });
+  assert.equal(fs.existsSync(f.pending), true);
+  const archive = JSON.parse(fs.readFileSync(path.join(preview.archiveDirectory, 'rescue.json')));
+  assert.equal(fs.readFileSync(archive.conflicts.find(row => row.path === originalIni).archive, 'utf8'), 'outside edit while pending');
+  await createExternalRuntime({ ...f.options, afterWrite: undefined }).recover(f.game);
+  assert.equal(fs.existsSync(f.pending), false); assert.equal(fs.readFileSync(originalIni, 'utf8'), f.originalIni);
+});
+
 function historicalEqualsProfile(f) {
   const saved = JSON.parse(fs.readFileSync(f.receipt)), config = f.service.getLayout(f.game).activeConfigPath;
   assert.equal(saved.panelDefaultAdded, true); assert.equal(saved.panelDefaultKey, 36);
@@ -74,6 +122,25 @@ function expectOriginals(f) {
   assert.equal(fs.readFileSync(path.join(f.dir, 'ReShade.ini'), 'utf8'), f.originalIni);
   assert.equal(fs.readFileSync(path.join(f.dir, 'unknown.dll.bak'), 'utf8'), 'unproven backup must stay');
 }
+
+test('unified3 resource upgrade survives external to ordinary conversion with original INI and receipt ownership', async t => {
+  const f = fixture(t, 'dx12', { pe: { getImports: () => [], getBitness: () => 64 } });
+  await toExternal(f); const payload = nextPayload(f, '0.5-dline21-unified3');
+  payload.companions = require('../src/product/payload-companions').NAMES.map(name => {
+    const file = path.join(f.root, 'resources', name), bytes = 'inert resource:' + name;
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes);
+    return { kind: 'companion', name, file, actual: sha(bytes) };
+  });
+  const plan = await f.service.preview(f.game, { mode: 'external', payload }); await f.service.apply(plan.planId);
+  assert.equal((await f.service.inspect(f.game)).ready, true);
+  const layout = f.service.getLayout(f.game);
+  for (const row of payload.companions) assert.equal(sha(fs.readFileSync(path.join(layout.runtimeDir, row.name))), row.actual);
+  await f.service.restore(f.game);
+  const manifest = JSON.parse(fs.readFileSync(manifestPath(f.gameRoot)));
+  assert.equal(manifest.files.filter(row => row.kind === 'companion').length, 7);
+  for (const row of payload.companions) assert.equal(sha(fs.readFileSync(path.join(f.dir, row.name))), row.actual);
+  assert.equal(fs.readFileSync(path.join(f.dir, INSTALLED_NAMES.config), 'utf8'), f.originals[INSTALLED_NAMES.config]);
+});
 
 for (const api of ['dx11', 'dx12']) test(api + ' ordinary to external to upgrade to ordinary preserves personal files and load paths', async t => {
   const f = fixture(t, api), before = fs.readFileSync(manifestPath(f.gameRoot));

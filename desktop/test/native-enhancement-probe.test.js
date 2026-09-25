@@ -114,3 +114,31 @@ test('SR and FG share a simultaneous read but later reads re-evaluate identity a
   assert.equal(values[0].support.status, 'supported'); assert.equal(f.signatureReads(), 1);
   f.scan.chosen.apiResolution.api = 'dx9'; assert.equal((await f.probe.inspect('g', 'sr')).support.status, 'unknown');
 });
+
+test('operation API overrides an unresolved scan without changing it or sharing a different API read', async t => {
+  const f = fixture(t); f.file('nvngx_dlss.dll'); f.markers.set(f.exe, ['nvngx_dlss.dll']);
+  f.scan.chosen.apiResolution.api = 'unknown';
+  const [unresolved, dx11, dx12, dx9] = await Promise.all([
+    f.probe.inspect('g', 'sr'), f.probe.inspect('g', 'sr', { api: 'dx11' }),
+    f.probe.inspect('g', 'sr', { api: 'dx12' }), f.probe.inspect('g', 'sr', { api: 'dx9' })
+  ]);
+  assert.equal(unresolved.support.code, 'SETTINGS_GAME_API');
+  assert.equal(dx11.support.status, 'supported'); assert.equal(dx11.staticEvidence.api, 'dx11');
+  assert.equal(dx12.support.status, 'supported'); assert.equal(dx12.staticEvidence.api, 'dx12');
+  assert.equal(dx9.support.code, 'SETTINGS_GAME_API'); assert.equal(dx9.staticEvidence.api, 'dx9');
+  assert.equal(f.scan.chosen.apiResolution.api, 'unknown');
+});
+
+test('only a complete search without integration clues recommends the Feeder fallback', async t => {
+  const f = fixture(t);
+  assert.equal((await f.probe.inspect('g', 'sr')).support.code, 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED');
+  const engine = f.file('GameAssembly.dll'); f.markers.set(f.exe, ['GameAssembly.dll']);
+  const incomplete = createNativeEnhancementProbe({ ...f.options, pe: { ...f.options.pe, getBitness: file => file === engine ? 32 : 64 } });
+  const skipped = await incomplete.inspect('g', 'sr');
+  assert.equal(skipped.support.code, 'SETTINGS_GAME_SUPPORT_UNKNOWN');
+  assert.equal(skipped.staticEvidence.coverage.complete, false);
+  assert.equal(skipped.staticEvidence.coverage.skipped[0].path, engine);
+  const dlss = f.file('nvngx_dlss.dll'); f.signatures.set(dlss, false);
+  const candidate = await f.probe.inspect('g', 'sr');
+  assert.equal(candidate.support.code, 'SETTINGS_GAME_SUPPORT_UNKNOWN');
+});

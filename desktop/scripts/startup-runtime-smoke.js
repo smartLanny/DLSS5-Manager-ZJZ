@@ -34,7 +34,9 @@ async function runStartupSmoke({ electron, executable, logsDirectory, mainFile =
     for (const mode of ['normal', 'compatibility']) {
       const directory = path.join(root, mode); fs.mkdirSync(directory);
       const args = [entry, `--startup-smoke-root=${directory}`, `--startup-smoke-main=${mainFile}`];
-      if (mode === 'compatibility') args.push('--no-sandbox');
+      // Exercise the existing explicit one-time retry contract. Bare
+      // --no-sandbox is deliberately rejected by the production entry.
+      if (mode === 'compatibility') args.push('--no-sandbox', '--sandbox-retry-once');
       // This proof holds even when the test runner itself is elevated. Neither
       // mode changes a manifest, userData, driver setting or an existing process.
       const started = executable

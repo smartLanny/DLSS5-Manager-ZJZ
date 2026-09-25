@@ -79,9 +79,11 @@ export function assertOwnerPins(manifest: PinManifest): void {
   if (!mfg || mfg.defaultPin !== "0.9") {
     throw Failures.manifestInvalid("MFG Unlock 默认/优先 pin 必须是 0.9");
   }
-  const rollbackOk = (mfg.rollbacks ?? []).some((v) => v === "0.7" || v.startsWith("0.7"));
-  if (!rollbackOk) {
-    throw Failures.manifestInvalid("MFG Unlock 必须把 0.7 留作回滚，不得当作默认");
+  const oldMfgRollback = (mfg.rollbacks ?? []).some(
+    (value) => value === "0.7" || value.startsWith("0.7") || value === "0.6.1" || value.startsWith("0.6.1"),
+  );
+  if (oldMfgRollback) {
+    throw Failures.manifestInvalid("MFG Unlock 0.7/0.6.1 不得作为安装或回退选项");
   }
 
   const bridge = manifest.components.find((c) => c.id === "bridge");

@@ -9,6 +9,19 @@ const { CORE, CARRIER, BRIDGE, zip, tempZip, standardFixture, dx11Fixture } = re
 
 const CORE_046 = 'DLSS5-AI渲染超分版-beta0.4.6-@野生的装机宅-Bilibili.addon64';
 const CORE_046_HOTFIX1 = 'DLSS5-AI渲染超分版-beta0.4.6-hotfix.1-@野生的装机宅-Bilibili.addon64';
+const D21_PACKAGE = 'C:\\Users\\PC\\Downloads\\装机宅DLSS5 0.5版本叠层测试\\OTA覆盖小包-装机宅叠层DLSS5-0.5-D21-累计常规版-中文-OTA.zip';
+
+test('recognizes the exact D21 cumulative OTA as a canonical candidate without promoting it to stable',
+  { skip: !fs.existsSync(D21_PACKAGE) }, async () => {
+    const ota = await readOtaPackage(D21_PACKAGE);
+    assert.equal(ota.archiveSha256, 'cf6d486a4525c75c5279446bd596b6008fc1eb5e3a8b1863a2ee15f249148107');
+    assert.equal(ota.canonicalCore?.id, '0.5-dline21');
+    assert.equal(ota.canonicalCore?.validation, 'candidate');
+    assert.equal(ota.canonicalCore?.stableRelease, false);
+    assert.equal(ota.canonicalCore?.coreUpdateOnly, true);
+    assert.equal(ota.addonSha256, '5fb873dab6f03f27c0b37380dff7ab5ad4ebc0ca295feadba06d00a28a1c9c78');
+    assert.equal(ota.bridgeSha256, '1acf3cbe509a031be1763a8231cd81e6019aa3532368cd0b08a6c17bc94b70a2');
+  });
 
 test('a D3D12 Core-only acceptance archive is explained without mislabeling it as a DX11 OTA', async () => {
   const file = zip(tempZip(), [

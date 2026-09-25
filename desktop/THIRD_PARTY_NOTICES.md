@@ -31,9 +31,9 @@ The current default is the official MIT-licensed
 [MFG Unlock 0.9](https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/0.9)
 ReShade Add-on, fixed at 601088 bytes and SHA-256
 `64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`.
-The pinned 0.7 source-build and official 0.6.1/0.7 providers remain available
-for identifying and restoring historical managed installations; they are not
-the default build input.
+The pinned 0.7 source-build and official 0.6.1/0.7 digests remain only for
+identifying and restoring historical managed installations. They are not
+selectable providers and do not enter new packages.
 
 The historical 0.7 source provider uses the MIT-licensed source commit
 `ffe6169b5e98ad578fcf2c30614d06a567790fe1`, a separate simplified Chinese overlay
@@ -42,12 +42,11 @@ serializes concurrent pacing discovery and restoration with a nonblocking RAII
 gate and uses an atomic retry counter. Hook matching, defaults, registration,
 configuration keys and original diagnostic messages are retained. The untouched upstream source and MIT license are in
 `native/mfgunlock/upstream`, with locked SDK and Detours dependencies in
-`native/mfgunlock/source-lock.json`. The official 0.7 and official 0.6.1
-(`a975e84712a6bfc84284f50c9621c349ee806734`) binaries remain selectable alternatives
-with their original bytes; they do not include this local safety patch.
-Each pinned binary digest, original README and full license is recorded in
-`resources/fg-mfgunlock/manifest.json` and shipped alongside its Add-on.
-Only one selected version is deployed to the canonical active filename.
+`native/mfgunlock/source-lock.json`. Historical official 0.7 and 0.6.1
+(`a975e84712a6bfc84284f50c9621c349ee806734`) identities are not offered as
+alternatives. Their digests let the Manager recognize an old owned file and
+restore it without blessing it as a current provider. Only official 0.9 is
+deployed to the canonical active filename for new installs.
 It controls existing Streamline FG; the manager does not bundle or replace
 DLSS-G or Streamline runtime DLLs for this feature. The older components below
 remain available only to identify and restore historical managed installations.
@@ -176,8 +175,9 @@ files only where they have a lawful right to do so.
 
 ## NR-before-SR runtime
 
-The manager treats the active D16 NR-before-SR add-on, chain and bridge as
-externally staged payload files with separate source and licensing. The current
-default source package is D16; older D13, D14, D15 and 0.4.7 Corefix8 candidates are not
-copied into the new base/offline package. Historical third-party notices remain
-in the verified source records and are not relicensed by the Manager.
+The manager treats every NR-before-SR Core, its matched chain and any route
+companion as one externally staged, hash-verified component with separate source
+and licensing. New installs default to the prepared 0.4.7 package; D21 is an
+explicit test choice. D13/D14 and MFG 0.7 are excluded from new packages.
+Historical third-party notices remain in verified source records and are not
+relicensed by the Manager.

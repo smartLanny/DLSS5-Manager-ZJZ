@@ -268,6 +268,7 @@ function createGameEnvironment(options) {
   async function restore(id) {
     const t = target(id);
     return serial(t, async () => {
+      await options.assertRestorable?.(id);
       await closed(t);
       const interrupted = await pending(t);
       if (interrupted) await rollback(t, interrupted);

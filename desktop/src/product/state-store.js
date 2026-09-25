@@ -19,6 +19,8 @@ const DEFAULTS = Object.freeze({
   lastSelectedGame: null,
   payloadSourcePath: null,
   payloadSourceIdentity: null,
+  componentLibraryPath: null,
+  componentLibraryPreviousPath: null,
   addonVersion: null
 });
 
@@ -113,6 +115,8 @@ function validate(value) {
     lastSelectedGame: typeof state.lastSelectedGame === 'string' ? state.lastSelectedGame : null,
     payloadSourcePath: absolutePath(state.payloadSourcePath) ? path.resolve(state.payloadSourcePath) : null,
     payloadSourceIdentity: typeof state.payloadSourceIdentity === 'string' && /^[a-f0-9]{64}$/i.test(state.payloadSourceIdentity) ? state.payloadSourceIdentity.toLowerCase() : null,
+    componentLibraryPath: absolutePath(state.componentLibraryPath) ? path.resolve(state.componentLibraryPath) : null,
+    componentLibraryPreviousPath: absolutePath(state.componentLibraryPreviousPath) ? path.resolve(state.componentLibraryPreviousPath) : null,
     addonVersion: typeof state.addonVersion === 'string' ? state.addonVersion : null
   };
 }
@@ -217,7 +221,12 @@ function createStore(file, options = {}) {
     writes = next.catch(() => {}); // Keep later writes usable; the caller still receives the rejection.
     return next;
   }
-  return { read, write, readRecoveryStatus: () => structuredClone(status) };
+  function update(mutator) {
+    const next = writes.then(() => writeNow(mutator(read())));
+    writes = next.catch(() => {});
+    return next;
+  }
+  return { read, write, update, readRecoveryStatus: () => structuredClone(status) };
 }
 
 module.exports = { DEFAULTS, validate, createStore, uniquePaths, uniqueManualExecutables, normalizeGameOverrides, normalizeExcludedGames };

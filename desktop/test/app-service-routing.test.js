@@ -14,6 +14,7 @@ const { normalizeError } = require('../src/product/errors');
 const { PAYLOAD_FILES, DX11_COMPAT_VERSION, DX11_COMPAT_CARRIER } = require('../src/product/constants');
 const journal = require('../src/core/file-journal');
 const { CARRIER, BRIDGE, zip, dx11Fixture } = require('./helpers/ota-fixture');
+const D21_PACKAGE = 'C:\\Users\\PC\\Downloads\\装机宅DLSS5 0.5版本叠层测试\\OTA覆盖小包-装机宅叠层DLSS5-0.5-D21-累计常规版-中文-OTA.zip';
 
 function makePayload(t, root) {
   const payloadRoot = path.join(root, 'resources', 'payload', 'nr-before-sr');
@@ -81,6 +82,20 @@ async function externalFixture(t) {
   const bundleFile=path.join(external,'bundle.json'),bundle=JSON.parse(fs.readFileSync(bundleFile,'utf8'));bundle.versions['0.3.3.5'].files[PAYLOAD_FILES.addon]=sha256(addon);fs.writeFileSync(bundleFile,JSON.stringify(bundle));
   return {...f,id,external,addon,bundleFile};
 }
+
+for (const deployment of ['local', 'external']) test(`waiting source validation verifies the ${deployment} package while the game runs without deploying it`, async t => {
+  const running = async () => { throw Object.assign(new Error('game running'), { code: 'errGameRunning' }); };
+  const f = makeService(t, { assertGameClosed: running, externalDeploymentOptions: { guards: { assertGameClosed: running, antiCheatPresent: () => false }, pe: { getImports: () => [] } } });
+  await f.service.addManualGame(f.gameDir); const id = (await f.service.boot()).games[0].id;
+  const request = { api: 'dx12', version: '0.3.3.5', deployment };
+  const result = await f.service.validateWaitingComponents(id, request);
+  assert.equal(result.ready, true); assert.equal(result.route, 'native'); assert.equal(result.version, request.version);
+  assert.equal(fs.existsSync(path.join(path.dirname(f.exe), PAYLOAD_FILES.addon)), false);
+  assert.equal(fs.existsSync(path.join(f.gameDir, '_DLSS5_Backup')), false);
+  fs.appendFileSync(path.join(f.payloadDir, 'versions', request.version, PAYLOAD_FILES.addon), 'changed source');
+  await assert.rejects(f.service.validateWaitingComponents(id, request), { code: 'ERR_PAYLOAD_HASH' });
+  assert.equal(fs.existsSync(path.join(f.gameDir, '_DLSS5_Backup')), false);
+});
 
 test('unified deployment performs a first external install and routes NR, hotkeys, diagnosis and uninstall to its active profile', async t => {
   const f = makeService(t, { assertGameClosed: async () => {},
@@ -171,7 +186,10 @@ test('planned FG restoration can be previewed but must finish before external de
 test('historical hotfix Add-on restored by uninstall stays visible and can be reversibly isolated', async t => {
   const f = await externalFixture(t), name = 'DLSS5-AI渲染超分版-beta0.4.6-hotfix.1-@野生的装机宅-Bilibili.addon64';
   const old = path.join(path.dirname(f.exe), name); fs.writeFileSync(old, 'original hotfix core');
-  await f.service.install(f.id, { version: '0.3.3.5' });
+  await assert.rejects(f.service.install(f.id, { version: '0.3.3.5' }), { code: 'ADOPTION_CONFIRM_REQUIRED' });
+  const adoption = await f.service.previewDeployment(f.id, { mode: 'local', api: 'dx12', version: '0.3.3.5' });
+  assert.equal(adoption.requiresAdoptionConfirmation, true); assert.equal(fs.readFileSync(old, 'utf8'), 'original hotfix core');
+  await f.service.applyDeployment(adoption.planId, { confirm: true });
   assert.equal(fs.existsSync(old), false, 'installation quarantines the conflicting old Add-on');
   const result = await f.service.uninstall(f.id);
   assert.equal(result.removed, true); assert.equal(fs.readFileSync(old, 'utf8'), 'original hotfix core');
@@ -350,6 +368,28 @@ test('external-only manager starts without bundled payload and can prepare insta
   assert.equal(fs.readFileSync(path.join(path.dirname(f.exe), PAYLOAD_FILES.addon), 'utf8'), 'external:stable:addon');
 });
 
+test('slim bundled manager treats a missing GPU runtime as DLC setup and activates the matching import', async t => {
+  const f = makeService(t), runtime = path.join(f.payloadDir, 'fixed', 'RTX40', 'nvngx_dlssnr.dll');
+  fs.unlinkSync(runtime);
+  const initial = await f.service.boot();
+  assert.equal(initial.payload.ready, false);
+  assert.equal(initial.payload.source.runtimeDlcRequired, true);
+  assert.equal(initial.payload.source.requiredHardwareFamily, 'RTX40');
+  assert.equal(initial.payload.source.error, null);
+
+  const dlc = path.join(f.root, 'runtime-dlc'); fs.mkdirSync(dlc);
+  const bytes = Buffer.alloc(128); bytes.write('MZ'); bytes.writeUInt32LE(64, 60); bytes.writeUInt32LE(0x4550, 64); bytes.writeUInt16LE(2, 84); bytes.writeUInt16LE(0x20b, 88);
+  const file = path.join(dlc, 'nvngx_dlssnr.dll'); fs.writeFileSync(file, bytes);
+  fs.writeFileSync(path.join(dlc, 'component-manifest.json'), JSON.stringify({ schema:'dlss5-component-v1', id:'runtime-test-rtx40', kind:'nr-runtime',
+    version:'test', variant:'RTX40', architecture:'x64', interface:'NGX-Feature18', hardwareFamilies:['RTX40'],
+    files:[{ path:'nvngx_dlssnr.dll', sha256:sha256(file), bytes:bytes.length }] }));
+  const result = await f.service.importRuntimeDlc(dlc);
+  assert.equal(result.activated, true);
+  assert.equal(result.hardwareFamily, 'RTX40');
+  assert.equal(result.state.payload.ready, true);
+  assert.equal(result.state.payload.source.runtimeDlcRequired, false);
+});
+
 test('API override routes one game through DX12 then unified DX11 and persists', async t => {
   const f = makeService(t);
   await f.service.addManualGame(f.gameDir, { name: 'Fixture' });
@@ -520,6 +560,25 @@ test('imported compatibility OTA follows the selected API without mixing package
   assert.equal(persisted.label, '0.4.5-DX11-兼容增强');
 });
 
+test('the exact D21 OTA enters the component library as one Core plus chain and does not create a legacy archive copy',
+  { skip: !fs.existsSync(D21_PACKAGE) }, async t => {
+    const componentLibraryRoot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'manager-d21-library-')), 'components');
+    t.after(() => fs.rmSync(path.dirname(componentLibraryRoot), { recursive:true, force:true }));
+    const f = makeService(t, { componentLibraryRoot });
+    const versions = await f.service.importAddonFile(D21_PACKAGE);
+    const activeBundle = JSON.parse(fs.readFileSync(path.join(componentLibraryRoot, 'bundle.json'), 'utf8'));
+    assert.equal(activeBundle.versions['0.5-dline21']?.coreUpdateOnly, true);
+    const d21 = versions.find(row => row.id === '0.5-dline21');
+    assert.equal(d21?.ready, true); assert.equal(d21?.source, 'external');
+    assert.equal(d21?.coreUpdateOnly, true); assert.equal(d21?.addonOnly, true);
+    assert.equal(f.service.store.read().addonVersion, '0.5-dline21');
+    assert.equal(fs.existsSync(path.join(f.root, 'user-data', 'addon-versions')), false);
+    const inventory = JSON.parse(fs.readFileSync(path.join(componentLibraryRoot, 'inventory.json'), 'utf8'));
+    const imported = inventory.packages.find(row => row.id === '0.5-dline21');
+    assert.equal(imported.coreUpdateOnly, true);
+    assert.deepEqual(imported.files.map(row => row.name).sort(), ['nr-before-sr.zh-CN.addon64','nrchain_nvngx.dll']);
+  });
+
 
 test('failed DX12 transition restores API preference and leaves the changed carrier intact', async t => {
   const f = makeService(t);
@@ -622,14 +681,69 @@ test('exact repair restores a missing renamed proxy in place while keeping origi
   assert.equal(fs.readFileSync(plugin, 'utf8'), 'unknown active addon');
 });
 
-test('automatic input selection requires executable integration evidence rather than a DLSS file candidate', async t => {
+test('automatic input selection distinguishes an unconfirmed candidate from a complete search without DLSS', async t => {
   let supported = false;
-  const f = makeService(t, { getFeatureEvidence: async () => ({ support: { status: supported ? 'supported' : 'unknown' } }) });
+  let code = 'SETTINGS_GAME_SUPPORT_UNKNOWN';
+  let evidenceCalls = 0;
+  const f = makeService(t, { getFeatureEvidence: async () => {
+    evidenceCalls++;
+    return { support: { status: supported ? 'supported' : 'unknown', code } };
+  } });
+  const bundleFile = path.join(f.payloadDir, 'bundle.json'), bundle = JSON.parse(fs.readFileSync(bundleFile));
+  bundle.versions['0.3.3.5'].supportsPresent = true;
+  fs.writeFileSync(bundleFile, JSON.stringify(bundle));
   await f.service.addManualGame(f.gameDir); const id = (await f.service.boot()).games[0].id;
-  assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12' }), 'feeder');
+  assert.equal(f.service.coreVersionCatalog().find(row => row.id === '0.3.3.5').supportsPresent, true);
+  await assert.rejects(f.service.resolveInputRoute(id, { api: 'dx12', version: '0.3.3.5' }), { code: 'INPUT_ROUTE_UNCONFIRMED' });
+  const beforeExplicit = evidenceCalls;
+  assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', route: 'native' }), 'native');
+  assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', route: 'feeder' }), 'feeder');
+  assert.equal(evidenceCalls, beforeExplicit, 'a manual input route is preserved without inventing native integration evidence');
+  assert.equal(supported, false);
+  code = 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED';
+  assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', version: '0.3.3.5' }), 'feeder', 'Present capability does not replace Feeder when native integration was not observed');
+  assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', route: 'native' }), 'native', 'an explicit native choice remains available without claiming native SR support');
   supported = true; assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12' }), 'native');
   assert.equal(await f.service.resolveInputRoute(id, { api: 'dx9' }), 'feeder');
   assert.equal(await f.service.resolveInputRoute(id, { api: 'dx12', route: 'feeder' }), 'feeder');
+});
+
+test('component choices explain the same API and input route used by installation', async t => {
+  let supported = false;
+  const f = makeService(t, { getFeatureEvidence: async () => ({ support: { status: supported ? 'supported' : 'unknown', code: 'SETTINGS_NATIVE_INTEGRATION_NOT_OBSERVED' } }) });
+  await f.service.addManualGame(f.gameDir); const id = (await f.service.boot()).games[0].id;
+  await f.service.setGameApi(id, 'dx12');
+  let choices = await f.service.componentChoices(id);
+  assert.equal(choices.stack.api, 'dx12'); assert.equal(choices.stack.route, 'feeder');
+  assert.match(choices.stack.title, /DLSS5 Feeder/);
+  supported = true; choices = await f.service.componentChoices(id);
+  assert.equal(choices.stack.route, 'native'); assert.match(choices.stack.title, /原生 DLSS/);
+  assert.match(choices.stack.reason, /不需要 DLSS5 Bridge/);
+  await f.service.setGameApi(id, 'dx11'); choices = await f.service.componentChoices(id);
+  assert.equal(choices.stack.api, 'dx11'); assert.match(choices.stack.title, /DLSS5 Bridge/);
+  assert.equal(choices.stack.manualBridge, true);
+});
+
+test('HoYo request API reaches the real native integration probe before the preference is saved', async t => {
+  let probe;
+  const f = makeService(t, { getFeatureEvidence: (id, domain, context) => probe.inspect(id, domain, context) });
+  const dlss = path.join(f.gameDir, 'nvngx_dlss.dll'); fs.writeFileSync(dlss, 'signed test DLSS');
+  probe = require('../src/product/native-enhancement-probe').createNativeEnhancementProbe({
+    gameDirectory: id => f.service.gameDirectory(id), gameExecutable: id => f.service.gameExecutable(id),
+    scan: id => f.service.gameScan(id), verifySignature: async () => ({ valid: true }),
+    pe: { getBitness: () => 64, getImports: () => [],
+      findMarkers: (file, requested) => file === f.exe && requested.includes('nvngx_dlss.dll') ? new Set(['nvngx_dlss.dll']) : new Set() }
+  });
+  await f.service.addManualGame(f.gameDir); const game = (await f.service.boot()).games[0], id = game.id;
+  assert.equal(require('../src/product/operation-api').resolveOperationApi({ scan: f.service.gameScan(id) }).requiresManualSelection, true);
+  for (const api of ['dx11', 'dx12']) {
+    assert.equal(await f.service.resolveInputRoute(id, { api, loadingBackend: 'hoyoshade' }), 'native');
+    const evidence = await probe.inspect(id, 'sr', { api });
+    assert.equal(evidence.support.source, 'native-integration');
+    assert.equal(evidence.gameSetting.state, 'unknown', 'game setting readability does not decide the input route');
+  }
+  assert.equal(f.service.assessmentSeed(id).apiOverride || 'auto', 'auto');
+  assert.equal(normalizeError(Object.assign(new Error('unconfirmed'), { code: 'INPUT_ROUTE_UNCONFIRMED' })).message.includes('使用 Feeder'), true);
 });
 
 test('HoYo native operation binds the launcher digest, then installs directly into the dedicated profile without a game proxy', async t => {
@@ -641,15 +755,20 @@ test('HoYo native operation binds the launcher digest, then installs directly in
   for (const row of [f.scan.chosen, ...f.scan.exeCandidates]) { row.path = exe; row.name = 'YuanShen.exe'; row.rel = path.relative(f.gameDir, exe); }
   const launcher = path.join(f.root, 'HYP.exe'); fs.writeFileSync(launcher, pe('launcher'));
   fs.cpSync(path.resolve(__dirname, '../resources/hoyoshade'), path.join(f.root, 'resources/hoyoshade'), { recursive: true });
-  for (const family of ['RTX40', 'RTX50']) fs.copyFileSync(path.resolve(__dirname, '../payload/nr-before-sr/fixed/RTX50/ReShade64.dll'), path.join(f.payloadDir, 'fixed', family, 'ReShade64.dll'));
+  const productionLoader = process.env.DLSS5_TEST_HOYO_LOADER || path.resolve(__dirname, '../payload/nr-before-sr/fixed/RTX50/ReShade64.dll');
+  if (fs.existsSync(productionLoader)) for (const family of ['RTX40', 'RTX50'])
+    fs.copyFileSync(productionLoader, path.join(f.payloadDir, 'fixed', family, 'ReShade64.dll'));
+  const hoyoCore = '0.4.7beta';
+  fs.cpSync(path.join(f.payloadDir, 'versions', DX11_COMPAT_VERSION), path.join(f.payloadDir, 'versions', hoyoCore), { recursive: true });
   fs.writeFileSync(path.join(f.payloadDir, 'bundle.json'), JSON.stringify(createCompactBundle(f.payloadDir,
-    [{ id: '0.3.3.5', label: 'stable' }, { id: DX11_COMPAT_VERSION, label: 'DX11 fixture', compatibility: 'dx11' }], '0.3.3.5')));
+    [{ id: '0.3.3.5', label: 'stable' }, { id: DX11_COMPAT_VERSION, label: 'DX11 fixture', compatibility: 'dx11' },
+      { id: hoyoCore, label: 'current HoYo DX11 fixture', compatibility: 'dx11' }], '0.3.3.5')));
   await f.service.addManualGame(f.gameDir); const id = (await f.service.boot()).games[0].id;
   const { createOperationPlans } = require('../src/product/operation-plan');
   const plans = createOperationPlans({ userData: path.join(f.root, 'operations'), service: f.service,
     settings: { assertReady: async () => {} }, components: {}, environment: { assertReady: async () => {} }, preparation: { assertReady: async () => {} },
     guards: { assertGameClosed: async () => {} } });
-  const request = { api: 'dx11', version: DX11_COMPAT_VERSION, route: 'native', loadingBackend: 'hoyoshade', hoyo: { family: 'genshin', channel: 'cn', launcher: { kind: 'hoyoplay', path: launcher } } };
+  const request = { api: 'dx11', version: hoyoCore, route: 'native', loadingBackend: 'hoyoshade', hoyo: { family: 'genshin', channel: 'cn', launcher: { kind: 'hoyoplay', path: launcher } } };
   const plan = await plans.preview(id, request); assert.equal(plan.blockers.length, 0); assert.equal(plan.resolved.loadingBackend, 'hoyoshade');
   assert.equal(plan.resolved.launcherSha256, sha256(launcher));
   assert.equal(fs.existsSync(path.join(path.dirname(exe), 'dxgi.dll')), false);

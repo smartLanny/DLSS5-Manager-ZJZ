@@ -8,7 +8,10 @@ const crypto = require('node:crypto');
 // component budget separate from modern games' much larger executables.
 const MAX_COMPONENT_BYTES = 768 * 1024 * 1024;
 const MAX_EXECUTABLE_BYTES = 8 * 1024 * 1024 * 1024;
-const CHUNK_BYTES = 1024 * 1024;
+// Large modern game executables commonly approach or exceed 1 GiB. An 8 MiB
+// window keeps memory bounded while avoiding thousands of Windows/Defender
+// read calls during full executable-identity checks.
+const CHUNK_BYTES = 8 * 1024 * 1024;
 const deploymentHashLimit = file => /\.exe$/i.test(file) ? MAX_EXECUTABLE_BYTES : MAX_COMPONENT_BYTES;
 const unchanged = (a, b) => ['dev', 'ino', 'size', 'mtimeMs', 'ctimeMs', 'nlink'].every(key => a[key] === b[key]);
 const unchangedVirtualEntry = (a, b) => ['size', 'mtimeMs', 'ctimeMs', 'nlink'].every(key => a[key] === b[key]);

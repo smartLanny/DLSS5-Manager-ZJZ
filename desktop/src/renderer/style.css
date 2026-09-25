@@ -381,7 +381,8 @@ select { border: 1px solid var(--line); background: #171c20; color: var(--text);
   .repair-actions { flex-wrap: wrap; }
 }
 
-.is-busy .button:not(.window-button), .is-busy .nav, .is-busy .text-link { pointer-events: none; opacity: .65; }
+.is-busy { cursor: progress; }
+.is-busy .nav, .is-busy .text-link { cursor: pointer; }
 
 .route-options { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 14px; padding: 10px 14px; }
 .route-options > summary { color: var(--muted); cursor: pointer; font-size: 13px; }
@@ -416,3 +417,9 @@ select { border: 1px solid var(--line); background: #171c20; color: var(--text);
 .maintenance-residuals { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 12px; font-size: 13px; line-height: 1.6; }
 .maintenance-residuals p { color: var(--muted); }
 .maintenance-residuals li { overflow-wrap: anywhere; }
+.gp-draft-summary { margin-top: 8px; max-width: 100%; font-size: 12px; }
+.gp-draft-summary summary { cursor: pointer; color: var(--text); }
+.gp-draft-summary ul { margin: 8px 0 0; padding-left: 18px; max-height: 150px; overflow: auto; line-height: 1.65; overflow-wrap: anywhere; }
+.gp-layer { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
+.gp-layer h4 { margin: 0 0 10px; }
+.gp-field input[aria-invalid="true"] { border-color: #d57066; }

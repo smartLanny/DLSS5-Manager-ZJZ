@@ -8,7 +8,7 @@
 
 | Component | Slot | Default pin | Rollback | Update source (page) | Metadata URL | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| MFG Unlock (40) | `mfg-dlc` | **0.9** | 0.7 / 0.7-zh-CN | https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases | https://api.github.com/repos/mavismmg/MFGAdaUnlock-RenoDx/releases?per_page=15 | Owner 2026-09-12：优先/默认 0.9。公开 tag 可能落后；**pin 为准**，0.7 仅回滚。 |
+| MFG Unlock (40) | `mfg-dlc` | **0.9** | — | https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases | https://api.github.com/repos/mavismmg/MFGAdaUnlock-RenoDx/releases?per_page=15 | 新安装只提供 0.9；0.7/0.6.1 仅用于识别并恢复历史收据，不可选择、不进入新包。 |
 | Bridge | `bridge` | game-recipe；**BG3 = 1.4.11** | 配方本地 | 本仓 pin：https://github.com/smartLanny/DLSS5-Manager-ZJZ/blob/main/config/pins.json | https://raw.githubusercontent.com/smartLanny/DLSS5-Manager-ZJZ/main/config/pins.json | **可 pin，永不跟 latest**。拒绝 `1.4.13-pre`。概念对齐 lab **#224**。 |
 | Feeder | `feeder` | optional | — | 无默认公开根（changelog 门） | — | 主 OTA 可省略；仅配方开门后检查。 |
 | nvngx_dlssnr | `nr-runtime` | **310.8.SF-v2** | — | NVIDIA / 日后 RHI 目录（产品页：https://www.nvidia.com/en-us/geforce/technologies/dlss/ ） | 未公开则空 | 无场上证据别乱动。DLL **不**进本仓。 |

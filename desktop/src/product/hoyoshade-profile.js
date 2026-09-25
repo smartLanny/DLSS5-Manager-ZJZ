@@ -73,7 +73,8 @@ function createHoYoProfileService(options) {
     if (request.payload?.reshade?.actual !== HOYO_RECIPE.loaderSha256) fail('LOADER', '米哈游路线只使用固定的 ReShade 6.8 完整 Add-on 配套。');
     const knownComponents = options.getKnownComponents ? await options.getKnownComponents(game) : [];
     const raw = await external.preview(game, { ...request, mode: 'external', loadingMode: 'helper', deploymentBackend: 'hoyoshade',
-      inputRoute, hoyoProfile: binding, addonKeep: request.addonKeep || request.keepAddons || [], knownComponents });
+      inputRoute, hoyoProfile: binding, addonKeep: request.addonKeep || request.keepAddons || [], knownComponents },
+      { readOnlyWhileRunning: request.readOnlyWhileRunning === true });
     const projected = { ...raw.layout, source: 'hoyoshade-profile', loadingBackend: 'hoyoshade', gameDir: game.dir,
       exePath: binding.exePath, nrConfigDir: raw.layout.addonDirectory, generation: raw.layout.profileGeneration,
       launcher: binding.launcher, family: binding.family, channel: binding.channel, inputRoute,

@@ -3,11 +3,17 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const yauzl = require('yauzl');
+const { hashRegularFile } = require('./streamed-file-digest');
+const { noLinks } = require('./launch-safety');
 
 const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 const MAX_METADATA_BYTES = 1024 * 1024;
 const DX11_CARRIER = 'dlss5-native-carrier-045-dx11-compat.addon64';
+const D21_ARCHIVE_SHA256 = 'cf6d486a4525c75c5279446bd596b6008fc1eb5e3a8b1863a2ee15f249148107';
+const D21_ADDON_SHA256 = '5fb873dab6f03f27c0b37380dff7ab5ad4ebc0ca295feadba06d00a28a1c9c78';
+const D21_BRIDGE_SHA256 = '1acf3cbe509a031be1763a8231cd81e6019aa3532368cd0b08a6c17bc94b70a2';
+const UNIFIED3_ARCHIVE = '1b51ab5646a10bb3f17db04de52c26f62dc8a40435e24ea145af1bebfcd8be46';
 const PAIRED_OTA_PROFILES = Object.freeze({
   'beta0.4.5-dx11-compat': Object.freeze({
     coreName: 'dlss5-ai渲染超分版-beta0.4.5-dx11-compat-@野生的装机宅-bilibili.addon64',
@@ -189,7 +195,7 @@ function instructionText(entries, names) {
   return bytes.toString('utf8');
 }
 
-function result(manifest, addon, bridge, carrier, compatibility, instructions) {
+function result(manifest, addon, bridge, carrier, compatibility, instructions, extra = {}) {
   return {
     manifest,
     addonName: addon.name,
@@ -202,11 +208,12 @@ function result(manifest, addon, bridge, carrier, compatibility, instructions) {
     carrier: carrier ? carrier.data : null,
     carrierSha256: carrier ? carrier.sha256 : null,
     compatibility,
-    instructions
+    instructions,
+    ...extra
   };
 }
 
-function standardPackage(entries) {
+function standardPackage(entries, archiveSha256) {
   const manifest = parseJson(entries.get('ota-manifest.json'), 'OTA manifest');
   if (!manifest || manifest.schema !== 'nr-branch-ota-v1' || !Array.isArray(manifest.files)) {
     throw new Error('unsupported OTA manifest');
@@ -224,11 +231,40 @@ function standardPackage(entries) {
   if (addonRows.length !== 1) throw new Error('OTA package contains an unexpected carrier or addon64');
   const bridge = exactlyOne(rows, item => /^nrchain_nvngx\.dll$/i.test(item.name), 'nrchain_nvngx.dll');
   const instructions = instructionText(entries, ['Instructions.txt']);
-  return result(manifest, addon, bridge, null, null, instructions);
+  const exactD21 = archiveSha256 === D21_ARCHIVE_SHA256 && manifest.version === 'beta0.5-dline21-223fix2' &&
+    manifest.display_version === '0.5 D21 累计常规版' && manifest.sourceCommit === '3a119c364a75aa5f52d81193fe35ccaf4bf6eddd' &&
+    manifest.core_pe_version === '0.5.1.23' && manifest.channel === 'd21-cumulative-upgrade' &&
+    addon.sha256 === D21_ADDON_SHA256 && bridge.sha256 === D21_BRIDGE_SHA256;
+  return result(manifest, addon, bridge, null, null, instructions, { archiveSha256,
+    ...(exactD21 ? { canonicalCore: { id:'0.5-dline21', version:'0.5 D21 累计常规版', variant:'zh-CN',
+      architecture:'x64', interface:'NGX-D3D12-Feature1', inputInterfaces:['NGX-D3D12-Feature1'],
+      supportsPresent:true, capabilities:['same-frame-output'], validation:'candidate', stableRelease:false,
+      coreUpdateOnly:true,
+      blockers:['新游戏、RTX40 与具体游戏仍需实机验收'] } } : {}) });
 }
 
-function dx11Package(entries) {
+function dx11Package(entries, archiveSha256) {
   const buildInfo = parseJson(entries.get('build-info.json'), 'build-info.json');
+  const u5 = require('./unified5-core');
+  const isUnified5 = archiveSha256 === '55d044a6739ba89b8411f33fe0a336fc5de1477c216db3c6672ebaab572c4162';
+  const unifiedId = isUnified5 ? u5.ID : '0.5-dline21-unified3';
+  if ((isUnified5 || archiveSha256 === UNIFIED3_ARCHIVE) && buildInfo.version === `beta${unifiedId}` &&
+      buildInfo.source_commit === (isUnified5 ? u5.SOURCE : '7a90660bc468ca86a02abe2e145638b51489d549') && buildInfo.language === 'zh-CN' &&
+      buildInfo.full_face_backend === true && buildInfo.game_runtime_verified === false && buildInfo.stable_release === false) {
+    const rows = verifyRows(entries, parseJson(entries.get('SHA256.json'), 'SHA256.json'), 'file', 'SHA256.json');
+    const addon = exactlyOne(rows, row => row.sha256 === (isUnified5 ? u5.HASHES['zh-CN'] : '01b4155dcca346f6b3485f210191baaaf4af6faa9dfb9b29302c8f7e36ae3c93') && /\.addon64$/i.test(row.name), `${unifiedId} Core`);
+    const bridge = exactlyOne(rows, row => row.name === 'nrchain_nvngx.dll' && row.sha256 === D21_BRIDGE_SHA256, 'unified3 NR chain');
+    const carrier = exactlyOne(rows, row => row.name === DX11_CARRIER && row.sha256 === (isUnified5 ? u5.CARRIER : 'eb604bc1149da67492660a6d9e6dc622ca8fbcd247f67f8592aabc7cee633900'), `${unifiedId} DX11 carrier`);
+    const policy = require('./payload-companions'), companions = rows.filter(row => policy.isCompanionName(row.name));
+    policy.validateMap(Object.fromEntries(companions.map(row => [row.name, row.sha256])), unifiedId);
+    return result(buildInfo, addon, bridge, carrier, 'dx11', instructionText(entries, ['安装说明.txt']), {
+      archiveSha256, companions,
+      canonicalCore: { id: unifiedId, version: isUnified5 ? '0.5 Unified5' : '0.5 D21 unified3', variant: 'zh-CN', architecture: 'x64',
+        interface: 'NGX-D3D12-Feature1', inputInterfaces: ['NGX-D3D12-Feature1'], supportsPresent: true,
+        capabilities: ['same-frame-output'], validation: 'candidate', stableRelease: false, coreUpdateOnly: false,
+        blockers: [isUnified5 ? 'Provider V1 已实现；与 Feeder 成品及实际游戏的配套验收未完成，不自动启用外部路线。' : '具体游戏和 NVIDIA 实机尚未验证；此 Core 未声明外部 Provider V1 接口。'] }
+    });
+  }
   // Core acceptance archives share the metadata filenames, but are not a
   // matched Manager update. Explain that distinction without widening admission.
   if (buildInfo && buildInfo.scope === 'D3D12 Core-only manual acceptance; not Manager/multi-API OTA') {
@@ -263,14 +299,17 @@ async function readOtaPackage(file) {
   if (typeof file !== 'string' || !/\.zip$/i.test(file) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
     throw new Error('invalid OTA package');
   }
+  const stat = fs.statSync(file);
+  if (stat.size > MAX_TOTAL_BYTES) throw new Error('OTA archive too large');
+  const archiveSha256 = await hashRegularFile(file, { assertPath:noLinks, maxBytes:MAX_TOTAL_BYTES });
   const entries = await readZipEntries(file);
   const standard = entries.has('ota-manifest.json');
   const dx11 = entries.has('build-info.json') || entries.has('SHA256.json');
   if (standard && dx11) throw new Error('ambiguous OTA metadata');
-  if (standard) return standardPackage(entries);
+  if (standard) return standardPackage(entries, archiveSha256);
   if (dx11) {
     if (!entries.has('build-info.json') || !entries.has('SHA256.json')) throw new Error('DX11 OTA metadata missing');
-    return dx11Package(entries);
+    return dx11Package(entries, archiveSha256);
   }
   throw new Error('OTA manifest missing');
 }

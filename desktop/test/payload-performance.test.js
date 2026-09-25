@@ -97,3 +97,41 @@ test('selected install reads only one full-size runtime and its selected Core', 
   assert.equal(measured.calls.has(path.resolve(root, 'versions', 'two', PAYLOAD_FILES.addon).toLowerCase()), false);
   assert.ok(measured.bytes < 180 * 1024 * 1024, `selected install read ${measured.bytes} bytes`);
 });
+
+test('worker priming leaves the main event loop responsive and populates the identical display snapshot', async t => {
+  const root = fixture(t), cache = createPayloadInspectionCache(), options = { allowMissingBundle: true, hardwareFamily: 'RTX40', version: 'two' };
+  const expected = inspectPayload(root, options), originalOpen = fs.openSync;
+  t.mock.method(fs, 'openSync', function(file, ...args) {
+    if (/\.(?:dll|addon64)$/i.test(String(file))) throw new Error('main-thread binary read is forbidden during priming');
+    return originalOpen.call(this, file, ...args);
+  });
+  let timerRan = false; const timer = setTimeout(() => { timerRan = true; }, 0);
+  const [first, second] = await Promise.all([cache.prime(root, options), cache.prime(root, options)]); clearTimeout(timer);
+  assert.equal(timerRan, true); assert.deepEqual(first, expected); assert.deepEqual(second, expected);
+  first.ready = false; assert.equal(cache.inspect(root, options).ready, true);
+  assert.equal(Object.keys(second.versions).length, 3, 'background warmup preserves every catalog entry');
+});
+
+test('worker cache respects selectedOnly, stat changes, fresh checks and explicit invalidation', async t => {
+  const root = fixture(t), cache = createPayloadInspectionCache(), options = { hardwareFamily: 'RTX40', version: 'one' };
+  const selected = await cache.prime(root, { ...options, selectedOnly: true }); assert.deepEqual(Object.keys(selected.versions), ['one']);
+  const full = await cache.prime(root, options); assert.equal(Object.keys(full.versions).length, 3);
+  const runtime = path.resolve(root, 'fixed', 'RTX40', PAYLOAD_FILES.runtime).toLowerCase();
+  const fresh = countReads(root, () => cache.inspect(root, { ...options, fresh: true })); assert.equal(fresh.calls.get(runtime), 1);
+  const addon = path.join(root, 'versions', 'one', PAYLOAD_FILES.addon); fs.appendFileSync(addon, 'tampered');
+  assert.equal((await cache.prime(root, options)).ready, false); assert.throws(() => requirePayload(root, 'RTX40', 'one'), { code: 'ERR_PAYLOAD_HASH' });
+  fs.writeFileSync(addon, 'one-addon'); await cache.prime(root, options); cache.invalidate(root);
+  assert.equal(countReads(root, () => cache.inspect(root, options)).calls.get(runtime), 1);
+});
+
+test('an invalidated in-flight worker cannot repopulate the display cache', async t => {
+  const root = fixture(t), cache = createPayloadInspectionCache(), options = { hardwareFamily: 'RTX40' };
+  const pending = cache.prime(root, options); cache.invalidate(root); await pending;
+  const measured = countReads(root, () => cache.inspect(root, options)); assert.ok(measured.bytes > 0);
+});
+
+test('a failed worker inspection does not poison retries after the source is repaired', async t => {
+  const root = fixture(t), cache = createPayloadInspectionCache(), bundle = path.join(root, 'bundle.json'), saved = fs.readFileSync(bundle);
+  fs.writeFileSync(bundle, '{invalid'); await assert.rejects(cache.prime(root), { code: 'ERR_PAYLOAD_HASH' });
+  fs.writeFileSync(bundle, saved); assert.equal((await cache.prime(root, { hardwareFamily: 'RTX40' })).ready, true);
+});

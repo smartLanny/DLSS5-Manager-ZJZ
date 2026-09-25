@@ -6,6 +6,7 @@ const { createCompactBundle, requirePayload } = require('../src/product/payload'
 const { PAYLOAD_FILES } = require('../src/product/constants');
 const { resolveOperationApi } = require('../src/product/operation-api');
 const { assess } = require('../src/product/game-support');
+const { zip } = require('./helpers/ota-fixture');
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 function setup(t) {
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-components-'));
@@ -15,12 +16,88 @@ function setup(t) {
   const catalog = { packages: [{ id:'runtime-a',kind:'nr-runtime',version:'1.0',variant:'RTX20-40',hardwareFamilies:['RTX40'],architecture:'x64',interface:'NGX-Feature18',filename:'nvngx_dlssnr.dll',bytes:bytes.length,sha256:hash(bytes) }] };
   return { root, dll, bytes, lib:createComponentLibrary({ userData:root, catalog }) };
 }
+
+test('component update failures retain the component category and concrete error code', async t => {
+  const f = setup(t);
+  t.mock.method(globalThis, 'fetch', async url => {
+    if (url.includes('/dlss5-bridge/')) return { ok: false, status: 403 };
+    if (url.includes('/DLSS5-Feeder/')) throw Object.assign(new Error('network offline'), { cause: { code: 'ENETUNREACH' } });
+    return { ok: true, text: async () => '[]' };
+  });
+  const result = await f.lib.checkUpdates();
+  assert.equal(result.find(row => row.kind === 'bridge').error.code, 'HTTP_403');
+  assert.match(result.find(row => row.kind === 'bridge').error.message, /403/);
+  assert.deepEqual(result.find(row => row.kind === 'feeder').error, { code: 'ENETUNREACH', message: 'network offline' });
+  assert.equal(result.find(row => row.kind === 'mfg').error, undefined);
+});
+
+test('unified3 inventory and overlay retain complete resources and the matching configuration template', async t => {
+  const f = setup(t), base = path.join(f.root, 'base'), id = '0.5-dline21-unified3';
+  const names = require('../src/product/payload-companions').NAMES;
+  for (const family of ['RTX40', 'RTX50']) for (const kind of ['reshade', 'bridge', 'runtime']) {
+    const file = path.join(base, 'fixed', family, PAYLOAD_FILES[kind]); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, f.bytes);
+  }
+  for (const version of [id, 'old-core']) for (const name of [PAYLOAD_FILES.addon, PAYLOAD_FILES.config, ...(version === id ? names : [])]) {
+    const file = path.join(base, 'versions', version, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, name === PAYLOAD_FILES.config ? version + ' configuration' : f.bytes);
+  }
+  fs.writeFileSync(path.join(base, 'bundle.json'), JSON.stringify(createCompactBundle(base, [{ id }, { id: 'old-core' }], 'old-core')));
+  const files = [PAYLOAD_FILES.addon, PAYLOAD_FILES.bridge, ...names].map(name => ({ name, bytes: f.bytes, sha256: hash(f.bytes) }));
+  const input = { id, version: '0.5 D21 unified3', architecture: 'x64', interface: 'NGX-D3D12-Feature1', inputInterfaces: ['NGX-D3D12-Feature1'], catalogIdentity: true, files };
+  await assert.rejects(f.lib.importVerifiedCore({ ...input, files: files.slice(0, -1) }));
+  await f.lib.importVerifiedCore(input); await f.lib.activateCore(id, base);
+  const payload = requirePayload(f.lib.root, 'RTX40', id);
+  assert.equal(payload.companions.length, 7); assert.equal(fs.readFileSync(payload.config.file, 'utf8'), id + ' configuration');
+  await f.lib.registerPayloadContext(f.lib.root, id, 'RTX40');
+  const inventory = await f.lib.inventory(); assert.ok(names.every(name => inventory.packages.some(row => row.files.some(file => file.name === name))));
+});
 test('known runtime import verifies PE/hash and deduplicates without changing games', async t => {
   const f = setup(t); const first = await f.lib.importComponent(f.dll); await f.lib.importComponent(f.dll);
   assert.equal(first.changedGames, false); assert.equal((await f.lib.inventory()).packages.length, 1);
   assert.equal((await f.lib.inventory()).packages[0].hardwareFamilies[0], 'RTX40');
-  fs.appendFileSync(f.dll, 'changed'); await assert.rejects(f.lib.importComponent(f.dll), /尚未识别/);
-  assert.equal((await f.lib.inventory()).packages.length, 1);
+  fs.appendFileSync(f.dll, 'changed'); const changed=await f.lib.importComponent(f.dll);
+  assert.equal(changed.packages[0].kind,'custom-candidate');assert.equal(changed.packages[0].validation,'blocked');
+  assert.equal((await f.lib.inventory()).packages.length, 2);
+});
+test('an unknown x64 addon64 is cached as a user Add-on instead of masquerading as a Core', async t => {
+  const f = setup(t), addon = path.join(f.root, 'renodx-dlss-26091112-zh.addon64');
+  const bytes = Buffer.from(f.bytes); bytes[110] = 7; fs.writeFileSync(addon, bytes);
+  const result = await f.lib.importComponent(addon), item = result.packages[0];
+  assert.equal(item.kind, 'user-addon');
+  assert.equal(item.architecture, 'x64');
+  assert.equal(item.files[0].name, path.basename(addon));
+  assert.match(item.id, /^user-addon-[a-f0-9]{24}$/);
+  assert.equal((await f.lib.inventory()).packages[0].kind, 'user-addon');
+});
+test('unknown DLL and structurally valid ZIP remain visibly blocked custom candidates', async t => {
+  const f=setup(t),unknownDll=path.join(f.root,'nvngx_dlssnr.dll');
+  const bytes=Buffer.from(f.bytes);bytes[111]=9;fs.writeFileSync(unknownDll,bytes);
+  const dll=await f.lib.importComponent(unknownDll);assert.equal(dll.packages[0].kind,'custom-candidate');
+  assert.equal(dll.packages[0].validation,'blocked');assert.match(dll.packages[0].blockers[0],/不会自动用于/);
+  const archive=zip(path.join(f.root,'unknown-full-package.zip'),[{name:'readme.txt',data:'not a component identity'}]);
+  const packed=await f.lib.importComponent(archive);assert.equal(packed.packages[0].kind,'custom-candidate');
+  assert.equal(packed.packages[0].media,'archive');
+});
+test('a selected component-library root keeps large objects out of userData', async t => {
+  const userData = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-small-state-'));
+  const dataRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-large-data-'));
+  t.after(() => { fs.rmSync(userData,{recursive:true,force:true}); fs.rmSync(dataRoot,{recursive:true,force:true}); });
+  const lib = createComponentLibrary({ userData, root: path.join(dataRoot, 'component-library'), catalog:{packages:[]} });
+  assert.equal(lib.root, path.join(dataRoot, 'component-library'));
+  assert.equal(fs.existsSync(path.join(userData, 'component-library')), false);
+});
+test('a verified Core package commits addon and chain together or not at all', async t => {
+  const f = setup(t), addon = Buffer.from(f.bytes), chain = Buffer.from(f.bytes);
+  addon[100] = 1; chain[100] = 2;
+  const input = { id:'0.5-dline21', version:'0.5 D21', variant:'zh-CN', architecture:'x64', interface:'NGX-D3D12-Feature1',
+    inputInterfaces:['NGX-D3D12-Feature1'], supportsPresent:true, validation:'candidate', stableRelease:false, coreUpdateOnly:true,
+    files:[{name:'nr-before-sr.zh-CN.addon64',bytes:addon,sha256:hash(addon)},{name:'nrchain_nvngx.dll',bytes:chain,sha256:hash(chain)}] };
+  await f.lib.importVerifiedCore(input);
+  const inventory = await f.lib.inventory(), row = inventory.packages.find(item => item.id === input.id);
+  assert.deepEqual(row.files.map(file => file.name).sort(), ['nr-before-sr.zh-CN.addon64','nrchain_nvngx.dll']);
+  assert.equal(row.coreUpdateOnly, true);
+  const before = fs.readFileSync(path.join(f.lib.root,'inventory.json'));
+  await assert.rejects(f.lib.importVerifiedCore({ ...input, id:'0.5-dline21-bad', files:[input.files[0],{...input.files[1],sha256:'0'.repeat(64)}] }), /摘要/);
+  assert.deepEqual(fs.readFileSync(path.join(f.lib.root,'inventory.json')), before);
 });
 test('runtime overlay supports a base missing NVIDIA DLL and does not duplicate by route', async t => {
   const f = setup(t), base = path.join(f.root, 'base');
@@ -49,6 +126,28 @@ test('component manifests cannot escape the cache or masquerade as tested packag
   fs.writeFileSync(path.join(dir,'component-manifest.json'),JSON.stringify(m));
   await f.lib.importComponent(dir);assert.equal((await f.lib.inventory()).packages[0].validation,'candidate');
   for(const name of ['../x','C:/x','x:stream','NUL.dll','a/../b','a\\b'])assert.throws(()=>relativeName(name));
+});
+test('only an exact packaged catalog identity can promote a bundled component', async t => {
+  const f=setup(t), dir=path.join(f.root,'official-bridge'); fs.mkdirSync(dir);
+  const addon=path.join(dir,'dlss5-bridge.addon64'); fs.writeFileSync(addon,f.bytes);
+  const manifest={schema:'dlss5-component-v1',id:'bridge-test-official',kind:'bridge',version:'1.2.3',variant:'official',architecture:'x64',
+    interface:'NGX-D3D12-Feature1',inputInterfaces:['NGX-D3D12-Feature1'],compatibleCoreInterfaces:['NGX-D3D12-Feature1'],
+    gameApis:['dx11','vulkan'],capabilities:['vulkan-requires-reshade-layer'],files:[{path:'dlss5-bridge.addon64',sha256:hash(f.bytes),bytes:f.bytes.length}]};
+  const manifestFile=path.join(dir,'component-manifest.json'); fs.writeFileSync(manifestFile,JSON.stringify(manifest));
+  const identity={...manifest,validation:'candidate',defaultEligible:true,sourceType:'official-release',immutable:true,
+    repository:'NIGos/dlss5-bridge',downloadUrl:'https://github.com/NIGos/dlss5-bridge/releases/download/v1.2.3/dlss5-bridge.addon64',
+    files:[
+      {path:`components/${manifest.id}/dlss5-bridge.addon64`,sha256:hash(f.bytes),bytes:f.bytes.length},
+      {path:`components/${manifest.id}/component-manifest.json`,sha256:hash(fs.readFileSync(manifestFile)),bytes:fs.statSync(manifestFile).size}
+    ]};
+  await f.lib.importComponent(dir);
+  assert.equal((await f.lib.inventory()).packages[0].verifiedSource,false);
+  await assert.rejects(f.lib.adoptBundledComponent(dir,{...identity,gameApis:['dx11']}),/gameApis/);
+  const adopted=await f.lib.adoptBundledComponent(dir,identity), row=adopted.packages[0];
+  assert.equal(row.source,'bundled'); assert.equal(row.sourceType,'official-release');
+  assert.equal(row.verifiedSource,true); assert.equal(row.immutable,true); assert.equal(row.defaultEligible,true);
+  assert.deepEqual(row.gameApis,['dx11','vulkan']);
+  assert.equal((await f.lib.inventory()).packages.length,1);
 });
 test('one API result handles assessment evidence, manual override and auto reset', () => {
   const game={chosen:{apiAssessment:{effectiveApi:'dx12',source:'imports'}}};

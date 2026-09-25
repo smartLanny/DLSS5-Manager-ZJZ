@@ -100,6 +100,14 @@ test('theme preference defaults to system and persists a supported override', as
   assert.equal(createStore(f.file).read().theme, 'dark');
 });
 
+test('component storage keeps only a validated absolute library pointer in the small settings file', t => {
+  const f=fixture(t), custom=path.join(f.root,'other-drive','component-library');
+  assert.equal(validate({version:1,componentLibraryPath:custom}).componentLibraryPath,custom);
+  assert.equal(validate({version:1,componentLibraryPath:'relative/cache'}).componentLibraryPath,null);
+  assert.equal(validate({version:1,componentLibraryPreviousPath:custom}).componentLibraryPreviousPath,custom);
+  assert.equal(validate({version:1,componentLibraryPreviousPath:'relative/cache'}).componentLibraryPreviousPath,null);
+});
+
 test('unsupported versions and root shapes remain read-only and are never stamped as v1', async t => {
   for (const value of [{ version: 2, manualGames: ['future data'] }, { version: '1' }, { manualGames: [] }, [], null]) {
     const f = fixture(t, JSON.stringify(value)), bytes = fs.readFileSync(f.file);

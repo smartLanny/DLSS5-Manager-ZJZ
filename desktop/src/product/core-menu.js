@@ -5,16 +5,20 @@
 const CORE_CHOICES = Object.freeze([
   { key: 'initial', label: '0.2 初版', ids: ['0.2.0-beta.2', '0.2.0'] },
   { key: 'stable', label: '0.3.3.4 稳定版', ids: ['0.3.3-dev-r4', '0.3.3.4'] },
+  { key: '037', label: '0.3.7 · 历史版', ids: ['0.3.7'] },
   { key: '042', label: '0.4.2', ids: ['0.4.2'] },
   { key: '047', label: '0.4.7', ids: ['0.4.7beta', '0.4.7'] },
-  { key: 'd21', label: '0.5D21 多层叠加版', ids: ['0.5-dline21', '0.5D21', '0.5beta-D21'] }
+  { key: 'd13', label: '0.5 D13 · 双层版', ids: ['0.5-dline13'] },
+  { key: 'd21', label: '0.5D21 多层叠加版', ids: ['0.5-dline21', '0.5D21', '0.5beta-D21'] },
+  { key: 'unified3', label: '0.5D21 unified3 · 历史回退', ids: ['0.5-dline21-unified3'] },
+  { key: 'unified5', label: '0.5 Unified5 · 五层统一设置', ids: ['0.5-dline21-unified5'] }
 ].map(row => Object.freeze({ ...row, ids: Object.freeze(row.ids) })));
 
 function choiceFor(id) {
   return CORE_CHOICES.find(choice => choice.ids.includes(id)) || null;
 }
 
-function coreMenu(rows, { installedVersion = null, defaultVersion = null } = {}) {
+function coreMenu(rows, { installedVersion = null, defaultVersion = null, existingUnmanaged = false } = {}) {
   const inventory = Array.isArray(rows) ? rows : [];
   const keep = new Set([installedVersion, defaultVersion].filter(Boolean));
   const selected = new Set(), result = [];
@@ -24,7 +28,9 @@ function coreMenu(rows, { installedVersion = null, defaultVersion = null } = {})
     const item = matches.find(row => row.id === installedVersion) || matches.find(row => row.id === defaultVersion) ||
       (matches.length === 1 ? matches[0] : null);
     if (item) {
-      result.push({ ...item, label: `${choice.label}${choice.key === 'd21' && !installedVersion && item.id === defaultVersion ? '（新安装默认）' : ''}` });
+      const suffix = choice.key === '047' && !installedVersion && item.id === defaultVersion
+        ? existingUnmanaged ? '（可选替换目标）' : '（新安装推荐）' : ['d13', 'd21', 'unified3', 'unified5'].includes(choice.key) ? '（测试）' : '';
+      result.push({ ...item, label: `${choice.label}${suffix}` });
       selected.add(item.id);
     } else {
       result.push({ id: `unavailable-core-${choice.key}`, label: `${choice.label}（${matches.length ? '请在组件管理中确认版本' : '组件未准备'}）`,
@@ -42,14 +48,15 @@ function coreMenu(rows, { installedVersion = null, defaultVersion = null } = {})
 }
 
 function preferredBundleDefault(bundle) {
-  const matches = CORE_CHOICES.at(-1).ids.filter(id => Object.hasOwn(bundle.versions || {}, id));
+  const matches = CORE_CHOICES.find(choice => choice.key === '047').ids.filter(id => Object.hasOwn(bundle.versions || {}, id));
   if (matches.length !== 1) return null;
   const id = matches[0], entry = bundle.versions[id];
-  // Default must be a complete source entry, not a core-only patch or a renamed
-  // D12/D20. Existing payload verification still owns hashes and API eligibility.
-  return entry && entry.coreUpdateOnly !== true && entry.comparisonOnly !== true &&
-    entry.supportsPresent === true && Array.isArray(entry.inputInterfaces) && entry.inputInterfaces.includes('NGX-D3D12-Feature1')
-    ? id : null;
+  // Public installs stay on the complete 0.4.7 package. D21 is deliberately a
+  // user-selected candidate until its game/hardware acceptance gates are met.
+  const fullPackage = entry && entry.coreUpdateOnly !== true && entry.comparisonOnly !== true &&
+    (entry.compatibility === 'dx11' || entry.supportsPresent === true &&
+      Array.isArray(entry.inputInterfaces) && entry.inputInterfaces.includes('NGX-D3D12-Feature1'));
+  return fullPackage ? id : null;
 }
 
 module.exports = { CORE_CHOICES, choiceFor, coreMenu, preferredBundleDefault };

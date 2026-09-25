@@ -6,6 +6,16 @@ const { createLegacyRuntime } = require('../src/product/legacy-runtime');
 const { fingerprint } = require('../src/product/feeder-runtime');
 const runtime = createLegacyRuntime({ appDir: path.resolve(__dirname, '..') });
 
+test('missing packaged legacy metadata reports a missing component and forged metadata remains untrusted', t => {
+  const fs = require('node:fs'), os = require('node:os');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-package-identity-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const local = createLegacyRuntime({ root }), selection = { api: 'dx11', architecture: 'x64', hardwareFamily: 'RTX50', loadingBackend: 'hoyoshade' };
+  assert.throws(() => local.load(selection), { code: 'LEGACY_PACKAGE_MISSING' });
+  fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({ schema: 1, assets: [] }));
+  assert.throws(() => local.load(selection), { code: 'LEGACY_PACKAGE_UNTRUSTED' });
+});
+
 test('legacy host recipes keep the x86 provider separate from x64 Core and runtime', () => {
   const pkg = runtime.load({ api: 'dx11', architecture: 'x86', hardwareFamily: 'RTX40' });
   assert.equal(pkg.recipe.schema, 2); assert.equal(pkg.recipe.hostRequired, true);
@@ -88,4 +98,30 @@ test('repair verifies every historical pinned byte even when the current pool id
   await assert.rejects(pinned.verify({ root, recipe }), { code: 'LEGACY_PACKAGE_HASH' });
   fs.unlinkSync(file);
   await assert.rejects(pinned.verify({ root, recipe }));
+});
+
+test('thin legacy recipes reuse only the exact NR DLC and reject altered, wrong-family or non-runtime substitutions', async t => {
+  const fs = require('node:fs'), os = require('node:os'), crypto = require('node:crypto');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-shared-runtime-')), pool = path.join(root, 'pool'), library = path.join(root, 'library');
+  fs.mkdirSync(pool); fs.mkdirSync(library); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const recipe = structuredClone(runtime.load({ api: 'dx11', architecture: 'x64', hardwareFamily: 'RTX50', loadingBackend: 'hoyoshade' }).recipe);
+  let shared;
+  for (const item of recipe.files) {
+    const bytes = Buffer.from(item.source); item.sha256 = crypto.createHash('sha256').update(bytes).digest('hex'); item.bytes = bytes.length;
+    const file = item.role === 'nr-runtime' ? path.join(library, 'objects/runtime.dll') : path.join(pool, item.source);
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes);
+    if (item.role === 'nr-runtime') shared = { file: 'objects/runtime.dll', bytes: item.bytes, sha256: item.sha256, family: 'RTX50' };
+  }
+  const pinned = createLegacyRuntime({ root: pool, componentLibraryRoot: library, getCurrentRuntime: () => shared,
+    lock: { ...runtime.lock, restorableRecipeFingerprints: [fingerprint(recipe)] }, pe: { getBitness: () => 64 } });
+  const value = { root: pool, recipe, fingerprint: fingerprint(recipe) }, item = recipe.files.find(row => row.role === 'nr-runtime');
+  assert.equal((await pinned.verify(value)).sources[item.source], path.join(library, shared.file));
+  assert.equal(recipe.files.find(row => row.role === 'nr-runtime').source, item.source, 'receipt identity stays independent of the source location');
+  shared.family = 'RTX40'; await assert.rejects(pinned.verify(value)); shared.family = 'RTX50';
+  const source = path.join(library, shared.file), bytes = fs.readFileSync(source); fs.appendFileSync(source, 'changed');
+  await assert.rejects(pinned.verify(value), { code: 'LEGACY_PACKAGE_HASH' }); fs.writeFileSync(source, bytes);
+  const badPool = path.join(pool, item.source); fs.mkdirSync(path.dirname(badPool), { recursive: true }); fs.writeFileSync(badPool, 'corrupted pool runtime');
+  await assert.rejects(pinned.verify(value), { code: 'LEGACY_PACKAGE_HASH' }); fs.unlinkSync(badPool);
+  const provider = recipe.files.find(row => row.role === 'provider'); fs.unlinkSync(path.join(pool, provider.source));
+  await assert.rejects(pinned.verify(value), 'missing Provider bytes cannot be borrowed from the runtime DLC');
 });

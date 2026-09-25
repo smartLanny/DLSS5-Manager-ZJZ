@@ -2,6 +2,23 @@
 .nav-icon-hoyo { --nav-icon: url('icons/phosphor/crown-simple.svg'); --nav-icon-fill: url('icons/phosphor/crown-simple-fill.svg'); }
 .hoyo-poster .nav-icon { width: 30px; height: 30px; background: currentColor; mask: var(--nav-icon) center / contain no-repeat; }
 .hoyo-header-action { display: flex; }
+.game-card .unified-launch-btn[hidden], .hoyo-header-action[hidden] { display: none; }
+.gp-main-actions { flex-shrink: 0; }
+.library-more { position: relative; }
+.library-more > summary { list-style: none; cursor: pointer; }
+.library-more > div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 8; display: grid; gap: 6px; padding: 8px; min-width: 170px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 12px 30px #0005; }
+.game-card.expanded .card-action > .open-game-page-btn,
+.game-card.expanded .card-action > [data-hoyo-toggle]:not(.expand-arrow) { display: none; }
+.game-card.expanded .game-card-head { position: relative; padding-right: 44px; }
+.game-card.expanded .game-card-head .card-action { position: absolute; right: 12px; top: 16px; padding: 0; }
+.gp-apply-bar > div:first-child { min-width: 0; flex: 1 1 180px; }
+.gp-main-actions { max-width: 100%; }
+.gp-inline .gp-nr-details > .gp-controls { margin-top: 14px; }
+.gp-adoption { padding: 16px; margin: 16px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.gp-adoption p { line-height: 1.7; }
+.gp-adoption small { display: block; color: var(--muted); overflow-wrap: anywhere; }
+.gp-section[data-gp-detail] > summary { cursor: pointer; font-weight: 600; }
+.gp-section[data-gp-detail][open] > summary { margin-bottom: 18px; }
 .hoyo-game-card .game-title { flex-wrap: wrap; }
 .hoyo-game-card .game-title h3 { max-width: 100%; }
 .hoyo-game-card .badge { max-width: 100%; white-space: normal; line-height: 1.4; }

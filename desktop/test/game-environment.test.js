@@ -43,6 +43,16 @@ function expectArchive(f) {
   for (const row of receipt.files) assert.equal(fs.readFileSync(path.join(f.game, row.backup), 'utf8'), f.originals[path.basename(row.rel)]);
 }
 
+test('isolation restore rejects an active managed installation before touching files and succeeds after uninstall', async t => {
+  let installed = false;
+  const f = fixture(t, { assertRestorable: async () => { if (installed) throw Object.assign(Error('uninstall first'), { code: 'ENVIRONMENT_RESTORE_FIRST' }); } });
+  await isolate(f); const receipt = fs.readFileSync(f.receipt);
+  installed = true;
+  await assert.rejects(f.service.restore('g'), { code: 'ENVIRONMENT_RESTORE_FIRST' });
+  assert.deepEqual(fs.readFileSync(f.receipt), receipt); assert.equal(fs.existsSync(f.file('old-nr.addon64')), false); expectArchive(f);
+  installed = false; await f.service.restore('g'); expectOriginals(f); expectArchive(f);
+});
+
 test('cleanup preview is read-only and distinguishes known plugins, unknown DLLs and native runtimes', async t => {
   const f = fixture(t), preview = await f.service.preview('g'); expectOriginals(f);
   assert.equal(fs.existsSync(f.receipt), false); assert.equal(fs.existsSync(f.pending), false);

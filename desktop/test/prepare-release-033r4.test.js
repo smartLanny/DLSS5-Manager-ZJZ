@@ -11,9 +11,9 @@ const {
 } = require('../scripts/prepare-release-033r4');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const REAL_ADDON = path.resolve(PROJECT_ROOT, '..', 'dlss5-lab', 'nr-before-sr', 'github-staging', 'release',
+const REAL_ADDON = path.resolve(PROJECT_ROOT, '..', '..', 'dlss5-lab', 'nr-before-sr', 'github-staging', 'release',
   'beta0.3.3-dev-r4-2869', 'RTX50-DLSS5-AI渲染超分版-beta0.3.3-dev-r4-@野生的装机宅-Bilibili-完整包', FILES.addon.sourceName);
-const BETA_036_ZIP = path.resolve(PROJECT_ROOT, '..', 'dlss5-lab', 'nr-before-sr', 'github-staging', 'release',
+const BETA_036_ZIP = path.resolve(PROJECT_ROOT, '..', '..', 'dlss5-lab', 'nr-before-sr', 'github-staging', 'release',
   'beta0.3.3.6-small-9b10', 'DLSS5-beta0.3.3.6-中文轻量更新包.zip');
 const BRIDGE = '46041a5ff91ae2fd907e310d132aabc3c4a1ecd48dace511b8672909d5d9c2fb';
 const RTX40_RUNTIME = '6eb209e764f39872625debd6abaf45e2bb6322f6f270f781f70c059ae30b3927';
@@ -28,18 +28,26 @@ function hardlinkOrCopy(source, target) {
   catch { fs.copyFileSync(source, target); }
 }
 
-function makeFixture(t) {
+function makeFixture(t, { pinnedFixed = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'manager-033r4-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'versions'), { recursive: true });
   const fixedRoot = path.join(PROJECT_ROOT, 'payload', 'nr-before-sr', 'fixed');
+  const fixedManifest = {};
   for (const [family, runtime] of [['RTX40', RTX40_RUNTIME], ['RTX50', RTX50_RUNTIME]]) {
     const fixed = path.join(root, 'fixed', family);
     fs.mkdirSync(fixed, { recursive: true });
-    hardlinkOrCopy(path.join(fixedRoot, family, 'nrchain_nvngx.dll'), path.join(fixed, 'nrchain_nvngx.dll'));
-    hardlinkOrCopy(path.join(fixedRoot, family, 'nvngx_dlssnr.dll'), path.join(fixed, 'nvngx_dlssnr.dll'));
-    assert.equal(sha256(path.join(fixed, 'nrchain_nvngx.dll')), BRIDGE);
-    assert.equal(sha256(path.join(fixed, 'nvngx_dlssnr.dll')), runtime);
+    const bridgeFile = path.join(fixed, 'nrchain_nvngx.dll'), runtimeFile = path.join(fixed, 'nvngx_dlssnr.dll');
+    if (pinnedFixed) {
+      hardlinkOrCopy(path.join(fixedRoot, family, 'nrchain_nvngx.dll'), bridgeFile);
+      hardlinkOrCopy(path.join(fixedRoot, family, 'nvngx_dlssnr.dll'), runtimeFile);
+      assert.equal(sha256(bridgeFile), BRIDGE);
+      assert.equal(sha256(runtimeFile), runtime);
+    } else {
+      fs.writeFileSync(bridgeFile, `fixture-${family}-bridge`);
+      fs.writeFileSync(runtimeFile, `fixture-${family}-runtime`);
+    }
+    fixedManifest[family] = { files: { 'nrchain_nvngx.dll': sha256(bridgeFile), 'nvngx_dlssnr.dll': sha256(runtimeFile) } };
   }
   const keep = {
     '0.3.3.5': { label: 'keep stable', notes: 'keep stable', source: 'keep stable', compatibility: null, ota: false,
@@ -51,10 +59,7 @@ function makeFixture(t) {
     version: 4,
     generatedAt: 'fixture',
     defaultVersion: '0.4.6-hotfix.1',
-    fixed: {
-      RTX40: { files: { 'nrchain_nvngx.dll': BRIDGE, 'nvngx_dlssnr.dll': RTX40_RUNTIME } },
-      RTX50: { files: { 'nrchain_nvngx.dll': BRIDGE, 'nvngx_dlssnr.dll': RTX50_RUNTIME } }
-    },
+    fixed: fixedManifest,
     versions: keep
   }, null, 2) + '\n');
   return { root, keep };
@@ -101,7 +106,7 @@ test('r4 preparation adds only the true 0.3.3-dev-r4 slot, preserves the default
 });
 
 test('an unreviewed or wrong source is rejected before the target or bundle is touched', async t => {
-  const fixture = makeFixture(t);
+  const fixture = makeFixture(t, { pinnedFixed: false });
   const bundleFile = path.join(fixture.root, 'bundle.json');
   const before = fs.readFileSync(bundleFile);
   assert.throws(() => prepare(path.join(PROJECT_ROOT, 'package.json'), { root: fixture.root }), /exact Chinese addon/);

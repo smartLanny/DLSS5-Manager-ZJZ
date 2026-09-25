@@ -182,14 +182,43 @@ test('RDR2 route and XML commit together; install and transient store failures r
 
   const storeFailure = fixture(t, { rdr2: true, initialApi: 'Vulkan', installer: successInstaller });
   const storeGame = await bootOne(storeFailure);
-  const originalWrite = storeFailure.service.store.write;
+  const originalWrite = storeFailure.service.store.update;
   let writes = 0;
-  storeFailure.service.store.write = patch => ++writes === 1
+  storeFailure.service.store.update = patch => ++writes === 1
     ? Promise.reject(Object.assign(new Error('transient settings failure'), { code: 'SETTINGS_STORE_WRITE_FAILED' }))
     : originalWrite(patch);
   await assert.rejects(storeFailure.service.applyGameRoute(storeGame.id, { api: 'dx12', version: CURRENT }), { code: 'SETTINGS_STORE_WRITE_FAILED' });
   assert.match(fs.readFileSync(storeFailure.settingsFile, 'utf8'), /kSettingAPI_Vulkan/);
   assert.deepEqual(storeFailure.service.store.read().gameOverrides, {});
+});
+
+test('failed route rollback preserves concurrent names and another game preference', async t => {
+  let service, game, other;
+  const f = fixture(t, { installer: { async install() {
+    await service.renameGame(game.id, 'Saved during install');
+    await service.store.update(state => ({ gameOverrides: { ...state.gameOverrides, [other]: {
+      name: 'Another game', api: 'dx11', apiExecutable: path.join(other, 'Other.exe') } } }));
+    throw Object.assign(new Error('injected install failure'), { code: 'INSTALL_FAILED' });
+  } } });
+  service = f.service; game = await bootOne(f); other = path.join(f.root, 'another').toLowerCase();
+  await assert.rejects(service.applyGameRoute(game.id, { api: 'dx12', version: CURRENT }), { code: 'INSTALL_FAILED' });
+  const saved = service.store.read().gameOverrides;
+  assert.equal(saved[f.gameDir.toLowerCase()].name, 'Saved during install');
+  assert.equal(saved[f.gameDir.toLowerCase()].api, 'auto');
+  assert.equal(saved[other].api, 'dx11');
+});
+
+test('failed route does not roll back a newer explicit API choice', async t => {
+  let service, game;
+  const f = fixture(t, { installer: { async install() {
+    await service.setGameApiPreference(game.id, 'dx11');
+    throw Object.assign(new Error('injected install failure'), { code: 'INSTALL_FAILED' });
+  } } });
+  service = f.service; game = await bootOne(f);
+  await assert.rejects(service.applyGameRoute(game.id, { api: 'dx12', version: CURRENT }), error => {
+    assert.equal(error.code, 'INSTALL_FAILED'); assert.equal(error.details.preferenceExternalChangeRetained, true); return true;
+  });
+  assert.equal(service.store.read().gameOverrides[f.gameDir.toLowerCase()].api, 'dx11');
 });
 
 test('rollback retains an externally edited RDR2 XML while restoring the saved API preference', async t => {

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-12",
+  "updatedAt": "2026-09-16",
   "checkCadence": {
     "onLaunch": true,
     "manualCommand": "dlss5-manager-zjz check",
@@ -16,7 +16,7 @@
       "slot": "mfg-dlc",
       "defaultPin": "0.9",
       "priority": "default",
-      "rollbacks": ["0.7-zh-CN", "0.7"],
+      "rollbacks": [],
       "neverAutoBump": true,
       "updateSource": {
         "kind": "github-releases",
@@ -26,7 +26,7 @@
         "metadataUrl": "https://api.github.com/repos/mavismmg/MFGAdaUnlock-RenoDx/releases?per_page=15"
       },
       "policy": "prefer-owner-pin",
-      "notes": "Owner 2026-09-12：优先/默认 0.9；0.7 仅回滚。公开 GitHub 标签可能落后于 pin，pin 表为准，不自动改跟源站 latest。"
+      "notes": "Owner 2026-09-16：新安装只提供 0.9；0.7/0.6.1 不可选择、不进入新包，仅保留旧收据识别和原样恢复能力。"
     },
     {
       "id": "bridge",

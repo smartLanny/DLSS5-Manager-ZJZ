@@ -26,7 +26,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(componentRoot, addonFile), addon);
   fs.writeFileSync(path.join(componentRoot, 'objects', addonSha, 'THIRD_PARTY_NOTICES.md'), notice);
   const candidate = {
-    id: 'bridge-1.4.13-pre7-official', kind: 'bridge', version: '1.4.13-pre7', variant: 'official',
+    id: 'bridge-1.4.13-pre8-official', kind: 'bridge', version: '1.4.13-pre8', variant: 'official',
     architecture: 'x64', interface: 'NGX-D3D12-Feature1', gameApis: ['dx11', 'vulkan'],
     validation: 'candidate', source: 'user-imported', files: [
       { file: addonFile, name: 'dlss5-bridge.addon64', sha256: addonSha, bytes: addon.length },
@@ -56,6 +56,16 @@ test('no bridgeId preserves a verified payload carrier and never adopts an unown
   assert.equal(freshResult, fresh);
   assert.equal(freshResult.carrier, undefined);
   assert.equal(freshResult.components, undefined);
+});
+
+test('the public 0.4.7 Core resolves to its fixed Bridge 1.4.12 pair', () => {
+  const rows = registry.bridgeCatalog('missing-payload-root', {
+    coreHash: '93011d9283615ea9dc8e92955f5ca6aeff01435925f63e941dc1eea1128a372c',
+    chainHash: '46041a5ff91ae2fd907e310d132aabc3c4a1ecd48dace511b8672909d5d9c2fb'
+  });
+  assert.equal(rows[0].id, 'nigos-1.4.12-nr');
+  assert.equal(rows[0].compatible, true);
+  assert.equal(rows[0].default, true);
 });
 
 test('explicit candidate selection remains a dry-run candidate and carries no runtime verification', t => {
@@ -88,4 +98,40 @@ test('BG3 rejects an imported candidate whose pin is not the fixed 1.4.11 bridge
   assert.throws(() => registry.selectNativeComponents(f.payloadDir, payload(f.versionInfo), {
     api: 'dx11', bridgeId: f.candidate.id, componentRoot: f.componentRoot, gameId: 'bg3'
   }), { code: 'COMPONENT_BRIDGE_CORE' });
+});
+
+test('a new DX11 install automatically selects the newest exact bundled official Bridge', t => {
+  const f=fixture(t), data=JSON.parse(fs.readFileSync(path.join(f.componentRoot,'inventory.json'),'utf8'));
+  Object.assign(data.packages[0],{source:'bundled',sourceType:'official-release',verifiedSource:true,immutable:true,defaultEligible:true});
+  fs.writeFileSync(path.join(f.componentRoot,'inventory.json'),JSON.stringify(data));
+  const trusted=new Map([[f.candidate.id,{id:f.candidate.id,kind:'bridge',version:f.candidate.version,architecture:'x64',
+    gameApis:['dx11','vulkan'],sourceType:'official-release',immutable:true,sha256:f.addonSha}]]);
+  const result=registry.selectNativeComponents(f.payloadDir,payload(f.versionInfo),{
+    api:'dx11',componentRoot:f.componentRoot,trustedComponents:trusted
+  });
+  assert.equal(result.components.bridge,f.candidate.id);
+  assert.equal(result.carrier.actual,f.addonSha);
+  assert.equal(result.componentMetadata.bridge.verifiedSource,true);
+});
+
+test('imported official Bridge exposes a Vulkan candidate through the same interface contract', t => {
+  const f = fixture(t);
+  const rows = registry.importedBridges(f.componentRoot, f.versionInfo, null, 'manual-component', 'vulkan');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].api, 'vulkan');
+  assert.deepEqual(rows[0].gameApis, ['dx11', 'vulkan']);
+  assert.equal(rows[0].contract.state, 'candidate');
+});
+
+test('choosing exact Unified5 opts into the bundled official candidate without changing legacy defaults', t => {
+  const f = fixture(t), core = require('../src/product/unified5-core');
+  Object.assign(f.candidate, { source: 'bundled', sourceType: 'official-release', verifiedSource: true, immutable: true, defaultEligible: false });
+  fs.writeFileSync(path.join(f.componentRoot, 'inventory.json'), JSON.stringify({ schemaVersion: 1, packages: [f.candidate] }));
+  const trustedComponents = new Map([[f.candidate.id, { ...f.candidate, sha256: f.addonSha }]]);
+  const selected = { version: core.ID, versionInfo: { id: core.ID, inputInterfaces: ['NGX-D3D12-Feature1'] }, addon: { actual: core.HASHES['zh-CN'] } };
+  const options = { api: 'dx11', componentRoot: f.componentRoot, trustedComponents };
+  assert.equal(registry.selectNativeComponents(f.payloadDir, selected, options).components.bridge, f.candidate.id);
+  assert.equal(registry.selectNativeComponents(f.payloadDir, payload(f.versionInfo), options).components, undefined);
+  assert.equal(registry.selectNativeComponents(f.payloadDir, selected, { ...options, api: 'dx12' }).components.bridge, null);
+  assert.equal(registry.selectNativeComponents(f.payloadDir, selected, { ...options, trustedComponents: null }).components, undefined);
 });

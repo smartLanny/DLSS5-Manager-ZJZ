@@ -24,7 +24,21 @@ test('base and offline dynamic configs include only the five legacy FG metadata 
     const rows = config.extraResources.filter(row => expected.some(item => item.to === row.to));
     assert.deepEqual(rows, expected, flavor + ' legacy resource rows');
     assert.equal(rows.some(row => /\.(?:dll|exe|asi|addon(?:32|64)?)$/i.test(String(row.from) + '/' + row.to)), false);
+    assert.equal(config.extraResources.some(row => row.to === 'legacy-runtime'), false,
+      'a package without an optional legacy pool has no missing resource source');
   }
+});
+
+test('dynamic packaging includes a staged legacy pool only when its manifest exists', t => {
+  const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'manager-optional-pool-'));
+  t.after(() => { assert.equal(path.dirname(stageRoot), path.resolve(os.tmpdir())); fs.rmSync(stageRoot, { recursive: true, force: true }); });
+  const pool = path.join(stageRoot, 'resources', 'legacy-runtime'); fs.mkdirSync(pool, { recursive: true });
+  const options = { stageRoot, flavor: 'base', outputRoot: path.join(stageRoot, 'output'), portableOnly: false };
+  assert.equal(buildConfig(options).extraResources.some(row => row.to === 'legacy-runtime'), false);
+  fs.copyFileSync(path.resolve(__dirname, '../resources/legacy-runtime/manifest.json'), path.join(pool, 'manifest.json'));
+  assert.deepEqual(buildConfig(options).extraResources.find(row => row.to === 'legacy-runtime'),
+    { from: pool, to: 'legacy-runtime' }, 'the stage verifies the payload; the builder retains its explicit resource mapping');
+  assert.equal(buildConfig(options).extraResources.some(row => row.to === 'hoyoshade'), true, 'native HoYo resources are independent');
 });
 
 test('portable GUI exposes single-operation elevation and refuses whole-app elevation', async () => {

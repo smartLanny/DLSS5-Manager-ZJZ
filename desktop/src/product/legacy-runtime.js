@@ -23,10 +23,12 @@ function createLegacyRuntime(options = {}) {
   const externalProviders = options.externalProviders || require('./external-provider-package').createExternalProviderPackages({
     root: options.componentLibraryRoot || path.join(options.userData || options.appDir || root, 'component-library'),
     currentCore: options.currentCore || options.getCurrentCore,
-    currentRuntime: options.currentRuntime || options.getCurrentRuntime
+    currentRuntime: options.currentRuntime || options.getCurrentRuntime,
+    selectCandidate: options.selectCandidate
   });
   function pool() {
     const manifest = regularJson(path.join(root, 'manifest.json'), 512 * 1024);
+    if (!manifest) fail('LEGACY_PACKAGE_MISSING', '当前 Core 的旧 Feeder 配套未内置。可选择 0.5 Unified5 使用新版 Feeder，或在游戏确有 DLSS 时使用原生路线；重复导入 NR 运行库无法补齐旧 Feeder。', { file: 'legacy-runtime/manifest.json' });
     if (!manifest || manifest.schema !== 1 || !HASH.test(lock.manifestFingerprint || '') || fingerprint(manifest) !== lock.manifestFingerprint ||
         manifest.upstream?.commit !== catalog.UPSTREAM.commit || manifest.coreInterface !== 'NRExternalProviderV1' ||
         !Array.isArray(manifest.assets) || manifest.assets.length < 10 || manifest.assets.length > 128)
@@ -88,7 +90,7 @@ function createLegacyRuntime(options = {}) {
     return externalProviders.load({ ...input, id: providerId, selection: input.selection || input });
   }
   function validate(recipe) {
-    if (recipe?.externalProvider?.schema === lock.externalProvider?.recipeSchema)
+    if (recipe?.externalProvider && recipe.externalProvider.schema === lock.externalProvider?.recipeSchema)
       return externalProviders.validateRecipe(recipe);
     if (!recipe || !recipe.selection) fail('LEGACY_RECEIPT_INVALID', 'Feeder 收据缺少固定配套选择。');
     // A newly selected external Provider must not reinterpret an existing
@@ -99,7 +101,7 @@ function createLegacyRuntime(options = {}) {
     return recipe;
   }
   function validateStored(recipe) {
-    if (recipe?.externalProvider?.schema === lock.externalProvider?.recipeSchema)
+    if (recipe?.externalProvider && recipe.externalProvider.schema === lock.externalProvider?.recipeSchema)
       return externalProviders.validateRecipe(recipe);
     const hash = fingerprint(recipe);
     if (!lock.restorableRecipeFingerprints?.includes(hash)) return validate(recipe);
@@ -114,14 +116,27 @@ function createLegacyRuntime(options = {}) {
     validateStored(pkg.recipe);
     const packageRoot = pkg.recipe.externalProvider ? externalProviders.root : pkg.root;
     await noLinks(packageRoot);
+    const sources = {};
     for (const item of pkg.recipe.files) {
-      const file = resolveFile(packageRoot, item.source);
+      let file = resolveFile(packageRoot, item.source);
+      // Thin Manager packages share their NR runtime with the normal DLC. The
+      // recipe still pins its exact family, byte count and hash; only that role
+      // may resolve outside the fixed pool. Existing but altered pool files are
+      // never hidden by a fallback, and no path is persisted into the recipe.
+      if (!pkg.recipe.externalProvider && item.role === 'nr-runtime' && !fs.existsSync(file)) {
+        const shared = typeof options.getCurrentRuntime === 'function' ? options.getCurrentRuntime() : options.currentRuntime;
+        if (shared?.family === pkg.recipe.hardwareFamily && shared.sha256 === item.sha256 && shared.bytes === item.bytes &&
+            options.componentLibraryRoot && relative(shared.file)) file = resolveFile(options.componentLibraryRoot, shared.file);
+        else if (options.resourcesPath) file = resolveFile(path.join(options.resourcesPath, 'payload', 'nr-before-sr'),
+          `fixed/${pkg.recipe.hardwareFamily}/nvngx_dlssnr.dll`);
+      }
       if (await fileDigest(file) !== item.sha256 || fs.statSync(file).size !== item.bytes)
         fail('LEGACY_PACKAGE_HASH', 'Feeder 配套组件缺失或摘要不符。', { file: item.source });
       if (PE.test(item.source) && pe.getBitness(file) !== (item.architecture === 'x86' ? 32 : 64))
         fail('LEGACY_PACKAGE_ARCH', 'Feeder 配套组件位数与固定清单不符。', { file: item.source });
+      sources[item.source] = file;
     }
-    return { ...pkg, root: packageRoot };
+    return { ...pkg, root: packageRoot, sources };
   }
   function adapterProbe() {
     const manifest = pool();

@@ -1,29 +1,30 @@
 {
   "schema": 1,
-  "provider": "mfgunlock-0.7-zh-CN",
-  "localSafetyPatches": [
-    {
-      "id": "flip-metering-serialization-v1",
-      "files": {
-        "patch_gate.hpp": "d5ff66f0c1cdb52367796fa854a6d89c58a89d07857472cfdd72f6bc359487a8"
-      }
-    }
-  ],
+  "provider": "mfgunlock-0.9-zh-CN",
+  "localSafetyPatches": [],
+  "localizedPanel": {
+    "file": "panel_zh.inl",
+    "sha256": "f83787db423ba44721529d7f94adf38fac922f366f53b58add565026cfca7177"
+  },
   "upstream": {
     "repository": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx",
-    "archiveSha256": "3deedace278de6d9452529f945908be78988aef7db14711a7f6ba9b1ddd2d9fd",
     "files": {
-      "addon.cpp": "05d7bcda9bffe64721c99fc0d19470108e7535dfe0887414864fbfdd4545d148",
-      "framecount.hpp": "e328021a64c7271495f7e4fadb7c9b1724ad985b53aa11a2e97848bd54dc6613",
-      "hdr_compat.hpp": "a5ff759de851a60122866369b71a3a2caf4f3815c14a2135a295312aa9597aa4",
+      "addon.cpp": "9861f872f482eb8800369449f06e7f262d2e3cc7f595fff93ef41989436785d5",
+      "blackwell.hpp": "5576c36a3738acd6288a7745554ed57f040916c31448894f83117a83ba566d6f",
+      "force_policy.hpp": "a67c2b426c55c60f0ce0c37de8c880216a8b3bc3165212563fa3eabfd3578404",
+      "framecount.hpp": "8494ec553b79b79195ac04e3ec09d25b4e74067ceca872306f99902fef4de92f",
+      "hdr_compat.hpp": "13aa2ef277f2522c577cac331a6991f40354179ce3f74bf6531aaf5cccda8e4b",
       "LICENSE": "4ce922ecb6aa4b60d24f63f6241f0436e960a00989d71c68e2eb81ecc3d718fd",
-      "loadhook.hpp": "b4ed62379d72ec801c5c034aff261af7868652dc814de33c345fa458abaa1e76",
-      "midpoint.hpp": "23e42dacbe2bcf6ee527e97e940158ed18d378a5d7c7e14a51598aa814e66b48",
+      "loadhook.hpp": "54b0da3bef6bfbac65985c86e15ce7ccd8131267aa00905791d1608f7e4b6261",
+      "midpoint.hpp": "5c18daaca42eb9845cbe445b4b79d95d78fcf1681b7777ef9de4ede6a4cad265",
       "ngx_hook.hpp": "b413c4a1c0bf1e4613f1e28c03b2450113cfcc89b57d6798cd63d21c943bb075",
-      "quality_guard.hpp": "cf08962147816b55664e7d069954cae107e68e6b76724731c9529e87953e4bc8",
-      "README.md": "59707735445f072c80f349eafcf73a51be5467699db2adde91cf806f757ecd2d"
+      "pacing_policy.hpp": "4bef07771ff0c9a1af8582bd212b76106217f226c2461d262c8382953417a9b4",
+      "quality_guard.hpp": "32880a691e0fdba6fc364a3a2de8bbc73812215313607af07234223ba32e1613",
+      "README.md": "70f525d4b1b8bcccc865de8d0e17a606538b0846b05e0f5ea26b5d3491e6c9d7",
+      "runtime_version.hpp": "ad6eec5c797cea91c81177e2847716f801cd2a2e02d40cb3c41e591f6ea1b26d",
+      "thin_geometry.hpp": "999aa09525102960565f18a0b9ec92a82e951fcbd591789fcd2244df8febec23"
     },
-    "commit": "ffe6169b5e98ad578fcf2c30614d06a567790fe1"
+    "commit": "4a7b7bcd5f4e951c0cae9ffa7db7e5bdf5f8d40b"
   },
   "renodx": {
     "commit": "8d360960a8bdeccada1a1babf7f02215c15c82e8",

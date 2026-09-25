@@ -13,9 +13,9 @@ DLSS5 Manager 将神经渲染运行库按显卡族分开管理。RTX20、RTX30�
 
 ## 基础包和离线整合包
 
-基础 Manager 包含 Electron UI、默认 D16 Core、ReShade、NR chain、MFG Unlock 0.9、小组件登记目录，以及供 Vulkan/Bridge 动态 provider 复用的四文件 ReShade layer（`recipe.json`、`ReShade64.json`、`ReShade64.dll`、`LICENSE.md`）。它不内置上面两个大型 `nvngx_dlssnr.dll`，也不恢复旧 `vulkan-runtime` Core/chain/NR 运行池，适合通过 Manager 手动导入运行库。
+公开 Manager 便携包包含 Electron UI、Core、DLSS5 Bridge、DLSS5 Feeder、MFG Unlock 1.0（默认）与 0.9（回退）以及开源辅助组件。它不内置上面两个大型 `nvngx_dlssnr.dll`，也不内置 RenoDX NR Add-on；用户通过组件管理分别导入 RTX40 或 RTX50 DLC。
 
-离线整合包在基础包内容上各放一份 RTX20–40 族和 RTX50 族运行库，可在没有网络时完成组件选择。当前离线运行库 ZIP 只有两个条目：
+本地 `Full.zip` 不把运行库解包进 Manager，而是并列放入四个仍可独立使用的 ZIP：精简便携包、RenoDX Add-on 包、RTX40 DLC、RTX50 DLC。Windows VC++ 运行库包始终放在 `Full.zip` 外面。RTX40/50 DLC 内部布局仍按硬件族区分：
 
 ```text
 RTX40/nvngx_dlssnr.dll
@@ -24,7 +24,7 @@ RTX50/nvngx_dlssnr.dll
 
 Feeder、Vulkan、host 和 Bridge 小组件只有在 staging 清单逐文件提供摘要后才进入包；它们不会带来第三份大型 NR runtime。DX9、Vulkan 和 x86 路线继续使用各自被识别的通用桥/传输组件，不能把 RTX20–40 NR runtime 当成这些路线的实现。
 
-MFG Unlock 0.9 是 RTX40 的小型补帧 Add-on，固定为 601,088 bytes，SHA-256 为 `64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`。它不替代游戏已有的 Streamline/DLSS-G 运行库，也不把 RTX30/40 的硬件族选择等同于帧生成能力；游戏自身的 DLSS-G runtime 仍需满足 Manager 的版本和兼容性检查。
+MFG Unlock 1.0 是 RTX40 的默认小型补帧 Add-on，固定为 710,144 bytes，SHA-256 为 `f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e`；0.9 仅作为回退，SHA-256 为 `64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`。0.7 不再提供。MFG 不替代游戏已有的 Streamline/DLSS-G 运行库。
 
 ## 手动导入
 
@@ -41,7 +41,7 @@ MFG Unlock 0.9 是 RTX40 的小型补帧 Add-on，固定为 601,088 bytes，SHA-
 
 如果 Manager、ReShade 或组件加载时出现缺少 MSVC runtime 的系统错误，请使用微软官方 x64 安装程序修复或安装 Visual C++ Redistributable：
 
-[下载 Microsoft Visual C++ Redistributable x64](https://aka.ms/vc14/vc_redist.x64.exe)
+[微软官方：最新受支持的 Visual C++ Redistributable](https://learn.microsoft.com/vi-vn/cpp/windows/latest-supported-vc-redist?view=msvc-170)
 
 安装或修复完成后重启 Manager，再重新检查组件。VC++ Redistributable 是系统依赖修复包，不属于 `nvngx_dlssnr.dll`，也不会替换游戏目录内已有的 DLSS/Streamline 文件。
 
