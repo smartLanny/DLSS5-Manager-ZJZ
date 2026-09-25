@@ -18,7 +18,7 @@ test('beta2 staging manifest reuses only explicitly selected, previously verifie
     { path:'resources/hoyoshade/component.json', bytes:5, sha256:'c'.repeat(64) }
   ] } } };
   const manifest = createManifest({ prior, resourcesRoot, selectedIds:['bridge-safe'], payloadRoot:'D:/core',
-    runtime40:'D:/rtx40.dll', runtime50:'D:/rtx50.dll', mfg10:'D:/mfg-1.0.addon64', mfg09:'D:/mfg-0.9.addon64' });
+    runtime40:'D:/rtx40.dll', runtime50:'D:/rtx50.dll', mfgDir:'D:/mfg' });
 
   assert.equal(manifest.packageVersion, '0.5.0-beta.2');
   assert.deepEqual(manifest.core.versions, ['0.2.0-beta.2','0.4.2','0.4.7beta','0.5-dline21']);
@@ -27,8 +27,10 @@ test('beta2 staging manifest reuses only explicitly selected, previously verifie
   assert.equal(manifest.components[0].sourceRoot, path.join(resourcesRoot, 'components', 'bridge-safe'));
   assert.equal(manifest.resources[0].path, 'hoyoshade/component.json');
   assert.equal(manifest.resources[0].source, path.join(resourcesRoot, 'hoyoshade', 'component.json'));
-  assert.equal(manifest.mfg.defaultProvider, 'mfgunlock-1.0');
-  assert.deepEqual(manifest.mfg.providers.map(row => row.id), ['mfgunlock-1.0', 'mfgunlock-0.9']);
+  assert.equal(manifest.mfg.defaultProvider, 'mfgunlock-1.1.5');
+  assert.deepEqual(manifest.mfg.providers.map(row => row.id), ['mfgunlock-1.1.5', 'mfgunlock-1.0', 'mfgunlock-0.9']);
+  assert.equal(manifest.mfg.providers[0].file, path.resolve('D:/mfg', '1.1.5', 'renodx-mfgunlock.addon64'));
+  assert.equal(manifest.mfg.providers[0].sha256, '0d04d858a62d3d19e7e3d478c0b8c46fe3ac43ec9fd11e4abb15617bd291d71a');
 });
 
 test('beta2 staging manifest refuses the superseded pre7 bridge candidate', () => {
@@ -40,7 +42,7 @@ test('beta2 staging manifest refuses the superseded pre7 bridge candidate', () =
 
   assert.throws(() => createManifest({ prior, resourcesRoot:'D:/verified/resources',
     selectedIds:['bridge-1.4.13-pre7-manager-core-compat-20260912'], payloadRoot:'D:/core',
-    runtime40:'D:/rtx40.dll', runtime50:'D:/rtx50.dll', mfg10:'D:/mfg-1.0.addon64', mfg09:'D:/mfg-0.9.addon64' }), /pre7.*已被官方 pre8 取代/);
+    runtime40:'D:/rtx40.dll', runtime50:'D:/rtx50.dll', mfgDir:'D:/mfg' }), /pre7.*已被官方 pre8 取代/);
 });
 
 test('official Bridge fragment replaces historical Bridge rows but preserves Feeder packages', () => {
@@ -52,6 +54,6 @@ test('official Bridge fragment replaces historical Bridge rows but preserves Fee
     sourceRoot:path.resolve(`D:/official/${id}`),files:[{path:'component-manifest.json',source:'component-manifest.json',bytes:1,sha256:'c'.repeat(64)}]});
   const officialBridges={schemaVersion:1,components:[bridge('bridge-pre8'),bridge('bridge-stable')]};
   const manifest=createManifest({prior,resourcesRoot:'D:/verified/resources',selectedIds:['old-bridge','keep-feeder'],payloadRoot:'D:/core',
-    runtime40:'D:/rtx40.dll',runtime50:'D:/rtx50.dll',mfg10:'D:/mfg10',mfg09:'D:/mfg09',officialBridges});
+    runtime40:'D:/rtx40.dll',runtime50:'D:/rtx50.dll',mfgDir:'D:/mfg',officialBridges});
   assert.deepEqual(manifest.components.map(row=>row.id),['keep-feeder','bridge-pre8','bridge-stable']);
 });

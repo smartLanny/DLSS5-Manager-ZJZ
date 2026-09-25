@@ -294,12 +294,12 @@ async function buildPayload({ stageRoot, manifest, manifestFile, flavor }) {
 
 async function buildMfg({ stageRoot, manifest, manifestFile }) {
   const spec = manifest.mfg;
-  if (!spec || spec.defaultProvider !== 'mfgunlock-1.0' || !Array.isArray(spec.providers) || spec.providers.length !== 2)
-    fail('清单必须包含 MFG 1.0 默认版与 0.9 回退版。');
-  const pins = new Map([
-    ['mfgunlock-1.0', { version:'1.0', bytes:710144, sha256:'f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e' }],
-    ['mfgunlock-0.9', { version:'0.9', bytes:601088, sha256:'64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da' }]
-  ]);
+  // The provider pin catalog is the only place that names MFG releases.
+  const catalog = require('../src/product/fg-mfgunlock-providers.json');
+  const pins = new Map(catalog.providers.map(row => [row.id, { version:row.version, bytes:row.files.addon.bytes, sha256:row.files.addon.sha256 }]));
+  if (!spec || spec.defaultProvider !== catalog.defaultProvider || !Array.isArray(spec.providers) || spec.providers.length !== pins.size ||
+      new Set(spec.providers.map(row => row?.id)).size !== pins.size)
+    fail(`清单必须包含全部固定 MFG 版本，默认 ${catalog.defaultProvider}。`, { expected: [...pins.keys()] });
   const sourceResources = path.join(REPO_ROOT, 'resources', 'fg-mfgunlock');
   const targetResources = path.join(stageRoot, 'resources', 'fg-mfgunlock');
   copyTextTree(sourceResources, targetResources);

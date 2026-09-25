@@ -42,7 +42,7 @@ npm run build:release -- --work-root D:\DLSS5-Build
 - 新装默认是 `0.4.7beta`，D21 不是稳定默认。
 - 精确 `0.3.3.4` Core 大小为 652288 bytes，SHA-256 为 `2869d7d6b2d184b4200c3eb7ac671db0299be64e7625c4f816ee26b41890bfb9`。
 - Bridge 与 Feeder 已进入公开组件目录。
-- MFG 1.0 是默认、0.9 是回退，0.7 不进入安装矩阵。
+- MFG 1.1.5 是默认、1.0 和 0.9 是回退，0.7 不进入安装矩阵。
 - 基础便携包不含 RTX40/50 `nvngx_dlssnr.dll`。
 
 发布前人工打开最终 ZIP，确认根目录存在便携标记、主程序、说明和组件清单；确认不存在反馈文件、本机路径和运行库 DLC。记录最终 ZIP、`update-manifest.json`、来源提交、stage 报告和 SHA-256。源码提交、本地门禁、GitHub CI、维护者实机与游戏内结果必须分别记录，不能互相替代。

@@ -525,12 +525,13 @@ test('special routes retain interrupted FG owner recovery even when no receipt w
   await service.recoverPending('g'); assert.equal(fs.existsSync(f.pending), false); assert.equal(fs.existsSync(f.addon), false);
 });
 
-test('provider catalog defaults to 1.0, keeps 0.9 as rollback, and leaves older identities recovery-only', async t => {
+test('provider catalog defaults to 1.1.5, keeps 1.0 and 0.9 as rollback, and leaves older identities recovery-only', async t => {
   const f = fixture(t), catalog = f.service.catalog();
-  assert.deepEqual(PROVIDERS.map(row => row.id), ['mfgunlock-1.0', 'mfgunlock-0.9']);
-  assert.equal(PROVIDERS.find(row => row.id === 'mfgunlock-1.0').recommended, true);
-  assert.equal(PROVIDERS.find(row => row.id === 'mfgunlock-0.9').recommended, false);
-  assert.ok(catalog.every(row => ['mfgunlock-1.0', 'mfgunlock-0.9'].includes(row.id)));
+  assert.equal(ID, 'mfgunlock-1.1.5');
+  assert.deepEqual(PROVIDERS.map(row => row.id), ['mfgunlock-1.1.5', 'mfgunlock-1.0', 'mfgunlock-0.9']);
+  assert.deepEqual(PROVIDERS.filter(row => row.recommended).map(row => row.id), ['mfgunlock-1.1.5']);
+  assert.ok(catalog.every(row => PROVIDERS.some(pin => pin.id === row.id)));
+  assert.ok(LEGACY_PROVIDERS.some(row => row.id === 'mfgunlock-1.1'), 'a manually installed 1.1 stays recognizable for upgrade');
   for (const row of LEGACY_PROVIDERS) {
     assert.equal(providerById(row.id), null);
     assert.deepEqual(recoveryProviderById(row.id), row);
@@ -541,9 +542,9 @@ test('provider catalog defaults to 1.0, keeps 0.9 as rollback, and leaves older 
   }
 });
 
-test('created MFG 1.0 keeps single-file removal ownership', async t => {
+test('created default MFG keeps single-file removal ownership', async t => {
   const f = fixture(t), prepared = await f.service.prepare('g');
-  assert.equal(prepared.id, 'mfgunlock-1.0');
+  assert.equal(prepared.id, ID);
   assert.equal(JSON.parse(bytes(f.receipt)).files[0].mode, 'created');
   assert.equal(sha256(bytes(f.addon)), SHA256);
   assert.equal(fs.readdirSync(f.dir).filter(name => name.endsWith('.addon64')).length, 1);

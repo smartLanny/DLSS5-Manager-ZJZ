@@ -124,12 +124,13 @@ function assertReleaseStage(stageRoot) {
     fail('公开精简便携包必须同时包含已登记的 DLSS5 Bridge 与 DLSS5 Feeder。');
   }
   const mfg = readJson(path.join(root, 'resources', 'fg-mfgunlock', 'manifest.json'), 'MFG 资源清单');
-  if (mfg.defaultProvider !== 'mfgunlock-1.0' || !Array.isArray(mfg.providers) ||
-      !mfg.providers.some(row => row.id === 'mfgunlock-1.0') || !mfg.providers.some(row => row.id === 'mfgunlock-0.9') ||
+  const mfgPins = require('../src/product/fg-mfgunlock-providers.json');
+  if (mfg.defaultProvider !== mfgPins.defaultProvider || !Array.isArray(mfg.providers) ||
+      !mfgPins.providers.every(pin => mfg.providers.some(row => row.id === pin.id)) ||
       mfg.providers.some(row => /^mfgunlock-0[.]7(?:$|-)/.test(row.id || ''))) {
-    fail('MFG 发布矩阵必须是 1.0 默认、0.9 回退，且不得重新提供 0.7。');
+    fail(`MFG 发布矩阵必须以 ${mfgPins.defaultProvider} 为默认并包含全部固定回退版本，且不得重新提供 0.7。`);
   }
-  return { ok: true, core, bridges, vulkanBridge, routes: ['bridge', 'feeder'], mfg: ['1.0', '0.9'], runtimeSplit: true };
+  return { ok: true, core, bridges, vulkanBridge, routes: ['bridge', 'feeder'], mfg: mfgPins.providers.map(row => row.version), runtimeSplit: true };
 }
 
 module.exports = { CORE_033, REQUIRED_CORE_IDS, REQUIRED_BRIDGES, validate033Identity, assertExact033, assertOfficialBridges,

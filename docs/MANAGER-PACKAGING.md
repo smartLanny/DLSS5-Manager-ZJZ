@@ -10,7 +10,7 @@
 - 每个白名单版本会固化为自己经过哈希校验的 Core、`nrchain_nvngx.dll` 和配置。D21 只保留测试身份，不能成为默认项。精确文件尚未准备好的版本不要写进白名单，Manager 会把对应菜单项显示为“组件未准备”，不得用相近版本替代。
 - 可选但推荐提供已验收 Core 原始包的 bytes、SHA-256、source commit 和 source-manifest SHA-256。D21 累计常规版只能使用精确 OTA 身份；原始包和清单校验信息不得靠改名推断。
 - 授权 runtime 根目录下的 RTX40、RTX50 `nvngx_dlssnr.dll`，各自的 bytes 和 SHA-256。两族各一份，RTX40 作为 RTX20/30/40 的共享安装族。
-- 官方 MFG 1.0 Addon（默认），固定为 710144 bytes、`f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e`；同时保留官方 0.9 回退版（601088 bytes、`64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`）。0.7 只保留历史恢复识别，不进入安装或回退菜单。
+- 官方 MFG 1.1.5 Addon（默认），固定为 931328 bytes、`0d04d858a62d3d19e7e3d478c0b8c46fe3ac43ec9fd11e4abb15617bd291d71a`；同时保留官方 1.0（710144 bytes、`f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e`）和 0.9（601088 bytes、`64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`）回退版。版本、大小和摘要只在 `desktop/src/product/fg-mfgunlock-providers.json` 登记，staging、发布闸门和 OTA 脚本都从这里读取。0.7 只保留历史恢复识别，不进入安装或回退菜单。
 - Bridge 的登记信息来自 staging 清单；没有候选小组件时保留 `reserved`。当前清单提供官方 release 的 `1.4.13-pre8` 候选（固定 tag、commit、bytes 与 SHA-256），因此 stage 的 `resources/bridge-dlc/manifest.json` 记录为 `candidate-staged`，但 `defaultEligible=false`，不会替换现有固定 Bridge，也不会把候选宣称为兼容。独立验收完成后再更新状态和相应 pin；已被取代的 pre7 会被 beta2 清单生成器拒绝。
 - 可选的 `components` 数组。它是小组件的唯一外部注入入口，允许 `bridge`、`feeder`、`host`、`vulkan` 四类；每个文件都要声明来源、stage 相对路径、bytes 和 SHA-256。
 - 可选的 `resources` 数组。它只允许当前 Manager 仍需的 HoYoShade、loading-helper、REFramework 入口和 Vulkan ReShade layer 文件，目标路径固定在原来的 `resources/` 子目录；每个文件同样要声明 bytes 和 SHA-256。
@@ -52,7 +52,7 @@
 
 | flavor | 包含 | 不包含 |
 | --- | --- | --- |
-| `base` | Electron、默认 Core、ReShade、`nrchain_nvngx.dll`、MFG 1.0/0.9、Bridge、Feeder 及清单中 `includeIn` 命中的开源小组件 | 两个大型 `nvngx_dlssnr.dll`、RenoDX NR Add-on、未列入 staging 的组件 |
+| `base` | Electron、默认 Core、ReShade、`nrchain_nvngx.dll`、MFG 1.1.5/1.0/0.9、Bridge、Feeder 及清单中 `includeIn` 命中的开源小组件 | 两个大型 `nvngx_dlssnr.dll`、RenoDX NR Add-on、未列入 staging 的组件 |
 | `offline` | base 全部内容，加 RTX40 一份和 RTX50 一份 `nvngx_dlssnr.dll`，以及同样命中的小组件 | 其他重复的 Feeder/Vulkan/legacy runtime |
 
 未传 `--work-root` 时，stage 位于 `desktop/.packaging-stage/<flavor>`，交付位于仓库根目录的 `deliveries/`；两处都被 Git 忽略。磁盘空间紧张或不希望占用 C 盘时，应传入专用的非系统盘工作目录，例如 `--work-root D:\DLSS5-Build`。脚本只会清理带自身标记的 stage 和明确的新交付目录，拒绝把无关目录当成构建缓存覆盖。
@@ -110,7 +110,7 @@ RC 清单可暂时只启用已到位的精确来源，但正式发布命令要�
 
 MFG provider pin 位于 `desktop/src/product/fg-mfgunlock-providers.json`，资源目录的 `manifest.json` 只负责声明当前 stage 的文件。运行时先用 provider pin 验证资源目录，再按 provider 读取 addon；因此官方 release 增加新 provider 时可以登记新 JSON 记录，不必把每个版本再写进 JS。
 
-当前 MFG 1.0 和 0.9 的裸 Addon 或 component-manifest ZIP 可以进入 component-library 库；`kind=mfg` 库存会由 MFG provider library 注入现有 FG provider selector，并按实际 SHA-256/PE 位数校验部署，pending/migration 恢复保留 provider 身份。未完成独立验收的版本仍保持候选状态。
+当前固定的 MFG 1.1.5、1.0 和 0.9 的裸 Addon 或 component-manifest ZIP 可以进入 component-library 库；`kind=mfg` 库存会由 MFG provider library 注入现有 FG provider selector，并按实际 SHA-256/PE 位数校验部署，pending/migration 恢复保留 provider 身份。未完成独立验收的版本仍保持候选状态。
 
 offline 构建还会在 `deliveries/` 旁生成 `*-nr-runtime-offline.zip`。ZIP 只含 `RTX40/nvngx_dlssnr.dll` 与 `RTX50/nvngx_dlssnr.dll` 两个条目，不附带自定义 manifest；当前组件目录已有这两个摘要，导入器会按已知 catalog 识别 ZIP 内的裸 DLL，并把两个硬件族分别登记。
 

@@ -13,7 +13,7 @@ DLSS5 Manager 将神经渲染运行库按显卡族分开管理。RTX20、RTX30�
 
 ## 基础包和离线整合包
 
-公开 Manager 便携包包含 Electron UI、Core、DLSS5 Bridge、DLSS5 Feeder、MFG Unlock 1.0（默认）与 0.9（回退）以及开源辅助组件。它不内置上面两个大型 `nvngx_dlssnr.dll`，也不内置 RenoDX NR Add-on；用户通过组件管理分别导入 RTX40 或 RTX50 DLC。
+公开 Manager 便携包包含 Electron UI、Core、DLSS5 Bridge、DLSS5 Feeder、MFG Unlock 1.1.5（默认）与 1.0、0.9（回退）以及开源辅助组件。它不内置上面两个大型 `nvngx_dlssnr.dll`，也不内置 RenoDX NR Add-on；用户通过组件管理分别导入 RTX40 或 RTX50 DLC。
 
 本地 `Full.zip` 不把运行库解包进 Manager，而是并列放入四个仍可独立使用的 ZIP：精简便携包、RenoDX Add-on 包、RTX40 DLC、RTX50 DLC。Windows VC++ 运行库包始终放在 `Full.zip` 外面。RTX40/50 DLC 内部布局仍按硬件族区分：
 
@@ -24,7 +24,7 @@ RTX50/nvngx_dlssnr.dll
 
 Feeder、Vulkan、host 和 Bridge 小组件只有在 staging 清单逐文件提供摘要后才进入包；它们不会带来第三份大型 NR runtime。DX9、Vulkan 和 x86 路线继续使用各自被识别的通用桥/传输组件，不能把 RTX20–40 NR runtime 当成这些路线的实现。
 
-MFG Unlock 1.0 是 RTX40 的默认小型补帧 Add-on，固定为 710,144 bytes，SHA-256 为 `f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e`；0.9 仅作为回退，SHA-256 为 `64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`。0.7 不再提供。MFG 不替代游戏已有的 Streamline/DLSS-G 运行库。
+MFG Unlock 1.1.5 是 RTX40 的默认小型补帧 Add-on，固定为 931,328 bytes，SHA-256 为 `0d04d858a62d3d19e7e3d478c0b8c46fe3ac43ec9fd11e4abb15617bd291d71a`；1.0（`f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e`）和 0.9（`64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da`）仅作为回退。0.7 不再提供。MFG 不替代游戏已有的 Streamline/DLSS-G 运行库。
 
 ## 手动导入
 

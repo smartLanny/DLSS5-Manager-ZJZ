@@ -10,10 +10,10 @@ const RUNTIMES = Object.freeze({
   RTX40: { bytes:165830144, sha256:'6eb209e764f39872625debd6abaf45e2bb6322f6f270f781f70c059ae30b3927' },
   RTX50: { bytes:165840496, sha256:'e16bcf15e16e13f527491cdf7845b2fe6521a738d8f7c9c721866a8496e1fc8e' }
 });
-const MFG = Object.freeze({
-  '1.0': Object.freeze({ id:'mfgunlock-1.0', bytes:710144, sha256:'f9f10c685e3e89077f751df2394a1629615a56b58d111dff26b39894e772d50e', recommended:true }),
-  '0.9': Object.freeze({ id:'mfgunlock-0.9', bytes:601088, sha256:'64184bb370f223c3cabb359010a9a64e114cdae6b62d8b014a731a602af0a0da', recommended:false })
-});
+// MFG releases come only from the provider pin catalog.
+const MFG_CATALOG = require('../src/product/fg-mfgunlock-providers.json');
+const MFG = Object.freeze(Object.fromEntries(MFG_CATALOG.providers.map(row => [row.version, Object.freeze({ id:row.id,
+  bytes:row.files.addon.bytes, sha256:row.files.addon.sha256, recommended:row.id === MFG_CATALOG.defaultProvider, url:row.files.addon.url })])));
 const SUPERSEDED_COMPONENTS = Object.freeze(new Set(['bridge-1.4.13-pre7-manager-core-compat-20260912']));
 
 function fail(message) { throw new Error(message); }
@@ -22,7 +22,7 @@ function stripPrefix(value, prefix, label) {
   if (!normalized.startsWith(prefix) || normalized.length === prefix.length) fail(`${label} 路径不属于预期目录：${value}`);
   return normalized.slice(prefix.length);
 }
-function createManifest({ prior, resourcesRoot, selectedIds, payloadRoot, runtime40, runtime50, mfg10, mfg09, officialBridges = null }) {
+function createManifest({ prior, resourcesRoot, selectedIds, payloadRoot, runtime40, runtime50, mfgDir, officialBridges = null }) {
   const stage = prior?.stage || prior;
   const packages = stage?.components?.packages;
   const verifiedResources = stage?.resources?.files;
@@ -69,10 +69,9 @@ function createManifest({ prior, resourcesRoot, selectedIds, payloadRoot, runtim
       RTX40: { file:path.resolve(runtime40), ...RUNTIMES.RTX40 },
       RTX50: { file:path.resolve(runtime50), ...RUNTIMES.RTX50 }
     } },
-    mfg: { defaultProvider:MFG['1.0'].id, providers: [
-      { file:path.resolve(mfg10), version:'1.0', ...MFG['1.0'], url:'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1.0/renodx-mfgunlock.addon64' },
-      { file:path.resolve(mfg09), version:'0.9', ...MFG['0.9'], url:'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/0.9/renodx-mfgunlock.addon64' }
-    ] },
+    // --mfg-dir holds <version>/renodx-mfgunlock.addon64 for every pinned provider.
+    mfg: { defaultProvider:MFG_CATALOG.defaultProvider, providers: Object.entries(MFG).map(([version, pin]) =>
+      ({ file:path.resolve(mfgDir, version, 'renodx-mfgunlock.addon64'), version, ...pin })) },
     components,
     resources,
     bridge: { status:'reserved', id:'nigos-dlss5-bridge', version:'1.4.12', url:'https://github.com/NIGos/dlss5-bridge' }
@@ -82,10 +81,10 @@ function parseArgs(argv) {
   const out = {};
   for (let i=2;i<argv.length;i+=2) {
     const key = argv[i];
-    if (!/^--(?:prior-report|resources-root|components|payload|runtime40|runtime50|mfg10|mfg09|official-bridges|output)$/.test(key) || !argv[i+1]) fail('参数不完整。');
+    if (!/^--(?:prior-report|resources-root|components|payload|runtime40|runtime50|mfg-dir|official-bridges|output)$/.test(key) || !argv[i+1]) fail('参数不完整。');
     out[key.slice(2)] = argv[i+1];
   }
-  for (const key of ['prior-report','resources-root','components','payload','runtime40','runtime50','mfg10','mfg09','output']) if (!out[key]) fail(`缺少 --${key}。`);
+  for (const key of ['prior-report','resources-root','components','payload','runtime40','runtime50','mfg-dir','output']) if (!out[key]) fail(`缺少 --${key}。`);
   return out;
 }
 if (require.main === module) {
@@ -93,7 +92,7 @@ if (require.main === module) {
     const args = parseArgs(process.argv), prior = JSON.parse(fs.readFileSync(path.resolve(args['prior-report']), 'utf8'));
     const officialBridges = args['official-bridges'] ? JSON.parse(fs.readFileSync(path.resolve(args['official-bridges']),'utf8')) : null;
     const manifest = createManifest({ prior, resourcesRoot:args['resources-root'], selectedIds:args.components.split(',').filter(Boolean),
-      payloadRoot:args.payload, runtime40:args.runtime40, runtime50:args.runtime50, mfg10:args.mfg10, mfg09:args.mfg09, officialBridges });
+      payloadRoot:args.payload, runtime40:args.runtime40, runtime50:args.runtime50, mfgDir:args['mfg-dir'], officialBridges });
     const output = path.resolve(args.output);
     fs.mkdirSync(path.dirname(output), { recursive:true });
     fs.writeFileSync(output, `${JSON.stringify(manifest, null, 2)}\n`, { encoding:'utf8', flag:'wx' });
