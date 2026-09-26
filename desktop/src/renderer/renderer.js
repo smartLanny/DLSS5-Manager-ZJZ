@@ -514,7 +514,7 @@ function cardAction(game) {
   if (typeof window === 'object' && typeof window.manager?.assessGame === 'function') {
     const current = inlineGameDetails.get(game.id)?.controller.getState().action;
     const waiting = current?.waiting || game.waiting?.pending;
-    return `<button class="button primary unified-launch-btn" type="button"${waiting || current?.pending || current?.disabled ? ' disabled' : ''}${state.expanded === game.id ? ' hidden' : ''}>${waiting ? '等待游戏退出' : escapeHtml(current?.label || (game.installed ? '启动' : '应用'))}</button><button class="button open-game-page-btn" type="button">${game.installed ? '设置' : game.existingInstallation?.detected === true ? '检查已有安装' : '安装与设置'}</button>`;
+    return `<button class="button primary unified-launch-btn" type="button"${waiting || current?.pending || current?.disabled ? ' disabled' : ''}${state.expanded === game.id ? ' hidden' : ''}>${waiting ? '等待游戏退出' : escapeHtml(current?.label || (game.installed ? '启动游戏' : '安装'))}</button><button class="button open-game-page-btn" type="button">${game.installed ? '设置' : game.existingInstallation?.detected === true ? '检查已有安装' : '安装与设置'}</button>`;
   }
   const installBusy = Boolean(state.installing && state.installing.has(game.id));
   const installButton = `<button class="button primary install-btn${installBusy ? ' is-busy' : ''}" aria-live="polite" aria-busy="${installBusy}"${installBusy ? ' disabled' : ''}>${installBusy ? '<span class="button-spinner" aria-hidden="true"></span><span>正在安装…</span>' : game.existingInstallation?.detected === true ? '预览已有安装' : '一键安装'}</button>`;
@@ -709,8 +709,8 @@ function apiControls(game) {
     ? `<p class="config-note" role="status">此 EXE 的已知入口为 ${escapeHtml(API_LABELS[detected.api] || detected.api)}；切换下拉框不会切换程序入口。请通过“选择 EXE”选择对应入口。${escapeHtml(evidence)}</p>` : '';
   const syncNote = game.chosen.apiSettings?.canSync === true
     ? `<p class="config-note">自动跟随游戏当前图形设置。选择 DX12 或 Vulkan 并应用，会同步游戏设置，下次启动使用所选 API；请先关闭游戏。${selected !== 'auto' && game.chosen.apiSettings.api && selected !== game.chosen.apiSettings.api ? `游戏当前保存为 ${escapeHtml(API_LABELS[game.chosen.apiSettings.api])}，与此处选择不同；点击“应用设置”后同步，或选择自动跟随游戏。` : ''}</p>`
-    : game.chosen.apiSettings?.kind === 'rdr2-system-xml' ? '<p class="config-note">已识别游戏支持 DX12 和 Vulkan；当前图形设置文件无法安全读取，选择只配置插件路线，管理器不会改写游戏设置。首次运行游戏并保存后，请重新扫描以重新尝试读取。</p>' : '';
-  return `<div class="config-block api-config-block"><h4>游戏图形 API</h4><div class="control-row"><select class="game-api-select" aria-label="游戏图形 API">${options}</select></div><p class="api-route-status">${escapeHtml(deployment)}</p>${syncNote}${entryMismatch}<details class="api-help"><summary>检测与桥接说明</summary><p>自动项展示检测结果；可手动改为实际使用的 API，桥接随选择自动处理。API 与核心版本一起应用，选择绑定当前 EXE 保存，重新扫描不会覆盖；不会替你修改游戏启动参数。</p>${evidence ? `<p>检测线索：${escapeHtml(evidence)}</p>` : ''}</details></div>`;
+    : game.chosen.apiSettings?.kind === 'rdr2-system-xml' ? '<p class="config-note">这个游戏支持 DX12 和 Vulkan，但暂时读不到图形设置。这里只决定插件路线，不改游戏设置；先运行一次游戏，再重新扫描。</p>' : '';
+  return `<div class="config-block api-config-block"><h4>游戏图形 API</h4><div class="control-row"><select class="game-api-select" aria-label="游戏图形 API">${options}</select></div><p class="api-route-status">${escapeHtml(deployment)}</p>${syncNote}${entryMismatch}<details class="api-help"><summary>检测与桥接说明</summary><p>“自动”显示检测结果，也可以手动改成游戏实际用的接口，桥接器会跟着处理。选择跟当前 EXE 绑定，重新扫描不会覆盖，也不会改游戏启动参数。</p>${evidence ? `<p>检测线索：${escapeHtml(evidence)}</p>` : ''}</details></div>`;
 }
 
 function addonVersionRow(game) {
@@ -1506,7 +1506,7 @@ function confirmDismissGame(id) {
   const game = state.games.find(row => row.id === id);
   state.pendingModal = { type: 'dismiss-game', id };
   $('modalTitle').textContent = '卸载组件并移除游戏';
-  $('modalBody').textContent = `将先卸载本工具为“${game ? game.name : id}”部署的组件，撤销超分补帧覆盖并恢复安装前备份，然后移出列表。保留游戏本体和个人配置；恢复失败时保留条目，方便继续处理。之后可重新添加。`;
+  $('modalBody').textContent = `会先卸载管理器给“${game ? game.name : id}”装的组件并还原备份，再从列表移除。游戏本体和个人配置保留；还原失败时会保留这一项。`;
   $('removeSettingsLine').classList.add('hidden');
   showOverlay($('modal'));
 }
@@ -1549,7 +1549,7 @@ function confirmD3D12(id) {
   state.pendingModal = { type: 'd3d12', id, enabled };
   $('modalTitle').textContent = enabled ? '应用 D3D12 兼容修复' : '撤销 D3D12 兼容修复';
   $('modalBody').textContent = enabled
-    ? '请先完全退出游戏。此操作会切换加载入口并保留原始文件，可用于异环等部分 DX12 网游的加载报错。只适用于 DX12；修复无效时可撤销。'
+    ? '请先完全退出游戏。会换一种加载方式（原文件保留），用于异环等部分 DX12 网游的加载报错；没效果可以撤销。'
     : '请先完全退出游戏。会撤销本次兼容修复，恢复原来的加载入口。';
   $('removeSettingsLine').classList.add('hidden');
   showOverlay($('modal'));
@@ -1560,7 +1560,7 @@ function confirmAntiCheat(id = null) {
     const game = id ? state.games.find(row => row.id === id) : null;
     state.pendingModal = { type: 'anti-cheat', resolve };
     $('modalTitle').textContent = '反作弊风险提示';
-    $('modalBody').textContent = `检测到“${game ? game.name : '该游戏'}”目录中存在可能的反作弊组件。继续安装可能导致游戏无法启动、触发安全策略或封禁风险。管理器不会修改、删除或绕过反作弊文件；只有你确认后才会继续写入插件文件。`;
+    $('modalBody').textContent = `“${game ? game.name : '该游戏'}”目录里有反作弊组件。继续安装可能无法启动或被封号。管理器不会动反作弊文件，你确认后才会写入插件。`;
     $('removeSettingsLine').classList.add('hidden');
     $('modalConfirm').textContent = '确认继续安装';
     showOverlay($('modal'));

@@ -94,15 +94,15 @@
       if (busy) return button('working', currentWork, true, true);
       if (!flow) return '';
       if (waitingForExit()) return button('waiting-exit', '等待游戏退出', true, true);
-      if (hasDraft()) return button('apply-editor', '应用', true, busy || flow.busy || editorBusy());
+      if (hasDraft()) return button('apply-editor', '应用修改', true, busy || flow.busy || editorBusy());
       const disabled = busy || flow.busy || editorBusy() || hasDraft();
       if (editingApi) return button('confirm-api', '确认图形 API', true, disabled || !['dx11', 'dx12'].includes(form.api) || form.api === flow.api?.api) + button('cancel-api', '取消修改', false, disabled);
       if (flow.nextAction === 'recover' || flow.phase === 'recovery') return button('recover', '恢复未完成操作', true, disabled);
       if (error || flow.error || flow.installation?.error || flow.phase === 'failed') return button('inspect', '重新检查', true, disabled);
       if (flow.nextAction === 'bind') return button('bind', '确认绑定', true, disabled || !((form.launcherId || flow.binding?.launcher?.id) && (!(flow.binding?.channels?.length > 1) || form.channel || flow.channel)));
       if (flow.nextAction === 'select-api') return button('bind', '确认图形 API', true, disabled || !['dx11', 'dx12'].includes(form.api));
-      if (flow.nextAction === 'preview-install') return button('preview-install', '应用', true, disabled);
-      if (flow.nextAction === 'start') { const blocked = readinessBlocked(); return button(blocked ? 'resolve-readiness' : 'start', blocked ? readinessActionLabel() : '启动', true, disabled || !flow.installation?.ready); }
+      if (flow.nextAction === 'preview-install') return button('preview-install', '安装', true, disabled);
+      if (flow.nextAction === 'start') { const blocked = readinessBlocked(); return button(blocked ? 'resolve-readiness' : 'start', blocked ? readinessActionLabel() : '启动游戏', true, disabled || !flow.installation?.ready); }
       if (flow.nextAction === 'recover') return button('recover', '恢复未完成操作', true, disabled);
       if (flow.nextAction === 'wait' || waiting(flow.phase)) return button('cancel', '取消等待', false, disabled);
       return button('inspect', '重新检查', true, disabled);

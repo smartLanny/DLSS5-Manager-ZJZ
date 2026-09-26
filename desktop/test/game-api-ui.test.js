@@ -26,15 +26,15 @@ test('an unmanaged existing Core is visible before opening its required preview'
   assert.match(vm.runInContext('supportBadge(game)', context), /已有插件待确认/);
   const action = vm.runInContext('cardAction(game)', context);
   assert.match(action, /检查已有安装/); assert.doesNotMatch(action, /安装与设置/);
-  assert.match(action, /unified-launch-btn[^>]*>应用/);
+  assert.match(action, /unified-launch-btn[^>]*>安装</);
   assert.doesNotMatch(action, /rename-game-btn|>改名</);
 });
 
-test('modern cards offer Apply before installation and keep rename inside expanded advanced controls', () => {
+test('modern cards offer Install before installation and keep rename inside expanded advanced controls', () => {
   const context = { state: { expanded: null }, escapeHtml: String, inlineGameDetails: new Map(), window: { manager: { assessGame() {} } } }; vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('function cardAction('), source.indexOf('const API_LABELS')), context);
   const html = vm.runInContext("cardAction({ installed:false, existingInstallation:{detected:false} })", context);
-  assert.match(html, /^<button[^>]*unified-launch-btn[^>]*>应用<\/button><button[^>]*open-game-page-btn[^>]*>安装与设置<\/button>$/);
+  assert.match(html, /^<button[^>]*unified-launch-btn[^>]*>安装<\/button><button[^>]*open-game-page-btn[^>]*>安装与设置<\/button>$/);
   assert.match(gamePageSource, /act\('rename-game', '修改游戏名称'/);
   assert.match(source, /onRename: gameId => confirmRenameGame\(gameId\)/);
 });
@@ -63,8 +63,8 @@ test('automatic API label retains detection while a manual override controls the
   assert.match(html, /value="dx11" selected/);
   assert.match(html, /兼容桥接随 DirectX 11 自动部署/);
   assert.match(html, /检测线索：d3d12\.dll/);
-  assert.match(html, /不会替你修改游戏启动参数/);
-  assert.match(html, /选择绑定当前 EXE 保存，重新扫描不会覆盖/);
+  assert.match(html, /不会改游戏启动参数/);
+  assert.match(html, /选择跟当前 EXE 绑定，重新扫描不会覆盖/);
   assert.match(html, /<details class="api-help">/); assert.doesNotMatch(html, /<details[^>]*open/);
   assert.doesNotMatch(html, /carrier-component-check/);
   context.game.chosen.detectedApiResolution = { api: 'unknown', source: 'none', evidence: [] };
@@ -174,8 +174,8 @@ test('an unreadable RDR2 settings file keeps API selection manual without claimi
     apiSettings: { kind: 'rdr2-system-xml', canSync: false },
     detectedApiResolution: { api: 'unknown', source: 'game-settings' }, apiResolution: { api: 'unknown' } } };
   const html = vm.runInContext('apiControls(game)', context);
-  assert.match(html, /选择只配置插件路线/);
-  assert.match(html, /不会改写游戏设置/);
+  assert.match(html, /只决定插件路线/);
+  assert.match(html, /不改游戏设置/);
   assert.doesNotMatch(html, /会同步游戏设置|点击保存后同步/);
 });
 

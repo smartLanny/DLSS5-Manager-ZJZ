@@ -249,7 +249,7 @@ async function smoke() {
   await open('fixture-unmanaged'); await until(() => state().loaded.includes('installation'), 'unmanaged installation assessment');
   assert(field('route', 'version').value === '', 'unmanaged Core does not inherit the new-install default');
   assert(host().textContent.includes('发现已有插件') && host().textContent.includes('确认备份再替换') && host().textContent.includes('_DLSS5_Backup'), 'existing files and backup boundary are explained');
-  assert(button('prepare')?.disabled && button('prepare')?.textContent === '应用', 'preview waits for an explicit replacement target');
+  assert(button('prepare')?.disabled && button('prepare')?.textContent === '安装', 'preview waits for an explicit replacement target');
   set('route', 'version', '0.4.7beta'); await preview();
   assert(mock.plan.request.version === '0.4.7beta', 'explicit replacement target reaches the operation preview');
   click('modal-cancel'); discard(); click('back');
