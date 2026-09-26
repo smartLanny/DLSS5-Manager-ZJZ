@@ -346,8 +346,8 @@
       const api = effectiveApi(), route = selected('route', saved.route || 'auto'), version = currentVersion();
       const input = route === 'feeder' || ['dx9','dx10'].includes(api) ? 'DLSS5 Feeder' : api === 'dx11' ? 'DLSS5 Bridge' : api === 'vulkan' ? 'Vulkan 专用配套' : '游戏原生 DLSS 输入';
       const combination = CORE_CATALOG.isProviderCoreId(version)
-        ? `${coreLabel(version)} + ${input} + 显卡运行库（兼容路线为实验支持）`
-        : input === 'DLSS5 Feeder' ? `${input} + 专用 Core / 运行库` : input === 'Vulkan 专用配套' ? input : `${coreLabel(version || '待选 Core')} + ${input} + 显卡运行库`;
+        ? `${coreLabel(version)} + ${input} + DLSS5 模型（兼容路线为实验支持）`
+        : input === 'DLSS5 Feeder' ? `${input} + 专用 Core / DLSS5 模型` : input === 'Vulkan 专用配套' ? input : `${coreLabel(version || '待选 Core')} + ${input} + DLSS5 模型`;
       return `<div class="gp-component-stack needs-attention"><div><small>修改后的预期搭配</small><strong>${esc(apiLabel(api))} · ${esc(input)}</strong><span>${esc(combination)}</span></div><p>预览时会重新校验 Core、接口与组件摘要；不匹配时不会写入游戏。</p></div>`;
     }
     function inputRouteControl() {
@@ -396,8 +396,8 @@
         ${hasVersionUpdate() ? `<p class="gp-caption">已安装 ${esc(data.deployment?.version || game.addonVersion)}，应用后更新。</p>` : ''}${proxyEntryControl()}</section>${hoyoControls()}<details class="gp-section" data-gp-detail="startup"><summary>启动与快捷键</summary>${startupFields()}${hotkeySection()}</details>${rollbackVersions()}<details class="gp-section" data-gp-detail="technical"><summary>高级设置</summary>${componentStackOverview()}${advanced()}</details>${maintenancePanel()}`;
     }
     function runtimeImportControl() {
-      return manager.pickRuntimeDlc && (options.runtimeRequired?.(currentVersion()) || resumeAfterImport && error && /运行库|DLC|nvngx_dlssnr/i.test(message))
-        ? `<div class="gp-small-actions">${act('import-runtime', '导入运行库 DLC', busy, 'subtle')}<small>导入后可继续应用。</small></div>` : '';
+      return manager.pickRuntimeDlc && (options.runtimeRequired?.(currentVersion()) || resumeAfterImport && error && /运行库|DLSS5 模型|DLC|nvngx_dlssnr/i.test(message))
+        ? `<div class="gp-small-actions">${act('import-runtime', '导入 DLSS5 模型', busy, 'subtle')}<small>导入后可继续应用。</small></div>` : '';
     }
     function savedProxyEntry() {
       const sources = [data.defaults?.proxyEntry, data.deployment?.proxyEntry, data.layout?.proxyEntry,
@@ -930,7 +930,7 @@
           const gameId = id, epoch = generation, resume = resumeAfterImport;
           const result = unwrap(await manager.pickRuntimeDlc());
           if (result && !disposed && id === gameId && generation === epoch) {
-            modal = null; message = result.message || '运行库已准备。';
+            modal = null; message = result.message || 'DLSS5 模型已准备。';
             if (result.state) scope.dispatchEvent?.(new CustomEvent('manager-components-changed', { detail: result.state }));
             await refresh(true);
             if (disposed || id !== gameId || generation !== epoch + 1) return;

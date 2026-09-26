@@ -148,7 +148,7 @@
       const result = await run(() => api.hoyoPreview(clientId, 'install', request), false, '正在检查安装…');
       if (selectedId !== clientId) return;
       if (result) { resumeInstall = null; editor()?.controller.refreshView(); plan = result; previewAction = 'install'; renderPlan(); }
-      else if (/DLC|运行库|nvngx_dlssnr/i.test(error)) { resumeInstall = { clientId, request, draft: JSON.stringify(editor()?.controller.getState().draft || {}) }; editor()?.controller.refreshView(); render(); }
+      else if (/DLC|运行库|DLSS5 模型|nvngx_dlssnr/i.test(error)) { resumeInstall = { clientId, request, draft: JSON.stringify(editor()?.controller.getState().draft || {}) }; editor()?.controller.refreshView(); render(); }
       else if (/INPUT_ROUTE_UNCONFIRMED/.test(error)) { editor()?.controller.refreshView(); render(); }
     }
     function phaseLabel(row) {

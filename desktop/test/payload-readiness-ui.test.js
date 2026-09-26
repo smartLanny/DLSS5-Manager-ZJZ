@@ -54,9 +54,10 @@ test('slim manager explains the exact runtime DLC without exposing build paths',
  f.payload.source={runtimeDlcRequired:true,requiredHardwareFamily:'RTX40'};
  f.render();
  assert.match(f.nodes.payloadNotice.innerHTML,/NR-Runtime-RTX40\.zip/);
- assert.match(f.nodes.payloadNotice.innerHTML,/立即导入运行库 DLC/);
+ assert.match(f.nodes.payloadNotice.innerHTML,/导入 DLSS5 模型/);
  assert.match(f.nodes.payloadNotice.innerHTML,/打开组件管理/);
- assert.doesNotMatch(f.nodes.payloadNotice.innerHTML,/CodexTemp|nvngx_dlssnr\.dll/);
+ // The model file name is guidance; build locations must never leak.
+ assert.doesNotMatch(f.nodes.payloadNotice.innerHTML,/CodexTemp|X:\/Fixtures|fixed\/RTX40/);
 });
 
 test('inherited object keys are not accepted as bundled version IDs',()=>{

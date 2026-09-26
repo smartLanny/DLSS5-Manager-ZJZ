@@ -123,8 +123,9 @@ app.whenReady().then(async () => {
         await until(() => document.getElementById('payloadImportRuntimeBtn'), 'runtime guidance');
         const notice = document.getElementById('payloadNotice');
         const text = notice.textContent;
-        if (!text.includes('NR-Runtime-RTX40.zip') || !text.includes('立即导入运行库 DLC') || !text.includes('打开组件管理')) throw Error('runtime guidance is incomplete: ' + text);
-        if (/CodexTemp|nvngx_dlssnr\.dll/i.test(text)) throw Error('internal build path leaked into runtime guidance: ' + text);
+        if (!text.includes('NR-Runtime-RTX40.zip') || !text.includes('导入 DLSS5 模型') || !text.includes('打开组件管理')) throw Error('runtime guidance is incomplete: ' + text);
+        // The model file name is guidance; build locations must never appear.
+        if (/CodexTemp|internal-build|fixed[\\/]RTX40/i.test(text)) throw Error('internal build path leaked into runtime guidance: ' + text);
         document.getElementById('payloadImportRuntimeBtn').click();
         await until(() => window.__gpMock.calls.some(row => row[0] === 'pick-runtime-dlc'), 'runtime picker action');
         document.getElementById('payloadOpenComponentsBtn').click();

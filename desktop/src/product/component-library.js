@@ -92,11 +92,25 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
     } finally { await fsp.unlink(tmp).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
     return rel;
   }
+  // Player-supplied DLSS5 model (nvngx_dlssnr.dll). Many community builds run on
+  // RTX 40 and 50 alike, so no family or version pin is enforced; the exact bytes
+  // are still recorded and re-verified wherever the Manager deploys them.
+  async function importDlss5Model(file, hash, stat) {
+    if (pe.getBitness(file) !== 64) fail('DLSS5 模型必须是 64 位的 nvngx_dlssnr.dll。');
+    if (stat.size < 8 * 1024 * 1024) fail('这个文件太小，不像 DLSS5 模型（nvngx_dlssnr.dll）。');
+    let version = null;
+    try { version = pe.getFileVersion(file) || null; } catch { version = null; }
+    return { id: `dlss5-model-${hash.slice(0, 24)}`, kind: 'nr-runtime', version: version || '未知版本', variant: '玩家导入的 DLSS5 模型',
+      architecture: 'x64', interface: 'NGX-Feature18', hardwareFamilies: ['RTX40', 'RTX50'], validation: 'candidate', userSupplied: true,
+      files: [{ file: await storeFile(file, hash, 'nvngx_dlssnr.dll'), name: 'nvngx_dlssnr.dll', sha256: hash, bytes: stat.size }],
+      source: 'user-imported', importedAt: new Date().toISOString() };
+  }
   async function importPlain(file) {
     const hash = await digest(file), known = availableCatalog().packages.find(p => p.sha256 === hash);
     const stat = await fsp.stat(file);
     if (!known) {
       const name = path.basename(file);
+      if (/^nvngx_dlssnr\.dll$/i.test(name)) return importDlss5Model(file, hash, stat);
       if (!/\.addon64$/i.test(name) || pe.getBitness(file) !== 64) fail('尚未识别这个单文件组件。用户 Add-on 目前只接受 64 位 .addon64；其他组件请导入带 component-manifest.json 的组件包。');
       const clues = await require('./component-assessment').inspectComponentClues(file);
       return {
@@ -411,8 +425,8 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
     const binaries = (row?.files || []).filter(file => /\.(dll|addon64|exe)$/i.test(file.name));
     if (!row || row.kind !== 'nr-runtime' || row.validation === 'blocked' || row.architecture !== 'x64' || row.interface !== 'NGX-Feature18' ||
         binaries.length !== 1 || path.basename(binaries[0].name) !== 'nvngx_dlssnr.dll' ||
-        !Array.isArray(row.hardwareFamilies) || row.hardwareFamilies.length !== 1 || !['RTX40','RTX50'].includes(row.hardwareFamilies[0]) ||
-        (approved ? binaries[0].sha256 !== approved.sha256 : row.source !== 'user-imported')) fail('请选择接口和显卡族明确的 NR 运行包。未知裸 DLL 需要组件清单。');
+        !Array.isArray(row.hardwareFamilies) || !row.hardwareFamilies.length || row.hardwareFamilies.some(family => !['RTX40','RTX50'].includes(family)) ||
+        (approved ? binaries[0].sha256 !== approved.sha256 : row.source !== 'user-imported')) fail('请选择 DLSS5 模型（nvngx_dlssnr.dll）或带显卡系列说明的模型包。');
     for (const family of row.hardwareFamilies) data.selected[family] = id;
     return { ...(await materializePayload(data,bundledPayloadDir)), hardwareFamilies: row.hardwareFamilies, runtimeVerified:false };
   }); }

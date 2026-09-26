@@ -592,8 +592,8 @@ function registerIpc() {
     return service.importComponent(result.filePaths[0]);
   });
   call('components-runtime-pick', async () => {
-    const result = await dialog.showOpenDialog(win, { properties: ['openFile'], title: '选择 NR 运行库 DLC（RTX40 / RTX50）',
-      filters: [{ name: 'NR 运行库 DLC', extensions: ['zip'] }] });
+    const result = await dialog.showOpenDialog(win, { properties: ['openFile'], title: '选择 DLSS5 模型（nvngx_dlssnr.dll 或模型包 ZIP）',
+      filters: [{ name: 'DLSS5 模型', extensions: ['dll', 'zip'] }] });
     if (result.canceled || !result.filePaths[0]) return null;
     return service.importRuntimeDlc(result.filePaths[0]);
   });

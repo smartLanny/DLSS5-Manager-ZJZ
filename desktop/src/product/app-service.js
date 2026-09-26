@@ -395,17 +395,18 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const imported = await componentLibrary.importComponent(selected);
     const family = deploymentHardware().family;
     const runtimes = imported.packages.filter(item => item.kind === 'nr-runtime');
-    if (!runtimes.length) throw Object.assign(new Error('这不是 NR 运行库 DLC。请选择名称含 NR-Runtime-RTX40、RTX50 或 RTX40+RTX50 的 ZIP 包。'), { code: 'ERR_RUNTIME_DLC_REQUIRED' });
+    if (!runtimes.length) throw Object.assign(new Error('这不是 DLSS5 模型。请选择 nvngx_dlssnr.dll，或名称含 NR-Runtime-RTX40 / RTX50 的 ZIP 包。'), { code: 'ERR_RUNTIME_DLC_REQUIRED' });
     if (!['RTX40','RTX50'].includes(family)) return { ...imported, activated: false, hardwareFamily: family || null,
-      message: '运行库已导入组件仓库；当前显卡系列尚未确认，请在设置中确认显卡后再选择对应运行库。', state: payloadState() };
+      message: 'DLSS5 模型已导入；还没认出显卡系列，请在设置中确认显卡后再选用。', state: payloadState() };
     const matches = runtimes.filter(item => Array.isArray(item.hardwareFamilies) && item.hardwareFamilies.includes(family));
     if (matches.length !== 1) {
       const current = family === 'RTX50' ? 'RTX 50 系' : 'RTX 40 系及 RTX 20/30 系兼容路线';
-      throw Object.assign(new Error(`这份 DLC 不包含当前需要的 ${current} 运行库。请改选对应版本或 RTX40+RTX50 合并包。`), { code: 'ERR_RUNTIME_DLC_MISMATCH' });
+      throw Object.assign(new Error(`这个模型包不含 ${current} 需要的 DLSS5 模型。请改选对应版本，或直接选择 nvngx_dlssnr.dll。`), { code: 'ERR_RUNTIME_DLC_MISMATCH' });
     }
     const activated = await useRuntimeComponent(matches[0].id);
     return { ...imported, ...activated, activated: true, hardwareFamily: family, packageId: matches[0].id,
-      message: `${family === 'RTX50' ? 'RTX 50 系' : 'RTX 40 系'}运行库已导入并用于后续安装。` };
+      message: matches[0].userSupplied ? `DLSS5 模型 ${matches[0].version} 已导入，之后安装的游戏会使用它。` :
+        `${family === 'RTX50' ? 'RTX 50 系' : 'RTX 40 系'} DLSS5 模型已导入，之后安装的游戏会使用它。` };
   }
   let registeredProviderContext = null;
   async function refreshProviderSources({ selectDefault = false, force = false } = {}) {
@@ -784,7 +785,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         ready:feed.installed ? feed.ready !== false && !feed.needsRecovery : feed.available === true, reason:feed.reason || feed.selectionReason || null },
       vulkan:{ label:vk.packageId ? `Vulkan 配套 ${vk.packageId}` : null, coreVersion:vk.coreVersion || null,
         ready:vk.installed ? vk.ready !== false && !vk.needsRecovery : vk.available === true, reason:vk.reason || null },
-      runtime:{ label:hardware.family ? `${hardware.family === 'RTX50' ? 'RTX 50 系' : 'RTX 20/30/40 系'} NR 运行库` : 'NR 显卡运行库',
+      runtime:{ label:hardware.family ? `DLSS5 模型（${hardware.family === 'RTX50' ? 'RTX 50 系' : 'RTX 20/30/40 系'}）` : 'DLSS5 模型',
         ready:runtimeFile ? runtimeFile.valid === true : payload.ready === true } });
     return { bridges,
       addons: await userAddons.inspect(game, inventory.packages, owned),
