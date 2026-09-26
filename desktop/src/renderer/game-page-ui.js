@@ -4,7 +4,7 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const API = { auto: '自动检测', dx11: 'DirectX 11', dx12: 'DirectX 12', vulkan: 'Vulkan', dx9: 'DirectX 9', dx10: 'DirectX 10', opengl: 'OpenGL', mixed: '多种能力，待确认', unknown: '尚未确认' };
   const STATUS = { deployed: '已部署', passed: '已确认', 'not-observed': '未观察到变化', unverified: '待确认', bypassed: '已旁路', failed: '失败', 'not-applicable': '不适用',
-    configurable: '可配置', unavailable: '暂不可用', reusable: '受管版本一致', 'version-conflict': '版本冲突', 'duplicate-load': '重复加载风险', 'other-mod': '其他组件 · 保留', unknown: '来源待确认', 'waiting-confirmation': '等待确认游戏开关', 'waiting-game-setting': '请先在游戏中开启',
+    configurable: '可配置', unavailable: '暂不可用', checking: '检查中', reusable: '受管版本一致', 'version-conflict': '版本冲突', 'duplicate-load': '重复加载风险', 'other-mod': '其他组件 · 保留', unknown: '来源待确认', 'waiting-confirmation': '等待确认游戏开关', 'waiting-game-setting': '请先在游戏中开启',
     'waiting-first-run': '请先运行一次游戏', enabled: '已启用', disabled: '被配置禁用', missing: '文件缺失', 'version-mismatch': '版本不符', 'path-mismatch': '路径不符' };
   const LAUNCH = { preflight: '正在检查启动条件', 'waiting-helper': '等待加载助手就绪', 'request-sending': '正在发送启动请求', 'waiting-launcher': '等待启动器产生所选游戏进程',
     'waiting-game': '等待所选游戏进程', 'game-matched': '已匹配游戏进程', 'waiting-enhancement': '游戏已启动，增强待确认', 'enhancement-failed': '游戏仍保留，加载失败', failed: '本次启动失败', cancelled: '已取消等待' };
@@ -302,7 +302,8 @@
     }
     function featurePanel(domain) {
       const info = feature(domain), f = fields[domain], owned = data.enhancements?.applied?.[domain], active = info.eligible === true, allowRestore = Boolean(owned) || domain === 'fg' && hasFgComponents(data), sr = domain === 'sr';
-      const reasons = (info.blockers || []).map(row => row.message || row);
+      // Until the check returns, say so instead of showing the fallback “unavailable” reason.
+      const checking = !loaded.has('enhancements'), reasons = checking ? [] : (info.blockers || []).map(row => row.message || row);
       const activationText = info.activation?.message || (info.activation ? ({ on: '已读取到游戏开关开启。', off: '请先在游戏中开启此功能。', unknown: '游戏内开关状态尚未核实；可先配置，实际采用需进游戏确认。', missing: '请先运行游戏以生成设置。' })[info.activation.state] || '游戏开关状态待确认。' : '');
       const warnings = [...new Set((info.warnings || []).map(row => row.message || row))].filter(value => value && value !== activationText && !reasons.includes(value));
       const unavailableOptions = !sr && info.capabilityOptions ? [...(info.capabilityOptions.multipliers || []).map(row => ({ ...row, label: `${row.value}×` })), ...(info.capabilityOptions.modes || []).filter(row => row.value === 'dynamic').map(row => ({ ...row, label: '动态目标帧率' }))].filter(row => row.available === false && row.message) : [];
@@ -333,7 +334,7 @@
           </div></details>`;
         }
       }
-      return `<section class="gp-section"><div class="gp-section-title"><div><h3>${sr ? 'DLSS 超分' : f.backend === 'dlssg-sm86' ? 'RTX20/30 多帧生成 · 实验' : f.backend === 'mfgunlock' ? 'RTX40 补帧' : f.backend === 'nvidia' ? 'RTX50 帧生成' : '帧生成'}</h3></div>${badge(info.state || (active ? 'configurable' : 'unavailable'))}</div>
+      return `<section class="gp-section"><div class="gp-section-title"><div><h3>${sr ? 'DLSS 超分' : f.backend === 'dlssg-sm86' ? 'RTX20/30 多帧生成 · 实验' : f.backend === 'mfgunlock' ? 'RTX40 补帧' : f.backend === 'nvidia' ? 'RTX50 帧生成' : '帧生成'}</h3></div>${badge(checking ? 'checking' : info.state || (active ? 'configurable' : 'unavailable'))}</div>
         ${reasons.length && reasons[0] !== activationText ? `<p class="gp-caption" title="${esc(reasons.join('；'))}">${esc(reasons[0])}</p>` : ''}${activationText ? `<p class="gp-caption" role="status">${esc(activationText)}</p>` : ''}${warnings.map(value => `<p class="gp-caption">${esc(value)}</p>`).join('')}
         ${domain === 'fg' && data.enhancements?.current?.fg?.source === 'active-ini' ? `<p class="gp-caption">已读取游戏内保存的当前设置${data.enhancements.current.fg.differsFromLastApplied ? '，与上次管理器请求不同' : ''}。${draft.fg ? '当前草稿保留，应用前会重新核对。' : ''}</p>` : ''}
         <div class="gp-controls">${controls}</div>${!sr && f.backend === 'dlssg-sm86' ? `<p class="gp-caption gp-fg-evidence">文件${data.enhancements?.fgComponents?.ready ? '已准备' : '尚未准备'} · 组件加载待确认 · 实际帧生成待验证</p>` : ''}${!sr && f.backend === 'dlssg-sm86' ? '<p class="gp-caption">倍率是允许的上限，实际由游戏请求决定。默认优化档 1、最多 4×；修改后重启游戏。RTX20/30 实机尚待验证。</p>' : ''}${!sr && f.backend === 'mfgunlock' ? `<details class="gp-capability-details" data-gp-detail="mfg-source"><summary>组件与游戏内菜单</summary><p class="gp-caption">游戏内菜单：ReShade → Add-ons → MFG Unlock。当前组件：${esc(data.enhancements?.fgComponents?.installedProviderDetails?.version || data.enhancements?.fgComponents?.catalog?.find(row => row.id === data.enhancements?.fgComponents?.defaultProvider)?.version || '1.0（推荐）')}；来源：mavismmg/MFGAdaUnlock-RenoDx。设置读回不等于生成帧已验证。</p><div class="gp-small-actions">${act('mfg-source', '查看开源项目', busy, 'subtle')}</div></details>` : ''}${unavailableOptions.length ? `<details class="gp-capability-details"><summary>未开放档位说明</summary>${unavailableOptions.map(row => `<p class="gp-caption"><strong>${esc(row.label)}</strong> · ${esc(row.message)}</p>`).join('')}</details>` : ''}<p class="gp-caption">${owned ? owned.readbackVerified ? '已应用，重启游戏后生效。' : '设置已变化，请重新预览。' : '尚未应用覆盖设置。'}</p>
@@ -367,7 +368,7 @@
       const pending = data.operation?.pending || data.deployment?.needsRecovery;
       if (options.hoyoSettingsOnly) {
         const pickerRows = versions;
-        const picker = `<section class="gp-section"><div class="gp-controls">${selectField('route', 'version', 'AI 增强组件',
+        const picker = `<section class="gp-section"><div class="gp-controls">${selectField('route', 'version', 'Core 版本',
           (pickerRows.some(row => row.id === version) ? '' : option('', '选择要安装或更换的 Core', '', true)) +
           pickerRows.map(row => option(row.id, coreLabel(row.label || row.id), version, row.ready === false)).join(''), busy || pending,
           pickerRows.find(row => row.ready === false && row.reason)?.reason || '')}</div>${hoyoCoreNotice()}</section>`;
@@ -387,8 +388,8 @@
         : '配套版本尚未确定，请选择可用 Core。';
       const existingNames = existing?.files?.map(row => row.name).slice(0, 6) || [];
       return `<section class="gp-section gp-install-section"><div class="gp-controls">
-        ${selectField('route', 'api', '游戏 API', option('auto', automaticLabel, api) + ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].map(key => option(key, API[key] || key.toUpperCase(), api)).join(''), busy)}
-        ${selectField('route', 'version', 'AI 增强组件', (!visibleVersion || hoyoCoreScope() && !versions.some(row => row.id === visibleVersion) ? option('', '请选择 AI 增强组件', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy, hoyoCoreScope() ? versions.find(row => row.ready === false && row.reason)?.reason || '' : '')}</div>${hoyoCoreNotice()}
+        ${selectField('route', 'api', '图形 API', option('auto', automaticLabel, api) + ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].map(key => option(key, API[key] || key.toUpperCase(), api)).join(''), busy)}
+        ${selectField('route', 'version', 'Core 版本', (!visibleVersion || hoyoCoreScope() && !versions.some(row => row.id === visibleVersion) ? option('', '请选择 Core 版本', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy, hoyoCoreScope() ? versions.find(row => row.ready === false && row.reason)?.reason || '' : '')}</div>${hoyoCoreNotice()}
         ${CORE_CATALOG.isProviderCoreId(visibleVersion) ? '<p class="gp-caption" title="自动核对并匹配当前图形接口需要的 Bridge / Feeder；运行效果需进游戏确认。">自动搭配 Bridge / Feeder · 兼容路线为实验支持</p>' : ''}
         ${runtimeImportControl()}${inputRouteControl()}
         ${(data.failures || []).filter(row => ['operation', 'layout', 'defaults'].includes(row.section)).map(row => `<p class="gp-message error">检查未完成：${esc(errorText(row))}。处理后点击“重新检查”。</p>`).join('')}
