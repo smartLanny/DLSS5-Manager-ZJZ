@@ -13,7 +13,6 @@ const DX11_CARRIER = 'dlss5-native-carrier-045-dx11-compat.addon64';
 const D21_ARCHIVE_SHA256 = 'cf6d486a4525c75c5279446bd596b6008fc1eb5e3a8b1863a2ee15f249148107';
 const D21_ADDON_SHA256 = '5fb873dab6f03f27c0b37380dff7ab5ad4ebc0ca295feadba06d00a28a1c9c78';
 const D21_BRIDGE_SHA256 = '1acf3cbe509a031be1763a8231cd81e6019aa3532368cd0b08a6c17bc94b70a2';
-const UNIFIED3_ARCHIVE = '1b51ab5646a10bb3f17db04de52c26f62dc8a40435e24ea145af1bebfcd8be46';
 const PAIRED_OTA_PROFILES = Object.freeze({
   'beta0.4.5-dx11-compat': Object.freeze({
     coreName: 'dlss5-ai渲染超分版-beta0.4.5-dx11-compat-@野生的装机宅-bilibili.addon64',
@@ -243,28 +242,41 @@ function standardPackage(entries, archiveSha256) {
       blockers:['新游戏、RTX40 与具体游戏仍需实机验收'] } } : {}) });
 }
 
+// License texts shipped beside a unified Core; staging copies them as notices.
+const CORE_NOTICE_NAMES = Object.freeze(['LICENSES.txt', 'NVIDIA-NGX-LICENSE.txt', 'AMD-FidelityFX-LICENSE.txt']);
+
+// Unified Core OTA archives are admitted only by a catalog archive digest; each
+// member is then checked against SHA256.json and the catalog Core identities.
+function catalogCorePackage(entries, archiveSha256, buildInfo, { core, language }) {
+  if (language !== 'zh-CN') {
+    throw Object.assign(new Error(`管理器目前安装中文 Core；${core.label} 英文包请按包内说明手动安装。`), { code: 'ERR_OTA_LANGUAGE' });
+  }
+  if (!buildInfo || buildInfo.version !== core.buildVersion || buildInfo.source_commit !== core.sourceCommit ||
+      buildInfo.language !== language || buildInfo.full_face_backend !== core.faceCompanions ||
+      buildInfo.game_runtime_verified !== false || buildInfo.stable_release !== false) {
+    throw new Error(`${core.id} OTA metadata mismatch`);
+  }
+  const rows = verifyRows(entries, parseJson(entries.get('SHA256.json'), 'SHA256.json'), 'file', 'SHA256.json');
+  const addon = exactlyOne(rows, row => row.sha256 === core.addon[language] && /\.addon64$/i.test(row.name), `${core.id} Core`);
+  const bridge = exactlyOne(rows, row => row.name === 'nrchain_nvngx.dll' && row.sha256 === core.chain, `${core.id} NR chain`);
+  // A null catalog carrier digest is bound by the pinned archive digest instead.
+  const carrier = exactlyOne(rows, row => row.name === DX11_CARRIER && (core.carrier === null || row.sha256 === core.carrier), `${core.id} DX11 carrier`);
+  const policy = require('./payload-companions'), companions = rows.filter(row => policy.isCompanionName(row.name));
+  policy.validateMap(Object.fromEntries(companions.map(row => [row.name, row.sha256])), core.id);
+  const notices = rows.filter(row => CORE_NOTICE_NAMES.includes(row.name));
+  return result(buildInfo, addon, bridge, carrier, 'dx11', instructionText(entries, ['安装说明.txt']), {
+    archiveSha256, companions, notices,
+    canonicalCore: { id: core.id, version: core.displayVersion, variant: language, architecture: 'x64',
+      interface: 'NGX-D3D12-Feature1', inputInterfaces: ['NGX-D3D12-Feature1'], supportsPresent: true,
+      capabilities: ['same-frame-output'], validation: 'candidate', stableRelease: false, coreUpdateOnly: false,
+      blockers: [core.blocker] }
+  });
+}
+
 function dx11Package(entries, archiveSha256) {
   const buildInfo = parseJson(entries.get('build-info.json'), 'build-info.json');
-  const u5 = require('./unified5-core');
-  const isUnified5 = archiveSha256 === '55d044a6739ba89b8411f33fe0a336fc5de1477c216db3c6672ebaab572c4162';
-  const unifiedId = isUnified5 ? u5.ID : '0.5-dline21-unified3';
-  if ((isUnified5 || archiveSha256 === UNIFIED3_ARCHIVE) && buildInfo.version === `beta${unifiedId}` &&
-      buildInfo.source_commit === (isUnified5 ? u5.SOURCE : '7a90660bc468ca86a02abe2e145638b51489d549') && buildInfo.language === 'zh-CN' &&
-      buildInfo.full_face_backend === true && buildInfo.game_runtime_verified === false && buildInfo.stable_release === false) {
-    const rows = verifyRows(entries, parseJson(entries.get('SHA256.json'), 'SHA256.json'), 'file', 'SHA256.json');
-    const addon = exactlyOne(rows, row => row.sha256 === (isUnified5 ? u5.HASHES['zh-CN'] : '01b4155dcca346f6b3485f210191baaaf4af6faa9dfb9b29302c8f7e36ae3c93') && /\.addon64$/i.test(row.name), `${unifiedId} Core`);
-    const bridge = exactlyOne(rows, row => row.name === 'nrchain_nvngx.dll' && row.sha256 === D21_BRIDGE_SHA256, 'unified3 NR chain');
-    const carrier = exactlyOne(rows, row => row.name === DX11_CARRIER && row.sha256 === (isUnified5 ? u5.CARRIER : 'eb604bc1149da67492660a6d9e6dc622ca8fbcd247f67f8592aabc7cee633900'), `${unifiedId} DX11 carrier`);
-    const policy = require('./payload-companions'), companions = rows.filter(row => policy.isCompanionName(row.name));
-    policy.validateMap(Object.fromEntries(companions.map(row => [row.name, row.sha256])), unifiedId);
-    return result(buildInfo, addon, bridge, carrier, 'dx11', instructionText(entries, ['安装说明.txt']), {
-      archiveSha256, companions,
-      canonicalCore: { id: unifiedId, version: isUnified5 ? '0.5 Unified5' : '0.5 D21 unified3', variant: 'zh-CN', architecture: 'x64',
-        interface: 'NGX-D3D12-Feature1', inputInterfaces: ['NGX-D3D12-Feature1'], supportsPresent: true,
-        capabilities: ['same-frame-output'], validation: 'candidate', stableRelease: false, coreUpdateOnly: false,
-        blockers: [isUnified5 ? 'Provider V1 已实现；与 Feeder 成品及实际游戏的配套验收未完成，不自动启用外部路线。' : '具体游戏和 NVIDIA 实机尚未验证；此 Core 未声明外部 Provider V1 接口。'] }
-    });
-  }
+  const cataloged = require('../shared/core-catalog').coreForArchive(archiveSha256);
+  if (cataloged) return catalogCorePackage(entries, archiveSha256, buildInfo, cataloged);
   // Core acceptance archives share the metadata filenames, but are not a
   // matched Manager update. Explain that distinction without widening admission.
   if (buildInfo && buildInfo.scope === 'D3D12 Core-only manual acceptance; not Manager/multi-API OTA') {
@@ -314,4 +326,4 @@ async function readOtaPackage(file) {
   throw new Error('OTA manifest missing');
 }
 
-module.exports = { readOtaPackage, sha256Buffer };
+module.exports = { readOtaPackage, sha256Buffer, catalogCorePackage, CORE_NOTICE_NAMES };

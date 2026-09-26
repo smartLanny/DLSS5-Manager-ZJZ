@@ -77,7 +77,7 @@ node scripts/build-manager.cjs --flavor offline --unpacked-zip --work-root D:\DL
 
 权威 pin 在 [config/pins.json](../config/pins.json) 和 [DLC-PIN.md](DLC-PIN.md)。MFG 版本只在 `desktop/src/product/fg-mfgunlock-providers.json` 登记：当前新安装默认提供 MFG 1.1.5，1.0 和 0.9 是显式回退；1.1 只用于识别手动安装后升级，0.7/0.6.1 仅用于历史收据恢复，不能作为回退选择。BG3 Bridge 保留 1.4.11，不因上游出现 latest / 预发布就自动替换。
 
-展示名和菜单项不是成品身份，也不构成兼容性证据。D21 的默认策略需要实际完整包；D12 不得重新标为 D21。已有游戏选择优先于新的全局默认。缺可选桥接配套时只阻止对应操作，保留原游戏与 Core。
+展示名和菜单项不是成品身份，也不构成兼容性证据。新安装默认是 Core 清单里的推荐版（当前 0.5.1），只有暂存了它的确切文件才会生效，否则仍是 0.4.7；D12 不得重新标为 D21。换 Core 的步骤见 [CORE-UPDATE.md](CORE-UPDATE.md)。已有游戏选择优先于新的全局默认。缺可选桥接配套时只阻止对应操作，保留原游戏与 Core。
 
 ## 更多文档
 

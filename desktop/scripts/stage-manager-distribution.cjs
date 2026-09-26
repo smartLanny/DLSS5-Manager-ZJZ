@@ -26,8 +26,9 @@ const COMPONENT_ID = /^[a-z0-9][a-z0-9._+-]{0,127}$/i;
 const COMPONENT_MAX_FILE = 128 * 1024 * 1024;
 const COMPONENT_MAX_TOTAL = 512 * 1024 * 1024;
 const BUNDLED_RESOURCE_TARGETS = new Set([
-  'core-notices/unified5/LICENSES.txt',
-  'core-notices/unified5/NVIDIA-NGX-LICENSE.txt',
+  // License notices of each catalog Core (written by scripts/import-core-ota.cjs).
+  ...require('../src/shared/core-catalog').CORES.flatMap(core => require('../src/product/ota').CORE_NOTICE_NAMES
+    .map(name => `core-notices/${core.menuKey}/${name}`)),
   'core-notices/d13/LICENSES.txt',
   'hoyoshade/component.json',
   'loading-helper/component.json',

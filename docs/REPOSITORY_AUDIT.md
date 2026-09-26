@@ -39,7 +39,7 @@ npm run build:release -- --work-root D:\DLSS5-Build
 
 该命令仅生成目录式 `Portable.zip`，并额外验证：
 
-- 新装默认是 `0.4.7beta`，D21 不是稳定默认。
+- 新装默认是 Core 清单推荐版 `0.5.1-beta-ui1`，`0.4.7beta` 是稳定回退；D21、Unified5 只在历史版本里手选。
 - 精确 `0.3.3.4` Core 大小为 652288 bytes，SHA-256 为 `2869d7d6b2d184b4200c3eb7ac671db0299be64e7625c4f816ee26b41890bfb9`。
 - Bridge 与 Feeder 已进入公开组件目录。
 - MFG 1.1.5 是默认、1.0 和 0.9 是回退，0.7 不进入安装矩阵。

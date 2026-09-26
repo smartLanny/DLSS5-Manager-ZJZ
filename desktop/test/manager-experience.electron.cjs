@@ -75,7 +75,10 @@ async function experience() {
  check(!host().querySelector('.gp-modal'), 'one Apply must not demand another confirmation');
  check(!host().querySelector('[data-gp-action="import-runtime"]'), 'complete installed runtime hides import prompt');
  const imported = await window.__flow('evidence', id); check(imported.ok && imported.value.preferences === 1, 'real preference saved once'); check(!imported.value.pending.pending, 'no transaction left behind');
- set('route', 'version', '0.4.2'); click('preview'); await until(() => !state().busy && state().data.game.addonVersion === '0.4.2', 'replace Core');
+ // Older Cores such as 0.4.2 are chosen from the rollback picker, not the main one.
+ const rollback = host().querySelector('[data-gp-detail="rollback"] [data-gp-group="route"][data-gp-field="version"]'); check(rollback && !rollback.disabled, 'historical Core picker');
+ rollback.value = '0.4.2'; rollback.dispatchEvent(new Event('change', { bubbles: true }));
+ click('preview'); await until(() => !state().busy && state().data.game.addonVersion === '0.4.2', 'replace Core');
  set('route', 'version', '0.4.7beta'); click('preview'); await until(() => !state().busy && state().data.game.addonVersion === '0.4.7beta', 'rollback Core');
  await window.__flow('running', true); host().querySelector('[data-gp-tab="nr"]').click(); set('nr', 'Intensity', '1.3456789'); click('preview'); await until(() => !state().busy && state().data.waiting?.pending, 'queued'); check(!state().data.operation.pending, 'queued is not recovery');
  click('cancel-waiting'); await until(() => !state().busy && !state().data.waiting?.pending, 'cancel wait');

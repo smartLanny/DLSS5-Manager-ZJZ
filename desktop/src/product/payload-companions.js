@@ -1,14 +1,14 @@
 'use strict';
 const { appError } = require('./errors');
 
-// Full face backend shipped by the unified3 package. No arbitrary subdirectories
+// Full face backend shipped by the unified Core packages. No arbitrary subdirectories
 // or additional executable resources can enter an installation through this map.
 const NAMES = Object.freeze(['nr_face/LICENSE', 'nr_face/onnxruntime_providers_shared.dll',
   'nr_face/onnxruntime.dll', 'nr_face/ThirdPartyNotices.txt', 'nr_face/yunet-dynamic.json',
   'nr_face/yunet-dynamic.onnx', 'nr_face/YUNET-LICENSE']);
 const HASH = /^[a-f0-9]{64}$/i;
 const isCompanionName = name => NAMES.includes(name);
-const required = version => ['0.5-dline21-unified3', require('./unified5-core').ID].includes(version);
+const required = version => require('../shared/core-catalog').faceCompanionIds().includes(version);
 function validateMap(value, version) {
   if (value === undefined && !required(version)) return {};
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== NAMES.length ||

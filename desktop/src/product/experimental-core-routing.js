@@ -1,9 +1,11 @@
 'use strict';
-const unified5 = require('./unified5-core');
+const catalog = require('../shared/core-catalog');
 // Implemented by the pinned external consumer; not a claim of in-game acceptance.
 const CAPABILITIES = Object.freeze(['same-frame-output', 'source-frame-claims',
   'external-exact-fence-completion', 'present-color-depth-motion', 'multi-pass-nr']);
-function isUnified5(id, hash) { return id === unified5.ID && Object.values(unified5.HASHES).includes(hash); }
+// Provider-capable catalog Cores (Unified5, 0.5.1 …) share this external stack.
+const isProviderCore = (id, hash) => catalog.isProviderCore(id, hash);
+const isUnified5 = isProviderCore;
 function selectProvider(packages, selection, trustedIds) {
   const matches = packages.filter(row => trustedIds.has(row.id) && row.selectable === true)
     .flatMap(provider => (provider.routeDescriptors || []).filter(route => route.api === selection.api &&
@@ -16,4 +18,4 @@ function selectProvider(packages, selection, trustedIds) {
     b.provider.version.localeCompare(a.provider.version, undefined, { numeric: true }));
   return matches[0] || null;
 }
-module.exports = { CAPABILITIES, isUnified5, selectProvider };
+module.exports = { CAPABILITIES, isProviderCore, isUnified5, selectProvider };

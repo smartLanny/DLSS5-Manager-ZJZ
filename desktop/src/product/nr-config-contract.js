@@ -3,7 +3,8 @@
 // Public INI names and value contracts only. Core implementation is not bundled.
 // Uniform model defaults were checked against the delivered 7a90660b manifest.
 const UNIFORM_SOURCE = '7a90660bc468ca86a02abe2e145638b51489d549';
-const unified5 = require('./unified5-core');
+const catalog = require('../shared/core-catalog');
+const COLOUR_CONTRACT = 'nr-uniform-colour-v2';
 const COLOUR_KEYS = ['ColourLabMode', 'AllowUnverifiedHdrColor', 'ColourPriorityStrength', 'ColourConservativeStrength'];
 const MODEL_DEFAULTS = Object.freeze({ Intensity: 1.5, LocalToneStrength: 1, LocalStructureStrength: 1,
   SkinStructureStrength: 0.4, AutoMask: 1, Style: 0, UICorrection: 1 });
@@ -65,7 +66,7 @@ function resolveContract(input = '') {
   const explicitlyUnknown = schema === 'unknown' || descriptor.known === false;
   const legacy037 = !explicitlyUnknown && (schema === 'nr-037' || source === HISTORY_037_SOURCE || /^(?:beta)?0\.3\.7$/.test(version));
   const dualLayer = !explicitlyUnknown && (schema === 'nr-dline13' || source === D13_SOURCE || /^(?:beta)?0\.5-dline13$/.test(version));
-  const colourMemory = !explicitlyUnknown && (schema === unified5.CONTRACT || source === unified5.SOURCE);
+  const colourMemory = !explicitlyUnknown && (schema === COLOUR_CONTRACT || catalog.sourceCommits(COLOUR_CONTRACT).includes(source));
   const uniform = !explicitlyUnknown && (colourMemory || ['uniform3', 'unified3', 'nr-uniform-v1'].includes(schema) ||
     source === UNIFORM_SOURCE || /(?:^|[-_.+])(?:uniform|unified)3(?:$|[-_.+])/i.test(version));
   const dline = !explicitlyUnknown && (uniform || dualLayer || /(?:^|[-+])(?:beta)?0\.5(?:$|[-.+]|beta|d\d)/i.test(version));
@@ -77,7 +78,7 @@ function resolveContract(input = '') {
     dualLayer ? { ...D13_DEFAULTS } : legacy037 ? { ...HISTORY_037_DEFAULTS } :
     known ? { ...LEGACY_DEFAULTS, ...(dline || beta ? { Intensity: 1.2, ColorStrength: 1 } : {}) } : {};
   const keys = uniform ? uniformKeys : dualLayer ? Object.keys(D13_DEFAULTS) : legacy037 ? Object.keys(HISTORY_037_DEFAULTS) : LEGACY_KEYS;
-  return { id: colourMemory ? unified5.CONTRACT : uniform ? 'nr-uniform-v1' : dualLayer ? 'nr-dline13' : legacy037 ? 'nr-037' : dline ? 'nr-dline' : knownLegacy ? 'nr-legacy' : 'unknown',
+  return { id: colourMemory ? COLOUR_CONTRACT : uniform ? 'nr-uniform-v1' : dualLayer ? 'nr-dline13' : legacy037 ? 'nr-037' : dline ? 'nr-dline' : knownLegacy ? 'nr-legacy' : 'unknown',
     version, sourceCommit: source || null, known, uniform, colourMemory, dline, dualLayer, legacy037, defaults, keys: [...keys],
     runtimeVerified: false, effectiveMeaning: 'configuration-at-startup' };
 }

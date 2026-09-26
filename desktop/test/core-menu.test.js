@@ -4,13 +4,15 @@ const assert = require('node:assert/strict');
 const { CORE_CHOICES, coreMenu, preferredBundleDefault } = require('../src/product/core-menu');
 const { prepareCoreCatalog } = require('../scripts/prepare-core-catalog');
 const { resolveVersion } = require('../src/product/version-selection');
+const catalog = require('../src/shared/core-catalog');
 const complete = { supportsPresent: true, inputInterfaces: ['NGX-D3D12-Feature1'] };
 
 test('primary choices retain actual identities and separate unified3 from the previous D21', () => {
   const input = CORE_CHOICES.map(row => ({ id: row.ids[0], ready: true, source: 'external', compatibility: 'dx12' }));
   const original = structuredClone(input), result = coreMenu(input, { defaultVersion: '0.4.7beta' });
   assert.deepEqual(result.map(row => row.id), input.map(row => row.id));
-  assert.equal(result.length, 9); assert.match(result.find(row => row.id === '0.4.7beta').label, /0\.4\.7.*新安装推荐/);
+  assert.equal(result.length, CORE_CHOICES.length); assert.match(result.find(row => row.id === '0.4.7beta').label, /0\.4\.7.*新安装推荐/);
+  assert.match(result.find(row => row.id === catalog.RECOMMENDED).label, /0\.5\.1.*（推荐）/);
   assert.match(result.find(row => row.id === '0.5-dline21-unified3').label, /unified3.*测试/);
   const d21 = result.find(row => row.id === '0.5-dline21');
   assert.match(d21.label, /D21.*测试/); assert.doesNotMatch(d21.label, /默认|推荐/);
@@ -18,7 +20,7 @@ test('primary choices retain actual identities and separate unified3 from the pr
 });
 test('missing sources are visible but cannot be installed', () => {
   const rows = coreMenu([]);
-  assert.equal(rows.length, 9); assert.ok(rows.every(row => row.ready === false && row.verification === 'unavailable'));
+  assert.equal(rows.length, CORE_CHOICES.length); assert.ok(rows.every(row => row.ready === false && row.verification === 'unavailable'));
   assert.ok(rows.every(row => !row.label.includes('新安装默认')));
 });
 test('installed D12 and imported updates survive a five-choice menu without upgrading', () => {
@@ -71,4 +73,17 @@ test('public default changes to 0.4.7 without changing an installed D12 game', (
   assert.equal(prepareCoreCatalog(input).bundle.defaultVersion, '0.4.7beta');
   const rows = coreMenu([{ id: '0.5-dline12', ready: true }], { installedVersion: '0.5-dline12', defaultVersion: '0.5-dline12' });
   assert.ok(rows.every(row => !String(row.label).includes('新安装默认')));
+});
+
+test('the catalog recommended Core becomes the new-install default only with its exact bytes', () => {
+  const recommended = catalog.byId(catalog.RECOMMENDED);
+  const exact = { ...complete, compatibility: 'dx11', files: { 'nr-before-sr.zh-CN.addon64': recommended.addon['zh-CN'] } };
+  const versions = { '0.4.7beta': { compatibility: 'dx11' }, [catalog.RECOMMENDED]: exact };
+  assert.equal(preferredBundleDefault({ versions }), catalog.RECOMMENDED);
+  const relabeled = { ...exact, files: { 'nr-before-sr.zh-CN.addon64': '0'.repeat(64) } };
+  assert.equal(preferredBundleDefault({ versions: { ...versions, [catalog.RECOMMENDED]: relabeled } }), '0.4.7beta');
+  assert.equal(preferredBundleDefault({ versions: { ...versions, [catalog.RECOMMENDED]: { ...exact, coreUpdateOnly: true } } }), '0.4.7beta');
+  const menu = coreMenu([{ id: '0.4.7beta', ready: true }, { id: catalog.RECOMMENDED, ready: true }], { defaultVersion: catalog.RECOMMENDED });
+  assert.match(menu.find(row => row.id === catalog.RECOMMENDED).label, /新安装推荐/);
+  assert.equal(menu.filter(row => String(row.label).includes('新安装推荐')).length, 1);
 });
