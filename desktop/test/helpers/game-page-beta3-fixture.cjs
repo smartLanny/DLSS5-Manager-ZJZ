@@ -125,7 +125,7 @@ function installMock(features, options = {}) {
         summary:dx11 ? 'AI Core 与一份接口匹配的 DLSS5 Bridge 搭配，再使用对应显卡运行库。' : '游戏直接向 AI Core 提供 DLSS 输入，只需要 Core、输入链和对应显卡运行库。',
         reason:dx11 ? 'DX11 需要 Bridge 把输入交给 Core；管理器只启用一个已验证匹配的版本。' : '此路线不需要 DLSS5 Bridge，也不安装 DLSS5 Feeder。',
         manualBridge:dx11, items:[
-          {key:'api',label:'游戏 API',value:dx11 ? 'DirectX 11' : 'DirectX 12',status:'ready',detail:'由游戏程序识别。'},
+          {key:'api',label:'图形 API',value:dx11 ? 'DirectX 11' : 'DirectX 12',status:'ready',detail:'由游戏程序识别。'},
           {key:'core',label:'AI 增强 Core',value:'0.4.7（默认）',status:'ready',detail:'按游戏保存版本。'},
           {key:'input',label:'输入适配',value:dx11 ? 'DLSS5 Bridge · 1.4.12' : '游戏原生 DLSS 输入',status:'ready',detail:dx11 ? '按 Core 接口自动选择。' : '无需额外 Bridge / Feeder。'},
           {key:'runtime',label:'显卡运行库',value:'RTX 40 系 NR 运行库',status:'ready',detail:'已校验。'}

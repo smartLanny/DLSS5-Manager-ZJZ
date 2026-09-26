@@ -123,6 +123,6 @@ test('component management uses explicit product names and hides source complexi
   assert.match(ui, /bridge: 'Bridge'/); assert.match(ui, /feeder: 'Feeder'/); assert.match(ui, /下载更新/);
   assert.doesNotMatch(ui, /下载到缓存|图形桥|输入桥/);
   assert.match(markup, /id="componentRouteGameSelect"/); assert.match(markup, /class="panel component-expert-panel"/);
-  assert.match(markup, /组件详情、手动导入与存储/); assert.match(game, /AI 增强组件/);
+  assert.match(markup, /组件详情、手动导入与存储/); assert.match(game, /Core 版本/);
   assert.doesNotMatch(markup, /id="componentProviderSelect"|id="applyBridgeComponentBtn"/);
 });

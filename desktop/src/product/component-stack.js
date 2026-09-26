@@ -139,7 +139,7 @@ function resolveComponentStack(input = {}) {
     summary: '确认 API 后，管理器会自动选择 Core、DLSS5 Bridge 或 DLSS5 Feeder。',
     reason: 'API 未确认时不会猜测桥接器，也不会向游戏目录写入组件。', manualBridge: false,
     items: [
-      { key:'api', label:'游戏 API', value:'待确认', status:'attention', detail:'回到游戏设置选择实际使用的 API。' },
+      { key:'api', label:'图形 API', value:'待确认', status:'attention', detail:'回到游戏设置选择实际使用的 API。' },
       { key:'input', label:'输入适配', value:'确认后自动匹配', status:'pending', detail:'不会同时安装 Bridge 和 Feeder。' }
     ]
   };
@@ -148,7 +148,7 @@ function resolveComponentStack(input = {}) {
     ['dx9', 'dx10'].includes(api) ? 'feeder' : api === 'vulkan' ? 'vulkan' : 'native';
   const core = input.core || {}, bridge = input.bridge || {}, feeder = input.feeder || {};
   const vulkan = input.vulkan || {}, runtime = input.runtime || {};
-  const items = [{ key:'api', label:'游戏 API', value:apiLabel, status:'ready', detail:input.apiAutomatic === false ? '使用这个游戏保存的手动选择。' : '由游戏程序和已保存设置识别。' }];
+  const items = [{ key:'api', label:'图形 API', value:apiLabel, status:'ready', detail:input.apiAutomatic === false ? '使用这个游戏保存的手动选择。' : '由游戏程序和已保存设置识别。' }];
   let title, summary, reason, manualBridge = false;
 
   if (route === 'feeder') {

@@ -236,7 +236,7 @@ test('Vulkan uses its fixed package and retains a read-only-capable graphics pan
     chosen: { path: 'C:/Games/VK.exe', bitness: 64, apiResolution: { api: 'vulkan', source: 'override' } },
     vulkan: { available: true, installed: true, coreVersion: '0.4.6-hotfix.1-vulkan-provider', packageId: 'nr-vulkan-e7df0fc', experimental: true } };
   const html = vm.runInContext('gameDetail(game)', context);
-  assert.ok(html.indexOf('游戏图形 API') < html.indexOf('Vulkan 使用按游戏保存的独立配套'));
+  assert.ok(html.indexOf('图形 API') < html.indexOf('Vulkan 使用按游戏保存的独立配套'));
   assert.match(html, /0\.4\.6-hotfix\.1 · Beta · Vulkan 桥接/);
   assert.match(html, /value="nr-vulkan-e7df0fc" selected/);
   assert.equal(vm.runInContext('vulkanVersionOption(game)', context), '<option value="nr-vulkan-e7df0fc" selected>0.4.6-hotfix.1 · Beta · Vulkan 桥接</option>');

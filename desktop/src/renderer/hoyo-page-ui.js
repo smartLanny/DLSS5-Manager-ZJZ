@@ -6,7 +6,7 @@
   const errorText = value => `${value?.code ? `[${value.code}] ` : ''}${value?.message || value || '本次操作未完成。'}`;
   const waiting = phase => ['waiting-helper', 'waiting-launcher', 'waiting-game', 'running'].includes(phase);
   const PHASES = {
-    binding: ['绑定启动器', '选择这个客户端对应的官方启动器。'], api: ['确认游戏 API', '按游戏实际使用的图形 API 选择一次。'],
+    binding: ['绑定启动器', '选择这个客户端对应的官方启动器。'], api: ['确认图形 API', '按游戏实际使用的图形 API 选择一次。'],
     install: ['准备独立画面增强', '先预览 ReShade、Core 和 NR 配套，再应用安装。'], ready: ['已准备，可以启动', '助手就绪后会打开已绑定的官方启动器。'],
     'waiting-helper': ['正在准备加载助手', '请稍候，助手就绪后继续。'], 'waiting-launcher': ['在官方启动器中启动游戏', '已绑定当前客户端，正在等待它产生游戏进程。'],
     'waiting-game': ['等待游戏启动', '请在已打开的官方启动器中点击启动游戏。'], running: ['游戏已启动', '加载与 NR 状态分别核对；请在游戏中查看实际画面。'],
@@ -114,7 +114,7 @@
       const rows = available.map(row => ({ value: row.id, label: `${row.kind === 'starward' ? 'Starward' : 'HoYoPlay'} · ${row.path}` }));
       return `<div class="hoyo-binding gp-controls">${bindingMode ? select('launcherId', '对应启动器', rows, form.launcherId || binding.launcher?.id, '选择启动器') +
         (channels.length > 1 ? select('channel', '游戏客户端', channels.map(row => ({ value: channelValue(row), label: channelLabel(row) })), form.channel || flow.channel, '选择客户端') : '') :
-        select('api', '游戏图形 API', [{ value: 'dx11', label: 'DirectX 11' }, { value: 'dx12', label: 'DirectX 12' }], form.api, '按游戏实际设置选择')}
+        select('api', '图形 API', [{ value: 'dx11', label: 'DirectX 11' }, { value: 'dx12', label: 'DirectX 12' }], form.api, '按游戏实际设置选择')}
         ${bindingMode ? button('pick-launcher', '选择启动器文件', false, busy) : ''}</div>`;
     }
     function evidence() {

@@ -538,7 +538,7 @@ function cardAction(game) {
   if (isVulkanRoute(game)) return vulkanSelectionState(game).available && game.vulkan?.packageId ? `${installButton}${rename}${dismiss}` : `<button class="button" disabled>Vulkan 暂不可用</button>${rename}${dismiss}`;
   if (game.supported && payloadReadyForHardware()) return `${installButton}${rename}${dismiss}`;
   if (game.supported) return `<button class="button subtle payload-open-btn">检查安装组件</button>${rename}${dismiss}`;
-  if (game.supportCode === 'ERR_API_SELECTION_REQUIRED') return `<button class="button subtle">请选择游戏 API</button>${rename}${dismiss}`;
+  if (game.supportCode === 'ERR_API_SELECTION_REQUIRED') return `<button class="button subtle">请选择图形 API</button>${rename}${dismiss}`;
   return `<button class="button" disabled>无法安装</button>${rename}${dismiss}`;
 }
 
@@ -710,7 +710,7 @@ function apiControls(game) {
   const syncNote = game.chosen.apiSettings?.canSync === true
     ? `<p class="config-note">自动跟随游戏当前图形设置。选择 DX12 或 Vulkan 并应用，会同步游戏设置，下次启动使用所选 API；请先关闭游戏。${selected !== 'auto' && game.chosen.apiSettings.api && selected !== game.chosen.apiSettings.api ? `游戏当前保存为 ${escapeHtml(API_LABELS[game.chosen.apiSettings.api])}，与此处选择不同；点击“应用设置”后同步，或选择自动跟随游戏。` : ''}</p>`
     : game.chosen.apiSettings?.kind === 'rdr2-system-xml' ? '<p class="config-note">这个游戏支持 DX12 和 Vulkan，但暂时读不到图形设置。这里只决定插件路线，不改游戏设置；先运行一次游戏，再重新扫描。</p>' : '';
-  return `<div class="config-block api-config-block"><h4>游戏图形 API</h4><div class="control-row"><select class="game-api-select" aria-label="游戏图形 API">${options}</select></div><p class="api-route-status">${escapeHtml(deployment)}</p>${syncNote}${entryMismatch}<details class="api-help"><summary>检测与桥接说明</summary><p>“自动”显示检测结果，也可以手动改成游戏实际用的接口，桥接器会跟着处理。选择跟当前 EXE 绑定，重新扫描不会覆盖，也不会改游戏启动参数。</p>${evidence ? `<p>检测线索：${escapeHtml(evidence)}</p>` : ''}</details></div>`;
+  return `<div class="config-block api-config-block"><h4>图形 API</h4><div class="control-row"><select class="game-api-select" aria-label="图形 API">${options}</select></div><p class="api-route-status">${escapeHtml(deployment)}</p>${syncNote}${entryMismatch}<details class="api-help"><summary>检测与桥接说明</summary><p>“自动”显示检测结果，也可以手动改成游戏实际用的接口，桥接器会跟着处理。选择跟当前 EXE 绑定，重新扫描不会覆盖，也不会改游戏启动参数。</p>${evidence ? `<p>检测线索：${escapeHtml(evidence)}</p>` : ''}</details></div>`;
 }
 
 function addonVersionRow(game) {
