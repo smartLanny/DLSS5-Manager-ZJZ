@@ -96,7 +96,7 @@ async function smoke() {
   await until(() => !ctrl('fixture-unmanaged').getState().busy && !host('fixture-unmanaged').querySelector('[data-gp-action="modal-apply"]').disabled, 'explicit proxy preview');
   check(mock.calls.filter(row => row[0] === 'apply').length === applied, 'choosing proxy still does not apply');
   click(host('fixture-unmanaged'), 'modal-apply'); await until(() => !ctrl('fixture-unmanaged').getState().busy && mock.assessments['fixture-unmanaged'].game.installed, 'confirmed adoption');
-  check(host('fixture-unmanaged').querySelector('.gp-apply-bar .primary').textContent === '启动' && mock.launchCount === 0, 'confirmed adoption changes Apply to Launch without launching');
+  check(host('fixture-unmanaged').querySelector('.gp-apply-bar .primary').textContent === '启动游戏' && mock.launchCount === 0, 'confirmed adoption changes Apply to Launch without launching');
   document.querySelector('[data-view="hoyo"]').click();
   const hoyoHost = () => document.querySelector('#hoyoWorkspace');
   await until(() => hoyoHost().querySelector('[data-hoyo-action="preview-install"]'), 'HoYo install');
@@ -121,7 +121,7 @@ async function smoke() {
   check(mock.calls.some(row => row[0] === 'request' && row[1].version === '0.5.1-beta-ui1' && row[2] === 'fixture-hoyo'), 'HoYo Core selection follows the same operation contract');
   check(!hoyo.calls.some(row => row[0] === 'start'), 'HoYo Core apply never launches');
   hoyoHost().querySelector('[data-gp-tab="nr"]').click(); change(hoyoHost(), 'nr', 'Intensity', '1.35');
-  check([...hoyoHost().querySelectorAll('.button.primary')].filter(visible).length === 1 && hoyoHost().querySelector('.gp-apply-bar .primary').textContent === '应用', 'HoYo draft uses the shared Apply action');
+  check([...hoyoHost().querySelectorAll('.button.primary')].filter(visible).length === 1 && hoyoHost().querySelector('.gp-apply-bar .primary').textContent === '应用修改', 'HoYo draft uses the shared Apply action');
   click(hoyoHost(), 'preview'); await until(() => !hoyoHost().querySelector('.hoyo-settings-host').__gpController.getState().busy, 'HoYo settings apply');
   check(!hoyo.calls.some(row => row[0] === 'start'), 'HoYo settings apply does not start');
   await until(() => visible(hoyoHost().querySelector('[data-gp-action="launch"]')), 'HoYo launch after apply');

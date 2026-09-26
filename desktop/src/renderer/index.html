@@ -71,7 +71,7 @@
 
       <section class="view" id="view-repair">
         <div class="panel repair-head">
-          <div><h3>检查一个游戏</h3><p>先核对文件与安装记录，再处理异常或恢复原文件。</p></div>
+          <div><h3>检查与修复</h3><p>先核对文件和安装记录，有问题再修复或还原。</p></div>
           <select id="repairGameSelect" aria-label="选择要检查的游戏"></select>
         </div>
         <div class="panel diagnostics" id="diagnostics"></div>
@@ -81,7 +81,7 @@
         </div>
         <div id="repairMaintenance" class="gp-inline" aria-label="当前游戏维护操作"></div>
         <div class="panel feedback-panel">
-          <div class="section-heading"><div><h3>需要进一步排查</h3><p>保存精简反馈，保留错误原因和必要环境信息。</p></div><span class="badge">只保存到本机</span></div>
+          <div class="section-heading"><div><h3>问题反馈</h3><p>保存管理器的操作记录和错误原因，发给开发者。这不是游戏内的 F8 报告。</p></div><span class="badge">只保存到本机</span></div>
           <div class="feedback-controls">
             <select id="feedbackGameSelect" aria-label="选择反馈游戏"></select>
             <label class="check-line"><input type="checkbox" id="feedbackIncludePaths"> 包含完整路径</label>
@@ -136,12 +136,12 @@
           <p class="config-note" id="payloadSourceDetail" role="status"></p>
           <div class="payload-source-actions"><button class="button" id="choosePayloadSourceBtn">使用完整组件目录</button><button class="button" id="recheckPayloadSourceBtn">重新检查</button><button class="button subtle hidden" id="resetPayloadSourceBtn">使用精简包组件</button></div>
           <p class="payload-source-feedback hidden" id="payloadSourceFeedback" role="status" aria-live="polite"></p>
-          <details class="payload-source-help"><summary>完整组件与更新包有什么区别？</summary><p>完整组件目录用于首次安装与修复，标准 OTA 或单个 addon 用于更新。这里选择的是安装文件来源；安装后的插件仍由游戏内 ReShade 加载。切换来源不会立即改动游戏，版本更新需按游戏应用并保留恢复记录。</p></details>
+          <details class="payload-source-help"><summary>完整组件与更新包有什么区别？</summary><p>完整组件目录：首次安装和修复用。OTA 包或单个 addon：只用来更新。切换来源不会马上改动游戏。</p></details>
         </div>
         <div class="panel addon-intro">
           <div>
             <h3>导入核心更新</h3>
-            <p>标准 OTA 会一起校验核心和配套组件；单个 addon 只更新核心。DX11 的兼容桥接按 API 自动部署，DX12 保留所选核心及共用组件。</p>
+            <p>OTA 包会一起核对 Core 和配套文件；单个 addon 只更新 Core。</p>
             <div class="config-actions addon-actions"><button class="button" id="importAddonBtn">选择 OTA / addon 文件</button></div>
           </div>
           <div class="addon-drop" id="addonDropZone">把标准 OTA .zip 或 .addon64 拖到这里</div>
@@ -154,7 +154,7 @@
         </div>
         <details class="panel addon-guide">
           <summary>版本选择与兼容说明</summary>
-          <p class="config-note">新安装默认使用标准版 0.4.7beta；0.5 为可选候选。游戏页面会按实际配套检查兼容性，历史版本可在回退入口选择。</p>
+          <p class="config-note">新安装默认用推荐版，稳定版 0.4.7 随时可选；更早的版本在游戏页的“历史版本与回退”里。</p>
         </details>
           </div>
         </details>

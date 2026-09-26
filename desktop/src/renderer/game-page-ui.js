@@ -294,7 +294,7 @@
         <details class="gp-nr-details" data-gp-detail="layers"><summary>多层增强 · 已启用 ${1 + [2, 3, 4, 5].filter(layer => nr['Layer' + layer + 'Enabled']).length} 层</summary><p class="gp-caption">停用某层会保留参数。</p>${[2, 3, 4, 5].map(layer => `<section class="gp-layer"><h4>${check('Layer' + layer + 'Enabled', '第 ' + layer + ' 层')}</h4>${nr['Layer' + layer + 'Enabled'] ? model('Layer' + layer, layer) : ''}</section>`).join('')}</details>
         <details class="gp-nr-details" data-gp-detail="nr-work"><summary>处理顺序与性能</summary><div class="gp-controls">${choice('ProcessingStart', '处理顺序', [['Before', '增强 → 放大'], ['After', '放大 → 增强'], ['Present', '自动兼容']])}
         ${choice('WorkMode', '统一工作模式', NR_CHOICES.WorkMode.map((label, value) => [value, label]))}${Number(nr.WorkMode) === 5 ? number('CustomWorkScale', '前置统一工作比例', 0, 1) : ''}${number('PostWorkPercent', '后置工作比例 %', 0, 100, 1)}${number('CompatPostPercent', '兼容工作比例 %', 50, 100, 1)}</div>
-        ${capable('ColourLabMode') ? `<div class="gp-controls">${choice('ColourLabMode', '颜色策略', [[2, '保守 · 默认'], [1, '颜色优先 · 实验'], [0, '保留旧版许可设置']])}</div><p class="gp-caption">保守模式不放行未经确认的 HDR 颜色；颜色优先允许尝试。两种策略分别记住 AI 色彩强度，切换不会覆盖另一组。</p>` : ''}
+        ${capable('ColourLabMode') ? `<div class="gp-controls">${choice('ColourLabMode', '颜色策略', [[2, '保守 · 默认'], [1, '颜色优先 · 实验'], [0, '保留旧版许可设置']])}</div><p class="gp-caption">保守：不放行未确认的 HDR 颜色。颜色优先：允许尝试。两种模式各自记住色彩强度。</p>` : ''}
         <p class="gp-caption">工作比例正常范围为 50–100%；自定义比例和后置比例设为 0 会停用增强。实际运行效果需在游戏内确认。</p>
         </details>
         <details class="gp-nr-details" data-gp-detail="nr-common"><summary>光照、细节与保护</summary><div class="gp-controls">${choice('NRInputFilter', '输入滤波', [[0, '关闭'], [1, '开启']])}${number('LightingLock', '亮度锁定', 0, 1)}${number('EdgeGuard', '边缘保护', 0, 1)}${number('DetailStability', '细节稳定', 0, 1)}${choice('LightControlMode', '光照控制', [[0, '分项光照'], [1, '整体明暗']])}${choice('LightPreset', '光照预设', [[0, '原始'], [1, '自然'], [2, '减少光晕'], [3, '自定义']])}${number('LightBroad', '整体光照')}${number('LightDark', '暗部光照')}${number('LightReflection', '反射')}${number('LightStructure', '光照结构')}${number('LightGlow', '光晕', 0, 1)}</div><div class="gp-small-actions">${check('HighStrengthProtection', '高强度保护')}${check('ColorProtection', '色彩保护')}</div></details></section>`;
@@ -508,22 +508,22 @@
       const pending = Boolean(data.operation?.pending || data.deployment?.needsRecovery || data.enhancements?.pending?.length);
       const waiting = data.waiting?.pending === true;
       const locked = busy || launching;
-      let action = 'launch', label = '启动', disabled = locked;
+      let action = 'launch', label = '启动游戏', disabled = locked;
       if (pending) { action = data.enhancements?.pending?.length ? 'recover-settings' : 'recover-operation'; label = '恢复未完成操作'; }
       else if (waiting) { action = 'cancel-waiting'; label = '取消等待'; }
       else if (!dirty() && data.waiting?.requiresReview && data.waiting?.draftBackup && draftBackup) { action = 'restore-draft-backup'; label = '核对待应用修改'; }
       else if (dirty() && Object.keys(draft).every(key => ['sr', 'fg', 'reapplyExternalChanges'].includes(key))) {
-        action = 'preview'; label = '应用'; disabled ||= invalid || apiBlocked();
+        action = 'preview'; label = data.game.installed ? '应用修改' : '应用'; disabled ||= invalid || apiBlocked();
       }
       else if (options.preparationRequired?.() && !Object.keys(draft).some(key => ['nr', 'sr', 'fg', 'hotkeys'].includes(key))) {
-        action = 'prepare'; label = '应用'; disabled ||= !loaded.has('installation') || !currentVersion();
+        action = 'prepare'; label = '安装'; disabled ||= !loaded.has('installation') || !currentVersion();
       }
       else if (!data.game.installed) {
-        action = 'prepare'; label = '应用';
+        action = 'prepare'; label = '安装';
         disabled ||= !loaded.has('installation') || !apiReady() || !currentVersion() || versionRows().find(row => row.id === currentVersion())?.ready === false;
-      } else if (dirty()) { action = 'preview'; label = '应用'; disabled ||= invalid || apiBlocked(); }
+      } else if (dirty()) { action = 'preview'; label = '应用修改'; disabled ||= invalid || apiBlocked(); }
       else if (hasVersionUpdate() || data.layout?.needsInputPreparation || data.deployment?.verified === false && data.deployment?.inspection !== 'summary') {
-        action = hasVersionUpdate() ? 'prepare' : 'repair-install'; label = '应用'; disabled ||= !loaded.has('installation') || !apiReady();
+        action = hasVersionUpdate() ? 'prepare' : 'repair-install'; label = hasVersionUpdate() ? '更新 Core' : '修复'; disabled ||= !loaded.has('installation') || !apiReady();
       } else if (readinessNeedsAction()) { action = readinessActionName(); label = readinessActionLabel(); disabled ||= !loaded.has('installation'); }
       if (hoyoCoreScope() && (action === 'prepare' || action === 'preview' && ['version', 'api', 'route', 'deployment', 'loadingMode', 'loadingBackend', 'hoyo'].some(key => Object.hasOwn(draft, key)))) disabled ||= !hoyoCoreReady();
       if (launching) label = '等待游戏…';

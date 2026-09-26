@@ -53,7 +53,7 @@ async function smoke() {
   check(!host().querySelector('[data-gp-field="proxyEntry"]'), 'advanced duplicate proxy selector removed');
   const callsBefore = mock.calls.length; click(host(), 'switch-proxy');
   check(JSON.stringify(state().draft) === JSON.stringify({ proxyEntry: 'dxgi' }) && mock.calls.length === callsBefore, 'switch only stages proxyEntry without IPC or writes');
-  check(host().querySelector('.gp-apply-bar .primary').textContent === '应用' && mock.starts === 0, 'staged switch waits for unified Apply');
+  check(host().querySelector('.gp-apply-bar .primary').textContent === '应用修改' && mock.starts === 0, 'staged switch waits for unified Apply');
   click(host(), 'preview'); await until(() => host().querySelector('.gp-modal') && !state().busy, 'conflict short confirmation');
   const dialog = () => host().querySelector('.gp-modal');
   check(dialog().textContent.includes('C:\\Fixture\\_DLSS5_Backup') && dialog().textContent.includes('D:\\Manager\\runtime-backups'), 'confirmation shows both fixed owner backup directories');
