@@ -2,10 +2,10 @@
 (function () {
   const $ = id => document.getElementById(id), message = $('componentLibraryMessage');
   const labels = { bridge: 'Bridge', feeder: 'Feeder', mfg: 'RTX 40 多帧生成', 'dlssg-sm86': 'RTX 20/30 多帧生成',
-    'nr-runtime': '显卡运行库 DLC', core: 'Core', host: 'Feeder 运行宿主', 'user-addon': '用户插件', 'custom-candidate': '自定义候选' };
+    'nr-runtime': 'DLSS5 模型', core: 'Core', host: 'Feeder 运行宿主', 'user-addon': '用户插件', 'custom-candidate': '自定义候选' };
   const unwrap = result => { if (result?.ok === false) throw Object.assign(new Error(result.error?.message || '组件操作失败'), result.error); return result?.ok === true ? result.value : result; };
   const errorText = value => `${value?.code ? `[${value.code}] ` : ''}${value?.message || value || '组件操作失败'}`;
-  const operationLabel = key => { const [action, kind] = key.split(':'); return kind ? labels[kind] || kind : ({ runtime: '显卡运行库 DLC', import: '组件导入', move: '组件库移动', refresh: '组件列表', updates: '组件更新检查' })[action] || '游戏组件搭配'; };
+  const operationLabel = key => { const [action, kind] = key.split(':'); return kind ? labels[kind] || kind : ({ runtime: 'DLSS5 模型', import: '组件导入', move: '组件库移动', refresh: '组件列表', updates: '组件更新检查' })[action] || '游戏组件搭配'; };
   const add = (parent, tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; parent.append(node); return node; };
   const label = kind => labels[kind] || kind;
   const running = new Set();
@@ -18,8 +18,8 @@
     $('componentRuntimeGuide').classList.toggle('hidden', !required);
     if (!required) return;
     const family = setup.hardwareFamily === 'RTX50' ? 'RTX 50' : setup.hardwareFamily === 'RTX40' ? 'RTX 20/30/40' : '当前显卡';
-    $('componentRuntimeGuideTitle').textContent = `首次安装需要 ${family} 运行库`;
-    $('componentRuntimeGuideText').textContent = '导入对应的运行库 DLC 后，返回游戏点击“应用”。';
+    $('componentRuntimeGuideTitle').textContent = '首次安装需要 DLSS5 模型';
+    $('componentRuntimeGuideText').textContent = '导入 DLSS5 模型后，回到游戏点击“应用”。';
     $('componentRuntimeGuideBadge').textContent = setup.hardwareFamily || '待识别';
   }
   function renderGroups(overview) {
@@ -138,10 +138,10 @@
     sourceChanged();
     return value.packages?.some(row => row.kind === 'custom-candidate') ? '文件已保存为待验证候选。' : '组件已导入，可到游戏页面应用。';
   };
-  bind('importRuntimeDlcBtn', 'runtime', '请选择运行库 DLC…', async () => {
+  bind('importRuntimeDlcBtn', 'runtime', '请选择 DLSS5 模型…', async () => {
     const result = unwrap(await window.manager.pickRuntimeDlc());
     if (!result) return '已取消导入。'; sourceChanged(result);
-    return result.message || '运行库已导入，可继续应用游戏设置。';
+    return result.message || 'DLSS5 模型已导入，可以继续应用游戏设置。';
   });
   bind('importComponentBtn', 'import', '请选择组件文件…', () => importSelected(false));
   bind('importComponentDirBtn', 'import', '请选择组件目录…', () => importSelected(true));

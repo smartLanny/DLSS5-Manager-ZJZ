@@ -69,13 +69,35 @@ test('an unknown x64 addon64 is cached as a user Add-on instead of masquerading 
   assert.equal((await f.lib.inventory()).packages[0].kind, 'user-addon');
 });
 test('unknown DLL and structurally valid ZIP remain visibly blocked custom candidates', async t => {
-  const f=setup(t),unknownDll=path.join(f.root,'nvngx_dlssnr.dll');
+  const f=setup(t),unknownDll=path.join(f.root,'other-module.dll');
   const bytes=Buffer.from(f.bytes);bytes[111]=9;fs.writeFileSync(unknownDll,bytes);
   const dll=await f.lib.importComponent(unknownDll);assert.equal(dll.packages[0].kind,'custom-candidate');
   assert.equal(dll.packages[0].validation,'blocked');assert.match(dll.packages[0].blockers[0],/不会自动用于/);
   const archive=zip(path.join(f.root,'unknown-full-package.zip'),[{name:'readme.txt',data:'not a component identity'}]);
   const packed=await f.lib.importComponent(archive);assert.equal(packed.packages[0].kind,'custom-candidate');
   assert.equal(packed.packages[0].media,'archive');
+});
+test('a player DLSS5 model (bare nvngx_dlssnr.dll) is imported for both RTX families and activated by its exact bytes', async t => {
+  const f=setup(t), model=path.join(f.root,'nvngx_dlssnr.dll');
+  // Real models are ~160 MB; the fixture only needs a 64-bit PE above the size floor.
+  const bytes=Buffer.concat([f.bytes, Buffer.alloc(8 * 1024 * 1024)]); bytes[111]=5; fs.writeFileSync(model,bytes);
+  const imported=(await f.lib.importComponent(model)).packages[0];
+  assert.equal(imported.kind,'nr-runtime'); assert.equal(imported.userSupplied,true); assert.equal(imported.source,'user-imported');
+  assert.deepEqual(imported.hardwareFamilies,['RTX40','RTX50']); assert.equal(imported.files[0].sha256,hash(bytes));
+  const tiny=path.join(f.root,'small','nvngx_dlssnr.dll'); fs.mkdirSync(path.dirname(tiny)); const small=Buffer.from(f.bytes); small[111]=3; fs.writeFileSync(tiny,small);
+  await assert.rejects(f.lib.importComponent(tiny),/太小/);
+  const base=path.join(f.root,'bundled');
+  for (const family of ['RTX40','RTX50']) for (const kind of ['reshade','bridge','runtime']) {
+    const file=path.join(base,'fixed',family,PAYLOAD_FILES[kind]); fs.mkdirSync(path.dirname(file),{recursive:true}); fs.writeFileSync(file,f.bytes);
+  }
+  for (const name of [PAYLOAD_FILES.addon, PAYLOAD_FILES.config]) {
+    const file=path.join(base,'versions','core-a',name); fs.mkdirSync(path.dirname(file),{recursive:true}); fs.writeFileSync(file,f.bytes);
+  }
+  fs.writeFileSync(path.join(base,'bundle.json'),JSON.stringify(createCompactBundle(base,[{id:'core-a'}],'core-a')));
+  const activated=await f.lib.activateRuntime(imported.id, base);
+  assert.deepEqual(activated.hardwareFamilies,['RTX40','RTX50']);
+  const bundle=JSON.parse(fs.readFileSync(path.join(activated.payloadDir,'bundle.json'),'utf8'));
+  for (const family of ['RTX40','RTX50']) assert.equal(bundle.fixed[family].files['nvngx_dlssnr.dll'],hash(bytes));
 });
 test('a selected component-library root keeps large objects out of userData', async t => {
   const userData = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'manager-small-state-'));

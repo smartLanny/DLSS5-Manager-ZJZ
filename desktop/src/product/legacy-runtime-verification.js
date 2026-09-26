@@ -16,7 +16,7 @@ const REASONS = {
   'game-process-no-longer-matches': '本次游戏已退出或进程身份改变。',
   'target-loader-or-provider-not-loaded': '等待游戏加载所选 ReShade 和 Feeder。',
   'host-process-or-adapter-mismatch': '宿主进程或显卡与本次游戏不匹配。',
-  'host-components-not-loaded': '等待独立宿主加载所选 Core 与 NR 运行库。',
+  'host-components-not-loaded': '等待独立宿主加载所选 Core 与 DLSS5 模型。',
   'latest-game-frame-retained': '最新帧保留原图，尚未确认新的 NR 回填。',
   'log-replaced-or-truncated': '运行日志已重建，等待匹配本次宿主的新记录。',
   'log-rewritten': '运行日志身份改变，当前证据不再适用。'

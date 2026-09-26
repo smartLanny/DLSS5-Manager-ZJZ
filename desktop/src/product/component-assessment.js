@@ -16,7 +16,7 @@ const LIMITS = Object.freeze({ directories: 4, entries: 4096, files: 64, expecte
 const LABELS = Object.freeze({ core: '本项目 NR-before-SR Core', 'native-carrier': 'DX11 Native Carrier',
   'renodx-hdr': 'RenoDX HDR / 颜色模块', 'renodx-generic-nr': 'RenoDX Generic NR', 'renodx-dlss5': 'RenoDX DLSS5 Tool',
   'renodx-other': 'RenoDX 模块（具体用途待确认）', mfgunlock: 'MFG Unlock 补帧组件', reshade: 'ReShade 加载器',
-  chain: 'NR 桥接库', 'nr-runtime': 'NR 运行库', 'other-mod': '其他模组', unknown: '来源未知组件' });
+  chain: 'NR 桥接库', 'nr-runtime': 'DLSS5 模型', 'other-mod': '其他模组', unknown: '来源未知组件' });
 const key = value => path.resolve(value).toLowerCase();
 const error = (code, message) => Object.assign(new Error(message), { code: 'COMPONENT_' + code });
 const issue = (code, detail, paths = [], source = 'inspection', confidence = 'unknown') => ({ code: 'COMPONENT_' + code, detail, paths, source, confidence, runtimeVerified: false });

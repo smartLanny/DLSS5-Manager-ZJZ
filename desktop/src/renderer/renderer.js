@@ -337,11 +337,11 @@ function renderPayloadNotice(removedSelection = false) {
   const packName = family === 'RTX50' ? 'NR-Runtime-RTX50.zip' : family === 'RTX40' ? 'NR-Runtime-RTX40.zip' : 'NR-Runtime-RTX40+RTX50.zip';
   let markup = '';
   if (!state.hardware || !['RTX40', 'RTX50'].includes(state.hardware.family)) {
-    markup = `<div class="payload-guidance-icon" aria-hidden="true">GPU</div><div class="payload-guidance-copy"><strong>先确认显卡系列</strong><span>管理器暂时无法自动匹配运行库。请检查显卡识别结果，或到组件管理导入合并 DLC。</span></div><div class="payload-guidance-actions"><button class="button primary" id="payloadOpenComponentsBtn">打开组件管理</button><button class="button" id="payloadOpenSettingsBtn">检查显卡</button></div>`;
+    markup = `<div class="payload-guidance-icon" aria-hidden="true">GPU</div><div class="payload-guidance-copy"><strong>先确认显卡系列</strong><span>还没认出显卡系列。请检查显卡识别结果，或到组件管理直接导入 nvngx_dlssnr.dll。</span></div><div class="payload-guidance-actions"><button class="button primary" id="payloadOpenComponentsBtn">打开组件管理</button><button class="button" id="payloadOpenSettingsBtn">检查显卡</button></div>`;
   } else if (!payloadReadyForHardware()) {
     const problems = [...((payload && payload.missing) || []), ...((payload && payload.invalid) || [])];
     if (payload?.source?.runtimeDlcRequired === true || problems.length > 0 && problems.every(file => String(file).split(/[\\/]/).pop().toLowerCase() === 'nvngx_dlssnr.dll')) {
-      markup = `<div class="payload-guidance-icon" aria-hidden="true">DLC</div><div class="payload-guidance-copy"><strong>还差一份 ${escapeHtml(familyLabel)}运行库</strong><span>管理器与 Core 已就绪。导入 <b>${escapeHtml(packName)}</b> 后即可安装，不会自动改动已有游戏。</span></div><div class="payload-guidance-actions"><button class="button primary" id="payloadImportRuntimeBtn">立即导入运行库 DLC</button><button class="button" id="payloadOpenComponentsBtn">打开组件管理</button></div>`;
+      markup = `<div class="payload-guidance-icon" aria-hidden="true">模型</div><div class="payload-guidance-copy"><strong>还差 DLSS5 模型</strong><span>选择 nvngx_dlssnr.dll，或 <b>${escapeHtml(packName)}</b>（${escapeHtml(familyLabel)}）。导入后即可安装，已有游戏不受影响。</span></div><div class="payload-guidance-actions"><button class="button primary" id="payloadImportRuntimeBtn">导入 DLSS5 模型</button><button class="button" id="payloadOpenComponentsBtn">打开组件管理</button></div>`;
     } else {
       const labels = problems.slice(0, 3).map(file => {
         const name = String(file).split(/[\\/]/).pop();
@@ -382,7 +382,7 @@ async function importRequiredRuntimeDlc(button) {
     const result = unwrap(await window.manager.pickRuntimeDlc());
     if (!result) return;
     if (result.state) window.dispatchEvent(new CustomEvent('manager-components-changed', { detail: result.state }));
-    toast(result.message || '运行库 DLC 已导入。');
+    toast(result.message || 'DLSS5 模型已导入。');
     if (!result.activated) openComponentManager();
   } catch (error) {
     toast(error.message, true);
@@ -1381,11 +1381,11 @@ function renderPayloadSource() {
   const runtimeDlcRequired = source?.runtimeDlcRequired === true;
   const ready = source ? source.ready && !source.error : Boolean(state.payload?.ready);
   const family = source?.requiredHardwareFamily === 'RTX50' ? 'RTX 50 系' : source?.requiredHardwareFamily === 'RTX40' ? 'RTX 40 系' : '对应显卡';
-  status.textContent = ready ? '组件检查通过' : runtimeDlcRequired ? `待导入 ${family}运行库` : '需要处理';
+  status.textContent = ready ? '组件检查通过' : runtimeDlcRequired ? '待导入 DLSS5 模型' : '需要处理';
   status.className = `badge ${ready ? 'good' : 'warn'}`;
   $('payloadSourceLabel').textContent = runtimeDlcRequired ? '精简管理器本体' : source?.mode === 'external' ? '外部组件目录' : source?.mode === 'unconfigured' ? '尚未选择组件' : '随程序提供';
-  $('payloadSourcePath').textContent = runtimeDlcRequired ? 'Core 已包含；大型运行库按显卡系列单独导入。' : source?.mode === 'unconfigured' ? '选择完整组件目录后会记住位置。' : source?.path || state.payload?.dir || '未提供完整组件目录';
-  $('payloadSourceDetail').textContent = runtimeDlcRequired ? `请点击上方“导入运行库 DLC”，选择 ${source?.requiredHardwareFamily === 'RTX50' ? 'NR-Runtime-RTX50.zip' : 'NR-Runtime-RTX40.zip'}。导入后会自动匹配并用于后续安装。`
+  $('payloadSourcePath').textContent = runtimeDlcRequired ? 'Core 已包含；DLSS5 模型需要单独导入。' : source?.mode === 'unconfigured' ? '选择完整组件目录后会记住位置。' : source?.path || state.payload?.dir || '未提供完整组件目录';
+  $('payloadSourceDetail').textContent = runtimeDlcRequired ? `请点击上方“导入 DLSS5 模型”，选择 nvngx_dlssnr.dll 或 ${source?.requiredHardwareFamily === 'RTX50' ? 'NR-Runtime-RTX50.zip' : 'NR-Runtime-RTX40.zip'}。导入后会用于之后的安装。`
     : source?.mode === 'unconfigured' ? '本程序未附带完整 NR 组件；选择已有的完整组件目录即可继续。'
     : source?.error?.message || (ready ? '已核对清单和文件；安装或修复前还会再次校验。' : '请确认完整组件、文件校验和显卡匹配。');
   $('payloadSourceDetail').classList.toggle('error', !runtimeDlcRequired && Boolean(source?.error) && source?.mode !== 'unconfigured');

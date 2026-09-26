@@ -9,7 +9,7 @@ const LABELS = Object.freeze({
   reshade: 'ReShade 入口',
   addon: 'NR Core',
   bridge: 'DLSS5 Bridge',
-  runtime: 'NR 运行库',
+  runtime: 'DLSS5 模型',
   config: '个人配置',
   carrier: 'DX11 兼容组件'
 });

@@ -160,7 +160,7 @@ function resolveComponentStack(input = {}) {
     items.push(
       { key:'input', label:'输入适配', value:`DLSS5 Feeder${feeder.version ? ` ${feeder.version}` : ''}`, status:state(feeder.ready), detail:ready(feeder.reason, 'Feeder 负责兼容输入与加载。') },
       { key:'core', label:'AI 增强 Core', value:ready(feeder.coreVersion, '由 Feeder 配套提供'), status:state(feeder.ready), detail:'Core 与 Feeder 按同一配套安装，不能任意混用。' },
-      { key:'runtime', label:'显卡运行库', value:ready(runtime.label, '由 Feeder 配套校验'), status:state(feeder.ready), detail:'安装前会核对显卡系列、位数和运行库摘要。' }
+      { key:'runtime', label:'DLSS5 模型', value:ready(runtime.label, '由 Feeder 配套校验'), status:state(feeder.ready), detail:'安装前会核对显卡系列、位数和运行库摘要。' }
     );
   } else if (route === 'vulkan') {
     title = 'Vulkan · 专用兼容路线';
@@ -169,26 +169,26 @@ function resolveComponentStack(input = {}) {
     items.push(
       { key:'input', label:'输入适配', value:ready(vulkan.label, 'Vulkan 专用桥接'), status:state(vulkan.ready), detail:ready(vulkan.reason, '由当前 Vulkan Provider 统一管理。') },
       { key:'core', label:'AI 增强 Core', value:ready(vulkan.coreVersion, '由 Vulkan 配套提供'), status:state(vulkan.ready), detail:'Core 与 Vulkan Provider 作为固定配套。' },
-      { key:'runtime', label:'显卡运行库', value:ready(runtime.label, '由 Vulkan 配套校验'), status:state(vulkan.ready), detail:'不会复用不匹配的 DirectX 路线。' }
+      { key:'runtime', label:'DLSS5 模型', value:ready(runtime.label, '由 Vulkan 配套校验'), status:state(vulkan.ready), detail:'不会复用不匹配的 DirectX 路线。' }
     );
   } else if (route === 'bridge' || api === 'dx11') {
     manualBridge = true;
     title = `${apiLabel} · DLSS5 Bridge 路线`;
-    summary = 'AI Core 与一份接口匹配的 DLSS5 Bridge 搭配，再使用对应显卡运行库。';
+    summary = 'AI Core 与一份接口匹配的 DLSS5 Bridge 搭配，再使用 DLSS5 模型。';
     reason = `${apiLabel} 需要 Bridge 把输入交给 Core；管理器只启用一个已验证匹配的版本。`;
     items.push(
       { key:'core', label:'AI 增强 Core', value:ready(core.label || core.version, '未选择'), status:state(core.ready), detail:'Core 版本由当前游戏单独保存。' },
       { key:'input', label:'输入适配', value:bridge.label ? `DLSS5 Bridge · ${bridge.label}` : 'DLSS5 Bridge · 未准备', status:state(bridge.ready && bridge.compatible), detail:bridge.compatible === false ? '当前 Bridge 与所选 Core 接口不匹配。' : '按 Core 接口自动选择；高级设置可手动回退。' },
-      { key:'runtime', label:'显卡运行库', value:ready(runtime.label, 'NR 运行库'), status:state(runtime.ready), detail:'按 RTX 系列选择，不与其他显卡运行库混用。' }
+      { key:'runtime', label:'DLSS5 模型', value:ready(runtime.label, 'DLSS5 模型'), status:state(runtime.ready), detail:'当前使用的 DLSS5 模型，可在组件管理里更换。' }
     );
   } else {
     title = `${apiLabel} · 原生 DLSS 路线`;
-    summary = '游戏直接向 AI Core 提供 DLSS 输入，只需要 Core、输入链和对应显卡运行库。';
+    summary = '游戏直接向 AI Core 提供 DLSS 输入，只需要 Core、输入链和 DLSS5 模型。';
     reason = '此路线不需要 DLSS5 Bridge，也不安装 DLSS5 Feeder。';
     items.push(
       { key:'core', label:'AI 增强 Core', value:ready(core.label || core.version, '未选择'), status:state(core.ready), detail:'Core 与输入链作为同一配套校验。' },
       { key:'input', label:'输入适配', value:'游戏原生 DLSS 输入', status:'ready', detail:'无需额外 Bridge / Feeder。' },
-      { key:'runtime', label:'显卡运行库', value:ready(runtime.label, 'NR 运行库'), status:state(runtime.ready), detail:'按 RTX 系列选择，不与其他显卡运行库混用。' }
+      { key:'runtime', label:'DLSS5 模型', value:ready(runtime.label, 'DLSS5 模型'), status:state(runtime.ready), detail:'当前使用的 DLSS5 模型，可在组件管理里更换。' }
     );
   }
 
