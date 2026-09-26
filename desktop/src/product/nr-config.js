@@ -137,7 +137,7 @@ function inspectText(text, input = '') {
         if (row.type === 'boolean') value = Number(value !== 0);
         else if (value !== null) {
           if (key === 'Style' || /^Layer[2-5]Style$/.test(key) || key === 'CompatPostPercent') value >>>= 0;
-          value = key === 'Mode' ? value === 1 ? 1 : 2 : clamp(value, row.min, row.max);
+          value = key === 'Mode' ? value === 1 ? 1 : 2 : key === 'ReconstructionMode' ? value === 1 || value === 2 ? value : 0 : clamp(value, row.min, row.max);
         }
       }
     }
@@ -398,6 +398,7 @@ function defaultPatch(input = '') {
   if (contract.uniform) return { ...resetLayerPatch(1, input), ...layerCountPatch(1, null, input), ProcessingStart: 'Before', WorkMode: 0, CustomWorkScale: 1,
     TransferStrength: 1, PostTransferStrength: 1, ColorStrength: 1,
     ...(contract.colourMemory ? { ColourLabMode: 2, ColourPriorityStrength: .7, ColourConservativeStrength: 1 } : {}),
+    ...(contract.reconstruction ? { ReconstructionMode: 0, NearBlackChromaGuard: 0 } : {}),
     LightingLock: 0, EdgeGuard: 0, DetailStability: 0, NRInputFilter: 0, HighStrengthProtection: 1, ColorProtection: 1 };
   return Object.fromEntries(Object.entries(contract.known ? contract.defaults : LEGACY_DEFAULTS).filter(([key]) => !['Mode', 'UICorrection'].includes(key)));
 }

@@ -44,7 +44,7 @@ jobs:
         run: python desktop/scripts/prepare-ui-test-reshade.py
       - name: Settings and upgrade preservation
         working-directory: desktop
-        run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js test/core-menu.test.js test/game-assessment.test.js test/package-release-policy.test.js test/packaged-validation-environment.test.js
+        run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js test/core-menu.test.js test/game-assessment.test.js test/package-release-policy.test.js test/packaged-validation-environment.test.js test/nr-reconstruction.test.js
       - name: Unified game page
         run: npm --prefix desktop run test:game-page
       - name: Maintenance actions stay bound to the selected game
@@ -58,6 +58,11 @@ jobs:
       - name: Integration regressions
         working-directory: desktop
         run: npx --no-install electron test/ui-upgrade-integration.electron.cjs
+      - name: NR settings for the recommended Core
+        working-directory: desktop
+        run: npx --no-install electron test/nr-settings.electron.cjs
+        env:
+          DLSS5_TEST_NR_CORE: reconstruction
       - name: Build external-component application
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: npm --prefix desktop run build:external

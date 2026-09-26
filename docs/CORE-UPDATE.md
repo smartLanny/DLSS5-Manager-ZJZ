@@ -13,7 +13,8 @@ Core 的身份只登记在 `desktop/src/shared/core-catalog.js` 一处。版本�
 
    脚本会重新计算 ZIP 和包内每个文件的 SHA-256，和清单或 `SHA256.json` 不一致就停止，不写任何文件。旧版本原样复制，大型 NR 模型（`nvngx_dlssnr.dll`）仍由 `runtime.families` 单独提供。OTA 包不含 INI 时，沿用上一个统一 Core 的默认 INI，或用 `--ini` 指定。
 3. **核对**：`DLSS5_TEST_CORE_OTA=<中文 OTA.zip> node --test desktop/test/core-catalog.test.js` 会用实际文件核对清单；没有设置时这项测试会跳过，不能当作已核对。
-4. **打包**：用输出目录里的 `staging.json` 运行 `npm --prefix desktop run verify:staging` 和打包命令。发布检查要求默认版本正是清单推荐版，并逐字节核对它的 Core 文件。
+4. **新增的 INI 选项**（Core 新增了玩家可调的设置时才需要）：在 `desktop/src/product/nr-config-contract.js` 登记键名、缺省值和范围，并让它只对带相应标记的 Core 开放。例如 0.5.1 的 `ReconstructionMode`（0 关闭、1 均衡、2 精细）和 `NearBlackChromaGuard`（去除暗噪），只在清单里标了 `reconstruction: true` 的 Core 上显示；判断依据是实际 Core 文件的哈希，不是版本名称。
+5. **打包**：用输出目录里的 `staging.json` 运行 `npm --prefix desktop run verify:staging` 和打包命令。发布检查要求默认版本正是清单推荐版，并逐字节核对它的 Core 文件。
 
 ## 不会发生的事
 
