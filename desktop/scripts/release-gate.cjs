@@ -14,7 +14,9 @@ const CORE_033 = Object.freeze({
   bytes: 652288,
   sha256: '2869d7d6b2d184b4200c3eb7ac671db0299be64e7625c4f816ee26b41890bfb9'
 });
-const REQUIRED_CORE_IDS = Object.freeze(['0.2.0-beta.2', CORE_033.id, '0.4.2', '0.4.7beta', '0.5-dline21']);
+const coreCatalog = require('../src/shared/core-catalog');
+// Historical Cores stay selectable; the catalog's recommended Core is the default.
+const REQUIRED_CORE_IDS = Object.freeze(['0.2.0-beta.2', CORE_033.id, '0.4.2', '0.4.7beta', '0.5-dline21', coreCatalog.RECOMMENDED]);
 const REQUIRED_BRIDGES = Object.freeze([
   Object.freeze({ id:'bridge-1.4.13-pre8-official', version:'1.4.13-pre8', validation:'candidate', bytes:546304,
     sha256:'c4c8b5bc4b26b2b3f3bf2767cdb708546d62f7d0bbb63d24e940c736da9efe26' }),
@@ -54,13 +56,19 @@ function validate033Identity(entry, stat, actual) {
 }
 function assertExact033(payloadRoot, selectedVersions = null) {
   const root = path.resolve(payloadRoot), bundle = readJson(path.join(root, 'bundle.json'), 'Core bundle');
-  if (bundle.version !== 4 || bundle.defaultVersion !== '0.4.7beta' || !bundle.versions || Array.isArray(bundle.versions)) {
-    fail('发布 Core bundle 必须是以 0.4.7beta 为默认值的 v4 清单。');
+  if (bundle.version !== 4 || bundle.defaultVersion !== coreCatalog.RECOMMENDED || !bundle.versions || Array.isArray(bundle.versions)) {
+    fail(`发布 Core bundle 必须是以 ${coreCatalog.RECOMMENDED} 为默认值的 v4 清单。`);
   }
   const selected = selectedVersions || Object.keys(bundle.versions);
   if (!Array.isArray(selected) || REQUIRED_CORE_IDS.some(id => !selected.includes(id))) {
-    fail('正式发布必须保留 0.2、精确 0.3.3.4、0.4.2、0.4.7beta 与可手选 D21。', { selected, required: REQUIRED_CORE_IDS });
+    fail('正式发布必须保留 0.2、精确 0.3.3.4、0.4.2、0.4.7beta、可手选 D21 与当前推荐 Core。', { selected, required: REQUIRED_CORE_IDS });
   }
+  // The default Core must be the catalog's exact bytes, both in the list and on disk.
+  const recommended = path.join(root, 'versions', coreCatalog.RECOMMENDED, CORE_033.file);
+  const listed = bundle.versions[coreCatalog.RECOMMENDED]?.files?.[CORE_033.file];
+  plainFile(recommended, `${coreCatalog.RECOMMENDED} Core`);
+  if (!coreCatalog.isProviderCore(coreCatalog.RECOMMENDED, listed) || sha256(recommended) !== listed)
+    fail(`${coreCatalog.RECOMMENDED} Core 与 Core 清单登记的文件不一致。`, { listed });
   const entry = bundle.versions[CORE_033.id];
   const addon = path.join(root, 'versions', CORE_033.id, CORE_033.file), stat = plainFile(addon, '0.3.3.4 Core');
   const actual = sha256(addon);

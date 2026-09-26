@@ -6,7 +6,7 @@
 
 清单要提供：
 
-- 活动 Core payload 根目录、`core.version` 新安装默认值和 `core.versions` 同包版本白名单；默认值必须是完整的 `0.4.7beta`，版本名含 D13/D14 时直接拒绝。
+- 活动 Core payload 根目录、`core.version` 新安装默认值和 `core.versions` 同包版本白名单；正式发布的默认值必须是 Core 清单推荐版（当前 `0.5.1-beta-ui1`，见 [CORE-UPDATE.md](CORE-UPDATE.md)）的完整包，内部候选可以暂用完整的 `0.4.7beta`，版本名含 D13/D14 时直接拒绝。
 - 每个白名单版本会固化为自己经过哈希校验的 Core、`nrchain_nvngx.dll` 和配置。D21 只保留测试身份，不能成为默认项。精确文件尚未准备好的版本不要写进白名单，Manager 会把对应菜单项显示为“组件未准备”，不得用相近版本替代。
 - 可选但推荐提供已验收 Core 原始包的 bytes、SHA-256、source commit 和 source-manifest SHA-256。D21 累计常规版只能使用精确 OTA 身份；原始包和清单校验信息不得靠改名推断。
 - 授权 runtime 根目录下的 RTX40、RTX50 `nvngx_dlssnr.dll`，各自的 bytes 和 SHA-256。两族各一份，RTX40 作为 RTX20/30/40 的共享安装族。

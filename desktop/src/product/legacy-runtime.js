@@ -5,6 +5,8 @@ const path = require('node:path');
 const catalog = require('./legacy-runtime-catalog');
 const { noLinks } = require('./launch-safety');
 const { HASH, PE, relative, regularJson, fingerprint, resolveFile, fileDigest, fail } = require('./feeder-runtime');
+const coreCatalog = require('../shared/core-catalog');
+const RECOMMENDED_CORE_LABEL = coreCatalog.byId(coreCatalog.RECOMMENDED).label;
 
 const DIRECTORY = '_DLSS5_Feeder15';
 const RECEIPT = '_DLSS5_Backup/xiaofeng-feeder-v2.json';
@@ -28,7 +30,7 @@ function createLegacyRuntime(options = {}) {
   });
   function pool() {
     const manifest = regularJson(path.join(root, 'manifest.json'), 512 * 1024);
-    if (!manifest) fail('LEGACY_PACKAGE_MISSING', '当前 Core 的旧 Feeder 配套未内置。可选择 0.5 Unified5 使用新版 Feeder，或在游戏确有 DLSS 时使用原生路线；重复导入 NR 运行库无法补齐旧 Feeder。', { file: 'legacy-runtime/manifest.json' });
+    if (!manifest) fail('LEGACY_PACKAGE_MISSING', '当前 Core 的旧 Feeder 配套未内置。可选择 ' + RECOMMENDED_CORE_LABEL + ' 使用新版 Feeder，或在游戏确有 DLSS 时使用原生路线；重复导入 NR 运行库无法补齐旧 Feeder。', { file: 'legacy-runtime/manifest.json' });
     if (!manifest || manifest.schema !== 1 || !HASH.test(lock.manifestFingerprint || '') || fingerprint(manifest) !== lock.manifestFingerprint ||
         manifest.upstream?.commit !== catalog.UPSTREAM.commit || manifest.coreInterface !== 'NRExternalProviderV1' ||
         !Array.isArray(manifest.assets) || manifest.assets.length < 10 || manifest.assets.length > 128)

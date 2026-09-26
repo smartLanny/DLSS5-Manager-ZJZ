@@ -45,7 +45,7 @@ function installMock(features, options = {}) {
   hoyo.game.dir = 'C:\\UI-fixture\\StarRail'; hoyo.game.chosen.path = hoyo.game.dir + '\\StarRail.exe';
   hoyo.game.installed = false; hoyo.game.nativeDlssAvailable = false; hoyo.nr = null;
   hoyo.game.hoyo = { profileOptions: clone(features.hoyoProfiles), selected: null };
-  hoyo.coreVersions.push({ id: '0.5-dline21-unified5', label: '0.5 Unified5 · verified fixture', ready: true, supportsPresent: true });
+  hoyo.coreVersions.push({ id: '0.5.1-beta-ui1', label: '0.5.1 · verified fixture', ready: true, supportsPresent: true });
   hoyo.game.feeder = { installed: false, available: true, packageId: 'fixture-feeder-dx11-x64', coreVersion: '0.4.7beta',
     selections: { dx11: { api: 'dx11', available: true, packageId: 'fixture-feeder-dx11-x64', coreVersion: '0.4.7beta' } } };
   const dx9 = clone(assessment); dx9.gameId = dx9.game.id = 'fixture-dx9'; dx9.game.name = 'DX9 x86 · Feeder 入口测试';
@@ -630,8 +630,8 @@ async function smoke() {
   mock.assessments['fixture-hoyo'].enhancements.featureStates.sr = structuredClone(mock.features.notObservedSr);
   mock.assessments['fixture-hoyo'].componentChoices.stack = structuredClone(mock.feederRecommendation);
   await open('fixture-hoyo'); await until(() => state().loaded.includes('installation'), 'HoYo client assessment');
-  assert([...field('route', 'version').options].map(row => row.value).join('|') === '0.4.7beta|0.5-dline21-unified5' && !host().querySelector('[data-gp-detail="rollback"]'), 'HoYo keeps only the current 0.4.7 and latest 0.5 Core choices even in ordinary loading mode');
-  assert(field('route', 'version').querySelector('[value="0.4.7beta"]').disabled && field('route', 'version').value === '0.5-dline21-unified5', 'the backend Feeder recommendation disables incompatible 0.4.7 and chooses the latest ready Core before first Apply');
+  assert([...field('route', 'version').options].map(row => row.value).join('|') === '0.4.7beta|0.5.1-beta-ui1' && !host().querySelector('[data-gp-detail="rollback"]'), 'HoYo keeps only the current 0.4.7 and latest 0.5 Core choices even in ordinary loading mode');
+  assert(field('route', 'version').querySelector('[value="0.4.7beta"]').disabled && field('route', 'version').value === '0.5.1-beta-ui1', 'the backend Feeder recommendation disables incompatible 0.4.7 and chooses the latest ready Core before first Apply');
   assert(field('route', 'loadingBackend').value === 'local' && !field('hoyo', 'channel'), 'HoYo clients retain ordinary loading as the initial visible choice');
   set('route', 'loadingBackend', 'hoyoshade');
   assert(field('hoyo', 'channel').options.length === 3 && [...field('hoyo', 'channel').options].every(row => ['cn', 'bilibili', 'global'].includes(row.value)), 'formal channels come from production HoYo profile options');
@@ -642,7 +642,7 @@ async function smoke() {
   await tab('maintenance');
   assert(field('route', 'deployment').disabled && field('route', 'deployment').value === 'external' && field('route', 'deployment').options.length === 1 && field('route', 'loadingMode').disabled && field('route', 'loadingMode').value === 'helper' && field('route', 'loadingMode').options.length === 1 && !button('switch-proxy'), 'an automatic HoYo input route keeps its owner-bound external/helper controls fixed and exposes no local proxy switch');
   await preview();
-  assert(mock.plan.request.loadingBackend === 'hoyoshade' && mock.plan.request.deployment === 'external' && mock.plan.request.loadingMode === 'helper' && !Object.hasOwn(mock.plan.request, 'route') && mock.plan.request.version === '0.5-dline21-unified5' && JSON.stringify(mock.plan.request.hoyo) === JSON.stringify({ family: 'starrail', channel: 'bilibili', launcher: { kind: 'starward', path: mock.selectedLauncher } }), 'HoYo preview preserves the displayed current Core and launcher identity while leaving automatic input selection to backend evidence');
+  assert(mock.plan.request.loadingBackend === 'hoyoshade' && mock.plan.request.deployment === 'external' && mock.plan.request.loadingMode === 'helper' && !Object.hasOwn(mock.plan.request, 'route') && mock.plan.request.version === '0.5.1-beta-ui1' && JSON.stringify(mock.plan.request.hoyo) === JSON.stringify({ family: 'starrail', channel: 'bilibili', launcher: { kind: 'starward', path: mock.selectedLauncher } }), 'HoYo preview preserves the displayed current Core and launcher identity while leaving automatic input selection to backend evidence');
   click('modal-cancel');
   set('input-route', 'route', 'native');
   assert(field('route', 'deployment').disabled && field('route', 'deployment').value === 'external' && field('route', 'loadingMode').disabled && field('route', 'loadingMode').value === 'helper', 'an explicit native input route cannot unlock HoYo installation or loading ownership');
@@ -909,8 +909,8 @@ async function smokeTargetedHoYo() {
   gp.delays['fixture-hoyo:installation'] = 0; gp.delays['fixture-hoyo:enhancements'] = 0;
   const version = () => settings()?.querySelector('[data-gp-group="route"][data-gp-field="version"]');
   controller().selectTab('overview'); await until(() => controller().getState().tab === 'overview' && version(), 'HoYo Core picker tab');
-  const candidates = ['0.5-dline21-unified5', '0.4.7beta'];
-  assert([...version().options].filter(row => row.value).map(row => row.value).join('|') === '0.4.7beta|0.5-dline21-unified5' && !settings().querySelector('[data-gp-detail="rollback"]'), 'HoYo replacement choices contain only current 0.4.7 and latest 0.5 without historical rollback options');
+  const candidates = ['0.5.1-beta-ui1', '0.4.7beta'];
+  assert([...version().options].filter(row => row.value).map(row => row.value).join('|') === '0.4.7beta|0.5.1-beta-ui1' && !settings().querySelector('[data-gp-detail="rollback"]'), 'HoYo replacement choices contain only current 0.4.7 and latest 0.5 without historical rollback options');
   assert(version().value === '' && settings().textContent.includes('当前安装：') && settings().textContent.includes('0.5-dline13') && !controller().getState().draft.version, 'an installed historical Core remains truthfully visible without becoming a replacement option or automatic draft');
   await controller().previewRepair(); await until(() => settings().querySelector('.gp-modal') && !controller().getState().busy, 'historical HoYo Core repair');
   assert(JSON.stringify(gp.plan.request) === JSON.stringify({ repair: true }), 'repair preserves the historical HoYo installation without substituting a current Core');

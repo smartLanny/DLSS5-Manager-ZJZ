@@ -22,7 +22,10 @@
   const hasFgComponents = assessment => ['installed', 'managed', 'receipt', 'needsRecovery', 'needsCleanup', 'fileRecoveryPending', 'fileOperationActive', 'migrationPending'].some(key => assessment?.enhancements?.fgComponents?.[key]);
   const TAB_SECTION = { overview: 'installation', nr: 'installation', enhance: 'enhancements' };
   const DETAIL_TAB = { overview: 'enhance', nr: 'graphics', enhance: 'advanced' };
-  const STANDARD_CORES = ['0.3.7', '0.4.2', '0.4.7beta', '0.5-dline13', '0.5-dline21-unified5'];
+  // Main picker: the catalog's recommended and stable Cores. Every other Core
+  // stays under “历史版本与回退”.
+  const CORE_CATALOG = scope.ManagerCoreCatalog;
+  const STANDARD_CORES = CORE_CATALOG.MAIN_MENU;
   const COMPARISON_VERSION = '0.4.7beta-bg3-bridge1411';
   const coreLabel = value => String(value || '').replace(/(?:beta\s*0\.4\.7|0\.4\.7(?:-?beta)?)(?![\d.])/gi, '0.4.7beta');
   function adoptionMarkup(plan, prefix = 'gp') {
@@ -143,7 +146,7 @@
       if (hoyoCoreScope()) return scope.ManagerHoYoCorePolicy.menu(data.coreVersions || [], { route: hoyoInputRoute() });
       const special = specialRoute(), info = special ? specialInfo(special) : null;
       return special ? [{ id: info.packageId || '', label: `${special === 'vulkan' ? 'Vulkan' : `${apiLabel(info.api || effectiveApi())} Feeder`} · ${info.coreVersion || '固定配套'}`, ready: info.selectionAvailable ?? info.available },
-        ...(data.coreVersions || []).filter(row => row.id === '0.5-dline21-unified5')] : data.coreVersions || [];
+        ...(data.coreVersions || []).filter(row => CORE_CATALOG.isProviderCoreId(row.id))] : data.coreVersions || [];
     }
     function mainVersions() {
       if (hoyoCoreScope()) return versionRows();
@@ -342,7 +345,7 @@
       if (!changed) return `<div class="gp-component-stack ${saved.status === 'ready' ? 'is-ready' : 'needs-attention'}"><div><small>自动组件搭配</small><strong>${esc(saved.title)}</strong><span>${esc(saved.summary)}</span></div><div class="gp-component-stack-items">${(saved.items || []).filter(row => row.key !== 'api').map(row => `<span class="is-${esc(row.status || 'pending')}"><b>${esc(row.label)}</b>${esc(row.value)}</span>`).join('')}</div><p>${esc(saved.reason || '')}</p></div>`;
       const api = effectiveApi(), route = selected('route', saved.route || 'auto'), version = currentVersion();
       const input = route === 'feeder' || ['dx9','dx10'].includes(api) ? 'DLSS5 Feeder' : api === 'dx11' ? 'DLSS5 Bridge' : api === 'vulkan' ? 'Vulkan 专用配套' : '游戏原生 DLSS 输入';
-      const combination = version === '0.5-dline21-unified5'
+      const combination = CORE_CATALOG.isProviderCoreId(version)
         ? `${coreLabel(version)} + ${input} + 显卡运行库（兼容路线为实验支持）`
         : input === 'DLSS5 Feeder' ? `${input} + 专用 Core / 运行库` : input === 'Vulkan 专用配套' ? input : `${coreLabel(version || '待选 Core')} + ${input} + 显卡运行库`;
       return `<div class="gp-component-stack needs-attention"><div><small>修改后的预期搭配</small><strong>${esc(apiLabel(api))} · ${esc(input)}</strong><span>${esc(combination)}</span></div><p>预览时会重新校验 Core、接口与组件摘要；不匹配时不会写入游戏。</p></div>`;
@@ -385,7 +388,7 @@
       return `<section class="gp-section gp-install-section"><div class="gp-controls">
         ${selectField('route', 'api', '游戏 API', option('auto', automaticLabel, api) + ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan'].map(key => option(key, API[key] || key.toUpperCase(), api)).join(''), busy)}
         ${selectField('route', 'version', 'AI 增强组件', (!visibleVersion || hoyoCoreScope() && !versions.some(row => row.id === visibleVersion) ? option('', '请选择 AI 增强组件', '', true) : versions.some(row => row.id === visibleVersion) ? '' : option(visibleVersion, `${coreLabel(visibleVersion)} · 来源待检查`, visibleVersion, true)) + versions.map(row => option(row.id, coreLabel(row.label || row.id), visibleVersion, row.ready === false)).join(''), busy, hoyoCoreScope() ? versions.find(row => row.ready === false && row.reason)?.reason || '' : '')}</div>${hoyoCoreNotice()}
-        ${visibleVersion === '0.5-dline21-unified5' ? '<p class="gp-caption" title="自动核对并匹配当前图形接口需要的 Bridge / Feeder；运行效果需进游戏确认。">0.5 候选 · 兼容路线为实验支持</p>' : ''}
+        ${CORE_CATALOG.isProviderCoreId(visibleVersion) ? '<p class="gp-caption" title="自动核对并匹配当前图形接口需要的 Bridge / Feeder；运行效果需进游戏确认。">自动搭配 Bridge / Feeder · 兼容路线为实验支持</p>' : ''}
         ${runtimeImportControl()}${inputRouteControl()}
         ${(data.failures || []).filter(row => ['operation', 'layout', 'defaults'].includes(row.section)).map(row => `<p class="gp-message error">检查未完成：${esc(errorText(row))}。处理后点击“重新检查”。</p>`).join('')}
         ${pending || readinessNotice || !apiReady() || data.layout?.needsInputPreparation || !version ? `<div class="gp-compatibility needs-attention" role="status"><span>${esc(status)}</span>${pending ? act('recover-operation', '恢复操作', busy, 'subtle') : attention && readinessActionName() !== 'resolve-readiness' ? act(readinessActionName(), readinessActionLabel(), busy, 'subtle') : ''}</div>` : ''}

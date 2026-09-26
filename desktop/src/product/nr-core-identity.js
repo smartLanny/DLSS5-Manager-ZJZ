@@ -5,7 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { UNIFORM_SOURCE, resolveContract } = require('./nr-config-contract');
 const { noLinks } = require('./launch-safety');
-const unified5 = require('./unified5-core');
+const catalog = require('../shared/core-catalog');
 
 // Public artifact identities from the reviewed bilingual delivery manifest.
 const UNIFORM_CORE_HASHES = Object.freeze([
@@ -13,7 +13,8 @@ const UNIFORM_CORE_HASHES = Object.freeze([
   '01b4155dcca346f6b3485f210191baaaf4af6faa9dfb9b29302c8f7e36ae3c93'
 ]);
 function pinnedConfigContract(hash) {
-  if (Object.values(unified5.HASHES).includes(hash)) return { configContract: unified5.CONTRACT, sourceCommit: unified5.SOURCE };
+  const core = catalog.coreForAddonHash(hash);
+  if (core) return { configContract: core.configContract, sourceCommit: core.sourceCommit };
   if (UNIFORM_CORE_HASHES.includes(hash)) return { configContract: 'nr-uniform-v1', sourceCommit: UNIFORM_SOURCE };
   return null;
 }

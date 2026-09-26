@@ -81,7 +81,7 @@ app.whenReady().then(async () => {
         };
         await until(() => window.GamePageUi && window.__gpMock, 'renderer');
         const fixture = window.__gpMock.assessments.fixture;
-        fixture.coreVersions.push({ id: '0.5-dline21-unified5', label: '0.5 Unified5 · fixture', ready: true });
+        fixture.coreVersions.push({ id: '0.5.1-beta-ui1', label: '0.5.1 · fixture', ready: true });
         fixture.game.installed = false; fixture.game.nativeDlssAvailable = false;
         fixture.game.apiOverride = 'auto'; fixture.game.chosen.apiResolution = { api: 'unknown' };
         fixture.api.effectiveApi = 'unknown'; fixture.api.detectedApi = 'unknown';
@@ -96,14 +96,14 @@ app.whenReady().then(async () => {
         await controller.open('fixture', 'overview');
         await until(() => host.querySelector('[data-gp-action="input-native"]'), 'reachable input choice');
         const picker = host.querySelector('[data-gp-group="route"][data-gp-field="version"]');
-        picker.value = '0.5-dline21-unified5'; picker.dispatchEvent(new Event('change', { bubbles: true }));
+        picker.value = '0.5.1-beta-ui1'; picker.dispatchEvent(new Event('change', { bubbles: true }));
         host.querySelector('[data-gp-action="input-native"]').click();
-        if (controller.getState().draft.version !== '0.5-dline21-unified5') throw Error('native choice discarded Core draft');
+        if (controller.getState().draft.version !== '0.5.1-beta-ui1') throw Error('native choice discarded Core draft');
         await controller.runPrimary();
-        if (prepared?.route !== 'native' || prepared.version !== '0.5-dline21-unified5') throw Error('native preparation lost draft: ' + JSON.stringify(prepared));
+        if (prepared?.route !== 'native' || prepared.version !== '0.5.1-beta-ui1') throw Error('native preparation lost draft: ' + JSON.stringify(prepared));
         host.querySelector('[data-gp-action="input-feeder"]').click(); prepared = null;
         await controller.runPrimary();
-        if (prepared?.route !== 'feeder' || prepared.version !== '0.5-dline21-unified5') throw Error('Feeder preparation lost draft');
+        if (prepared?.route !== 'feeder' || prepared.version !== '0.5.1-beta-ui1') throw Error('Feeder preparation lost draft');
         controller.discard(); uncertain = false; prepared = null; controller.refreshView();
         await controller.runPrimary();
         if (prepared?.route !== undefined || prepared.version !== '0.4.7beta') throw Error('static absence forced a route: ' + JSON.stringify(prepared));

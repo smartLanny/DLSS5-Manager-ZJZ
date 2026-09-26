@@ -48,7 +48,7 @@ fs.writeFileSync(preload, `const {ipcRenderer}=require('electron'); window.nrFix
   external:patch=>ipcRenderer.invoke('nr-fixture','external',patch)};`);
 const renderer = path.resolve(__dirname, '../src/renderer'), asset = name => pathToFileURL(path.join(renderer, name)).href;
 const html = path.join(root, 'fixture.html');
-fs.writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="${asset('style.css')}"><link rel="stylesheet" href="${asset('game-page.css')}"></head><body><main id="fixture" style="max-width:1200px;margin:auto"></main><script src="${asset('../shared/api-resolution.js')}"></script><script src="${asset('launch-settings-ui.js')}"></script><script src="${asset('game-page-ui.js')}"></script></body></html>`);
+fs.writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="${asset('style.css')}"><link rel="stylesheet" href="${asset('game-page.css')}"></head><body><main id="fixture" style="max-width:1200px;margin:auto"></main><script src="${asset('../shared/api-resolution.js')}"></script><script src="${asset('../shared/core-catalog.js')}"></script><script src="${asset('launch-settings-ui.js')}"></script><script src="${asset('game-page-ui.js')}"></script></body></html>`);
 function interact(useUnified5) {
   const check = (condition, message) => { if (!condition) throw Error(message); };
   const until = async (predicate, label) => {
