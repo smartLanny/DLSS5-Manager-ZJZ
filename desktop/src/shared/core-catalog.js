@@ -38,6 +38,8 @@
       id: '0.5.1-beta-ui1', menuKey: '051', label: '0.5.1', menuLabel: '0.5.1 · 细节增强与去暗噪',
       displayVersion: '0.5.1-Beta-Reconstruction1-UI1', buildVersion: 'beta0.5-dline21-unified10-reconstruction1-ui1',
       sourceCommit: '31cddd0739ff39bf926eb5e2f444531c63968e63', configContract: 'nr-uniform-colour-v2', provider: true, faceCompanions: true,
+      // Reads ReconstructionMode and NearBlackChromaGuard (both off by default).
+      reconstruction: true,
       addon: { 'zh-CN': '213338900bfcbada149dc89e7fcea0b12f8843f0252a4cb81ce16e847d3b607d',
         en: '54f998be0c7d1c293fcb9a6b231f4ca917a826e6e9c40afa699903534cb97929' },
       chain: '1acf3cbe509a031be1763a8231cd81e6019aa3532368cd0b08a6c17bc94b70a2',

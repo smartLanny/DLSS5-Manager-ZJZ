@@ -9,8 +9,13 @@ const nr = require('../src/product/nr-config');
 const { UNIFORM_SOURCE } = require('../src/product/nr-config-contract');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'manager-nr-electron-'));
 app.setPath('userData', path.join(root, 'profile')); app.disableHardwareAcceleration();
-const useUnified5 = process.env.DLSS5_TEST_UNIFIED5 === '1';
-const file = path.join(root, 'nr_before_sr.ini'), contract = { version: 'fixture-installed-core', sourceCommit: useUnified5 ? require('../src/product/unified5-core').SOURCE : UNIFORM_SOURCE };
+// uniform (default) | unified5 (colour banks) | reconstruction (0.5.1 detail enhancement and dark-noise reduction)
+const mode = process.env.DLSS5_TEST_NR_CORE || (process.env.DLSS5_TEST_UNIFIED5 === '1' ? 'unified5' : 'uniform');
+const SOURCES = { uniform: UNIFORM_SOURCE, unified5: require('../src/product/unified5-core').SOURCE,
+  reconstruction: require('../src/shared/core-catalog').CORES.find(row => row.reconstruction === true)?.sourceCommit };
+if (!SOURCES[mode]) throw new Error(`Unknown DLSS5_TEST_NR_CORE: ${mode}`);
+const flags = { colour: mode !== 'uniform', reconstruction: mode === 'reconstruction' };
+const file = path.join(root, 'nr_before_sr.ini'), contract = { version: 'fixture-installed-core', sourceCommit: SOURCES[mode] };
 fs.writeFileSync(file, '[NRBeforeSR]\r\nUniformChainVersion=1\r\nIntensity=1.23456789\r\nLocalToneStrength=1.17\r\nLayer2Enabled=1\r\nLayer2Configured=1\r\nLayer2Intensity=0.87654321\r\nLayer3Intensity=1.3456789\r\nLayer4Intensity=0.9876543\r\nLayer5Intensity=1.456789\r\nExperimentalPrivatePreference=keep-exact\r\n');
 const game = { id: 'nr-fixture', name: 'NR settings fixture', dir: root, installed: true, supported: true, nativeDlssAvailable: true,
   addonVersion: contract.version, apiOverride: 'auto', chosen: { path: path.join(root, 'Game.exe'), bitness: 64, apiResolution: { api: 'dx12', source: 'fixture' } } };
@@ -49,7 +54,7 @@ fs.writeFileSync(preload, `const {ipcRenderer}=require('electron'); window.nrFix
 const renderer = path.resolve(__dirname, '../src/renderer'), asset = name => pathToFileURL(path.join(renderer, name)).href;
 const html = path.join(root, 'fixture.html');
 fs.writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="${asset('style.css')}"><link rel="stylesheet" href="${asset('game-page.css')}"></head><body><main id="fixture" style="max-width:1200px;margin:auto"></main><script src="${asset('../shared/api-resolution.js')}"></script><script src="${asset('../shared/core-catalog.js')}"></script><script src="${asset('launch-settings-ui.js')}"></script><script src="${asset('game-page-ui.js')}"></script></body></html>`);
-function interact(useUnified5) {
+function interact(flags) {
   const check = (condition, message) => { if (!condition) throw Error(message); };
   const until = async (predicate, label) => {
     const end = Date.now() + 5000;
@@ -70,7 +75,7 @@ function interact(useUnified5) {
     check(input('SkinStructureStrength')?.value === '0.4', 'new default skin strength is .4');
     check(input('UICorrection')?.checked && input('AutoMask')?.checked, 'new model protection defaults are enabled');
     check(document.body.textContent.includes('文件未写入'), 'default values are labelled');
-    if (useUnified5) {
+    if (flags.colour) {
       check(input('ColourLabMode').value === '2' && input('ColorStrength').value === '1', 'conservative defaults are visible');
       change('ColourLabMode', 1);
       check(Math.abs(Number(input('ColorStrength').value) - .7) < 1e-6, 'switch recalls the priority bank immediately');
@@ -86,6 +91,13 @@ function interact(useUnified5) {
       click('preview'); await until(() => !controller.getState().busy && !controller.hasDraft(), 'colour policy saved');
       check(Math.abs(Number(input('ColorStrength').value) - .85) < 1e-6, 'policy and bank round trip through real INI');
     }
+    if (flags.reconstruction) {
+      check(input('ReconstructionMode')?.value === '0' && input('NearBlackChromaGuard')?.checked === false, 'detail enhancement and dark-noise reduction start off');
+      check(document.body.textContent.includes('清晰度与暗噪'), 'the 0.5.1 options have their own heading');
+      change('ReconstructionMode', 2); change('NearBlackChromaGuard', 1);
+      click('preview'); await until(() => !controller.getState().busy && !controller.hasDraft(), '0.5.1 options saved');
+      check(input('ReconstructionMode').value === '2' && input('NearBlackChromaGuard').checked, '0.5.1 options read back from the real INI');
+    } else check(!input('ReconstructionMode') && !input('NearBlackChromaGuard'), 'older Cores do not offer 0.5.1 options');
     for (const key of ['LightingLock', 'EdgeGuard', 'DetailStability', 'LightBroad', 'LightDark', 'LightReflection', 'LightStructure', 'LightGlow', 'ColorProtection'])
       check(Boolean(input(key)), 'common control ' + key + ' exists');
     change('Layer5Enabled', 1);
@@ -123,12 +135,13 @@ app.whenReady().then(async () => {
   win = new BrowserWindow({ width: 1300, height: 1000, show: false, webPreferences: { preload, sandbox: true, contextIsolation: false, nodeIntegration: false, backgroundThrottling: false } });
   try {
     await win.loadFile(html);
-    const result = await win.webContents.executeJavaScript(`(${interact.toString()})(${useUnified5})`);
+    const result = await win.webContents.executeJavaScript(`(${interact.toString()})(${JSON.stringify(flags)})`);
     const saved = nr.readConfig(file, contract);
     assert.equal(saved.Intensity, 1.67891234); assert.equal(saved.Layer4Intensity, .66667777);
     assert.match(fs.readFileSync(file, 'utf8'), /ExperimentalPrivatePreference=keep-exact\r\n/);
-    assert.equal(writes, useUnified5 ? 6 : 5); assert.deepEqual(lastRequest.nr, { Intensity: 1.67891234 });
-    console.log(JSON.stringify({ ok: true, scope: 'production NR GamePage interaction with synthetic INI', ...result, writes, actualGameValidation: false }));
+    assert.equal(writes, 5 + flags.colour + flags.reconstruction); assert.deepEqual(lastRequest.nr, { Intensity: 1.67891234 });
+    if (flags.reconstruction) for (const line of [/^ReconstructionMode=2\r$/m, /^NearBlackChromaGuard=1\r$/m]) assert.match(fs.readFileSync(file, 'utf8'), line);
+    console.log(JSON.stringify({ ok: true, scope: 'production NR GamePage interaction with synthetic INI', mode, ...result, writes, actualGameValidation: false }));
     win.destroy(); app.exit(0);
   } catch (error) { console.error(error.stack || error); win.destroy(); app.exit(1); }
 });
