@@ -305,8 +305,13 @@
       const components = data.enhancements?.fgComponents;
       return components?.installedProviderDetails?.version || components?.catalog?.find(row => row.id === components.defaultProvider)?.version || '';
     }
+    // The build these settings will run with: a provider picked in the draft wins.
+    function plannedMfgVersion() {
+      const picked = draft.components?.mfgUnlock;
+      return (picked && data.enhancements?.fgComponents?.catalog?.find(row => row.id === picked)?.version) || mfgVersion();
+    }
     // 1.2 adds ReflexSourceFpsCap, a final FPS cap for every mode.
-    const mfgHasFpsCap = () => { const [major, minor] = mfgVersion().split('.').map(Number); return major > 1 || major === 1 && minor >= 2; };
+    const mfgHasFpsCap = () => { const [major, minor] = plannedMfgVersion().split('.').map(Number); return major > 1 || major === 1 && minor >= 2; };
     function featurePanel(domain) {
       const info = feature(domain), f = fields[domain], owned = data.enhancements?.applied?.[domain], active = info.eligible === true, allowRestore = Boolean(owned) || domain === 'fg' && hasFgComponents(data), sr = domain === 'sr';
       // Until the check returns, say so instead of showing the fallback “unavailable” reason.
