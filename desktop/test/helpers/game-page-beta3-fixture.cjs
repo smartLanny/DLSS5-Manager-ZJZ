@@ -611,6 +611,19 @@ async function smoke() {
   assert(field('fg', 'fpsCap') && !field('fg', 'reflexSourceCap'), 'picking 1.2.1 again restores the frame cap');
   discard();
 
+  await scenario('MFG 1.1.5 旧版 Dynamic 上限升级到 1.2 时不被隐藏 · UI fixture', value => {
+    Object.assign(value.enhancements.fgComponents, { installed: true, installedProvider: 'mfgunlock-1.1.5', defaultProvider: 'mfgunlock-1.2.1',
+      installedProviderDetails: { id: 'mfgunlock-1.1.5', version: '1.1.5' },
+      catalog: [{ id: 'mfgunlock-1.2.1', version: '1.2.1', label: 'MFG Unlock 1.2.1 官方版（推荐）', ready: true },
+        { id: 'mfgunlock-1.1.5', version: '1.1.5', label: 'MFG Unlock 1.1.5 官方版（回退）', ready: true }] });
+    value.enhancements.current = { fg: { source: 'active-ini', valid: true, request: { backend: 'mfgunlock', mode: 'dynamic', targetFps: 120, reflexSourceCap: true } } };
+  }); await tab('enhance');
+  assert(field('fg', 'reflexSourceCap') && !field('fg', 'fpsCap'), 'installed 1.1.5 keeps the legacy Dynamic cap control');
+  set('component', 'mfgUnlock', 'mfgunlock-1.2.1');
+  assert(field('fg', 'fpsCap')?.value === '120' && field('fg', 'fpsCap').closest('label').textContent.includes('沿用旧版 Dynamic 上限'),
+    'picking 1.2.1 shows the legacy cap that 1.2 keeps applying instead of a blank field');
+  discard();
+
   await scenario('DX12 入口独立选择 · UI fixture', value => {
     value.game.chosen.apiResolution.api = value.api.effectiveApi = 'dx12'; value.api.capabilities = ['dx12'];
   }); await tab('overview'); click('switch-proxy');
