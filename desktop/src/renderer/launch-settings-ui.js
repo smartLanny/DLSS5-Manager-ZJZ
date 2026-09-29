@@ -111,11 +111,16 @@
       enumField('hdrMode', ['native', 'ui-composition', 'automatic', 'final-color'], 'HDR 兼容模式');
       integerField('depthEdgeGuard', 0, 4, '边缘保护等级');
       integerField('maxCount', 2, 5, '运行库报告上限');
+      if (fields.fpsCap !== undefined && fields.fpsCap !== null && fields.fpsCap !== '') {
+        const cap = Number(fields.fpsCap);
+        if (!Number.isInteger(cap) || cap !== 0 && (cap < 10 || cap > 1000)) throw new Error('帧率上限需为 0（不限制）或 10–1000 FPS 的整数。');
+        request.fpsCap = cap;
+      }
       for (const [key, label] of [
         ['freezeFallback', '卡死救援'], ['reflexSourceCap', 'Reflex 源帧限制'], ['temporalFix', '时序修复'],
         ['blackwellFrameworkKernels', 'Blackwell 框架内核'], ['thinGeometryIntermediateScatter', '细线中间帧分散'],
         ['thinGeometryValidatedWarpBlend', '细线校验混合'], ['thinGeometryPreviousScatter', '细线上一帧分散'], ['raiseFrameCeiling', '提高帧上限']
-      ]) booleanField(key, label);
+      ]) if (key !== 'reflexSourceCap' || mode === 'dynamic') booleanField(key, label);
     }
     return request;
   }
@@ -150,7 +155,7 @@
     }
     const backend = hardwareFacts(data.hardware).fgBackend || '';
     return { backend, mode: 'restore', multiplier: 2, targetFps: 0, experimental56: false,
-      runtimeMode: '', hdrMode: '', depthEdgeGuard: '', freezeFallback: '', reflexSourceCap: '', maxCount: '',
+      runtimeMode: '', hdrMode: '', depthEdgeGuard: '', freezeFallback: '', reflexSourceCap: '', fpsCap: '', maxCount: '',
       temporalFix: '', blackwellFrameworkKernels: '', thinGeometryIntermediateScatter: '',
       thinGeometryValidatedWarpBlend: '', thinGeometryPreviousScatter: '', raiseFrameCeiling: '', ...request };
   }
@@ -196,7 +201,8 @@
       <label class="launch-field"><span>边缘保护</span><select data-ls-field="depthEdgeGuard">${option('', '保持插件当前设置', fields.depthEdgeGuard)}${[0, 1, 2, 3, 4].map(value => option(String(value), `${value}${value === 0 ? ' · 关闭' : ''}`, fields.depthEdgeGuard)).join('')}</select></label>
       <label class="launch-field"><span>运行库报告倍率上限</span><select data-ls-field="maxCount">${option('', '保持插件当前设置', fields.maxCount)}${[2, 3, 4, 5].map(value => option(String(value), `${value}×`, fields.maxCount)).join('')}</select></label>
       ${tri('freezeFallback', '3×/4× 卡死救援', '卡死时尝试软件节奏；正常游戏保持插件设置。')}
-      ${fields.mode === 'dynamic' ? tri('reflexSourceCap', 'Dynamic Reflex 源帧限制') : ''}
+      <label class="launch-field"><span>帧率上限</span><input data-ls-field="fpsCap" type="number" min="0" max="1000" step="1" placeholder="保持插件设置" value="${esc(fields.fpsCap ?? '')}"><small>0 为不限制，10–1000 FPS；MFG Unlock 1.2 起支持。</small></label>
+      ${fields.mode === 'dynamic' ? tri('reflexSourceCap', 'Dynamic Reflex 源帧限制（1.1.5 及更早）') : ''}
       ${tri('temporalFix', '时序修复')}${tri('blackwellFrameworkKernels', 'Blackwell 框架内核')}
       ${tri('thinGeometryIntermediateScatter', '细线中间帧保护')}${tri('thinGeometryValidatedWarpBlend', '细线校验混合')}
       ${tri('thinGeometryPreviousScatter', '细线上一帧保护', '实验项，可能影响旧游戏。')}${tri('raiseFrameCeiling', '提高帧上限', '仅在确认需要 5×/6× 时考虑。')}

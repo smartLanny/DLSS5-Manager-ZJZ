@@ -27,10 +27,10 @@ test('beta2 staging manifest reuses only explicitly selected, previously verifie
   assert.equal(manifest.components[0].sourceRoot, path.join(resourcesRoot, 'components', 'bridge-safe'));
   assert.equal(manifest.resources[0].path, 'hoyoshade/component.json');
   assert.equal(manifest.resources[0].source, path.join(resourcesRoot, 'hoyoshade', 'component.json'));
-  assert.equal(manifest.mfg.defaultProvider, 'mfgunlock-1.1.5');
-  assert.deepEqual(manifest.mfg.providers.map(row => row.id), ['mfgunlock-1.1.5', 'mfgunlock-1.0', 'mfgunlock-0.9']);
-  assert.equal(manifest.mfg.providers[0].file, path.resolve('D:/mfg', '1.1.5', 'renodx-mfgunlock.addon64'));
-  assert.equal(manifest.mfg.providers[0].sha256, '0d04d858a62d3d19e7e3d478c0b8c46fe3ac43ec9fd11e4abb15617bd291d71a');
+  assert.equal(manifest.mfg.defaultProvider, 'mfgunlock-1.2.1');
+  assert.deepEqual(manifest.mfg.providers.map(row => row.id), ['mfgunlock-1.2.1', 'mfgunlock-1.1.5', 'mfgunlock-1.0', 'mfgunlock-0.9']);
+  assert.equal(manifest.mfg.providers[0].file, path.resolve('D:/mfg', '1.2.1', 'renodx-mfgunlock.addon64'));
+  assert.equal(manifest.mfg.providers[0].sha256, '3c91e4190026015d19b236453057ebae46f42b296968e0819fd50a75f9cd0af9');
 });
 
 test('beta2 staging manifest refuses the superseded pre7 bridge candidate', () => {

@@ -1,15 +1,38 @@
 {
   "schemaVersion": 2,
   "backend": "mfgunlock",
-  "defaultProvider": "mfgunlock-1.1.5",
+  "defaultProvider": "mfgunlock-1.2.1",
   "addon": "renodx-mfgunlock.addon64",
   "providers": [
     {
-      "id": "mfgunlock-1.1.5",
-      "version": "1.1.5",
-      "label": "MFG Unlock 1.1.5 官方版（推荐）",
+      "id": "mfgunlock-1.2.1",
+      "version": "1.2.1",
+      "label": "MFG Unlock 1.2.1 官方版（推荐）",
       "language": "en",
       "recommended": true,
+      "directory": "versions/1.2.1",
+      "origin": "official-release",
+      "source": {
+        "repository": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx",
+        "tag": "1.2.1",
+        "commit": "31701526e5c2a3227008861b714fe44ac02b131d",
+        "url": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1.2.1/renodx-mfgunlock.addon64"
+      },
+      "files": {
+        "addon": {
+          "file": "renodx-mfgunlock.addon64",
+          "bytes": 1021440,
+          "sha256": "3c91e4190026015d19b236453057ebae46f42b296968e0819fd50a75f9cd0af9",
+          "url": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1.2.1/renodx-mfgunlock.addon64"
+        }
+      }
+    },
+    {
+      "id": "mfgunlock-1.1.5",
+      "version": "1.1.5",
+      "label": "MFG Unlock 1.1.5 官方版（回退）",
+      "language": "en",
+      "recommended": false,
       "directory": "versions/1.1.5",
       "origin": "official-release",
       "source": {
@@ -75,6 +98,11 @@
     }
   ],
   "legacyProviders": [
+    {
+      "id": "mfgunlock-1.2.0",
+      "version": "1.2.0",
+      "sha256": "d69e7470b4adcf95579585aafee9c30fba2cad0767aaa0c826107e72d2b624a1"
+    },
     {
       "id": "mfgunlock-1.1",
       "version": "1.1",
