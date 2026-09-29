@@ -305,8 +305,20 @@
       const components = data.enhancements?.fgComponents;
       return components?.installedProviderDetails?.version || components?.catalog?.find(row => row.id === components.defaultProvider)?.version || '';
     }
+    // The build these settings will run with: a provider picked in the draft wins.
+    function plannedMfgVersion() {
+      const picked = draft.components?.mfgUnlock;
+      return (picked && data.enhancements?.fgComponents?.catalog?.find(row => row.id === picked)?.version) || mfgVersion();
+    }
+    // Without ReflexSourceFpsCap, 1.2 keeps applying an enabled legacy Dynamic cap
+    // at the Dynamic target. Show that effective value so the cap is never hidden.
+    function legacyFpsCap(f) {
+      if (f.fpsCap !== undefined && f.fpsCap !== '' || f.mode !== 'dynamic' || f.reflexSourceCap !== true) return null;
+      const target = Number(f.targetFps);
+      return Number.isInteger(target) && target >= 10 && target <= 1000 ? target : null;
+    }
     // 1.2 adds ReflexSourceFpsCap, a final FPS cap for every mode.
-    const mfgHasFpsCap = () => { const [major, minor] = mfgVersion().split('.').map(Number); return major > 1 || major === 1 && minor >= 2; };
+    const mfgHasFpsCap = () => { const [major, minor] = plannedMfgVersion().split('.').map(Number); return major > 1 || major === 1 && minor >= 2; };
     function featurePanel(domain) {
       const info = feature(domain), f = fields[domain], owned = data.enhancements?.applied?.[domain], active = info.eligible === true, allowRestore = Boolean(owned) || domain === 'fg' && hasFgComponents(data), sr = domain === 'sr';
       // Until the check returns, say so instead of showing the fallback “unavailable” reason.
@@ -325,7 +337,7 @@
         const sm86 = f.backend === 'dlssg-sm86';
         controls = selectField('fg', 'mode', '补帧模式', Object.entries({ restore: '使用原有设置', follow: sm86 ? '启用 · 最多 4×' : '跟随游戏倍率', off: sm86 ? '停用此补帧组件' : '驱动关闭 FG', fixed: sm86 ? '选择倍率上限' : '固定总倍率', ...(!sm86 ? { dynamic: '动态目标帧率' } : {}) }).map(([key, label]) => option(key, label, f.mode, key !== 'restore' && (!active || !modes.includes(key)))).join(''), !active && !allowRestore) +
           (f.mode === 'fixed' ? selectField('fg', 'multiplier', sm86 ? '倍率上限' : '总帧率倍率', [2, 3, 4, 5, 6].map(value => option(value, `${value}×${multipliers.includes(value) ? '' : ' · 待确认支持'}`, f.multiplier, !multipliers.includes(value))).join(''), !active, f.backend === 'mfgunlock' ? 'MFG 使用绝对倍率，可以提高或降低游戏请求。' : '') : '') +
-          (f.backend === 'mfgunlock' && f.mode !== 'restore' && mfgHasFpsCap() ? `<label class="gp-field"><span>帧率上限</span><input type="number" min="0" max="1000" step="1" placeholder="保持插件设置" value="${esc(f.fpsCap ?? '')}" data-gp-group="fg" data-gp-field="fpsCap"${active ? '' : ' disabled'}><small>0 为不限制，10–1000 FPS；所有补帧模式都生效。</small></label>` : '') +
+          (f.backend === 'mfgunlock' && f.mode !== 'restore' && mfgHasFpsCap() ? `<label class="gp-field"><span>帧率上限</span><input type="number" min="0" max="1000" step="1" placeholder="保持插件设置" value="${esc(f.fpsCap ?? legacyFpsCap(f) ?? '')}" data-gp-group="fg" data-gp-field="fpsCap"${active ? '' : ' disabled'}><small>${legacyFpsCap(f) ? '目前沿用旧版 Dynamic 上限；' : ''}0 为不限制，10–1000 FPS；所有补帧模式都生效。</small></label>` : '') +
           (f.mode === 'dynamic' ? `<label class="gp-field"><span>动态目标帧率</span><input type="number" min="0" max="1000" step="1" value="${esc(f.targetFps)}" data-gp-group="fg" data-gp-field="targetFps"${active && modes.includes('dynamic') ? '' : ' disabled'}><small>0 表示自动目标；只在完整运行时已确认支持时开放。</small></label>` : '');
         if (f.backend === 'mfgunlock' && f.mode !== 'restore') {
           const tri = (key, label, note = '') => { const selected = f[key] === true ? 'on' : f[key] === false ? 'off' : f[key]; return selectField('fg', key, label,
