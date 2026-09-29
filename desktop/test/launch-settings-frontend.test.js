@@ -380,3 +380,13 @@ test('RTX40 fields remain selectable while components await automatic preparatio
   assert.match(native, /RTX 50 · 原生帧生成/);
   assert.doesNotMatch(native, /准备兼容组件/);
 });
+
+test('MFG requests carry the 1.2 frame cap and drop the Dynamic-only cap outside Dynamic', () => {
+  const fixed = ui.createRequest('fg', { backend: 'mfgunlock', mode: 'fixed', multiplier: '3', reflexSourceCap: false, fpsCap: '141' });
+  assert.deepEqual(fixed, { backend: 'mfgunlock', mode: 'fixed', multiplier: 3, fpsCap: 141 });
+  assert.deepEqual(policy.validateRequest('fg', fixed), fixed);
+  const dynamic = ui.createRequest('fg', { backend: 'mfgunlock', mode: 'dynamic', targetFps: '120', reflexSourceCap: 'on', fpsCap: '' });
+  assert.deepEqual(dynamic, { backend: 'mfgunlock', mode: 'dynamic', targetFps: 120, reflexSourceCap: true });
+  assert.deepEqual(policy.validateRequest('fg', dynamic), dynamic);
+  assert.throws(() => ui.createRequest('fg', { backend: 'mfgunlock', mode: 'follow', fpsCap: '5' }), /10–1000/);
+});

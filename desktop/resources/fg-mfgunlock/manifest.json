@@ -1,12 +1,35 @@
 {
   "version": 3,
   "backend": "mfgunlock",
-  "defaultProvider": "mfgunlock-1.1.5",
+  "defaultProvider": "mfgunlock-1.2.1",
   "providers": [
+    {
+      "id": "mfgunlock-1.2.1",
+      "releaseVersion": "1.2.1",
+      "label": "MFG Unlock 1.2.1 官方版（推荐）",
+      "language": "en",
+      "directory": "versions/1.2.1",
+      "license": "MIT",
+      "source": {
+        "repository": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx",
+        "tag": "1.2.1",
+        "commit": "31701526e5c2a3227008861b714fe44ac02b131d",
+        "origin": "official-release",
+        "url": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1.2.1/renodx-mfgunlock.addon64"
+      },
+      "files": {
+        "addon": {
+          "file": "renodx-mfgunlock.addon64",
+          "sha256": "3c91e4190026015d19b236453057ebae46f42b296968e0819fd50a75f9cd0af9",
+          "bytes": 1021440,
+          "url": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1.2.1/renodx-mfgunlock.addon64"
+        }
+      }
+    },
     {
       "id": "mfgunlock-1.1.5",
       "releaseVersion": "1.1.5",
-      "label": "MFG Unlock 1.1.5 官方版（推荐）",
+      "label": "MFG Unlock 1.1.5 官方版（回退）",
       "language": "en",
       "directory": "versions/1.1.5",
       "license": "MIT",

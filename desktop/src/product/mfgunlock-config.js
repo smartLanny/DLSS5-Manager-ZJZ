@@ -5,6 +5,8 @@
 // Source tag 0.9, commit 4a7b7bcd5f4e951c0cae9ffa7db7e5bdf5f8d40b.
 // A fixed ForceMultiplier is an absolute override in 0.9. Dynamic MFG is a
 // separate mode and is release-supported only by the exact stack named below.
+// 1.2 (tag 1.2.1, commit 31701526) adds ReflexSourceFpsCap, a final FPS cap for
+// every mode that takes precedence over the legacy DynamicReflexSourceCap.
 const crypto = require('node:crypto');
 const ini = require('./launch-ini');
 
@@ -17,7 +19,7 @@ const KEYS = Object.freeze([
   'ThinGeometryValidatedWarpBlend', 'ThinGeometryPreviousScatter',
   'ForceMultiplier', 'DynamicMFG', 'DynamicTargetFPS',
   'DynamicReflexSourceCap', 'RaiseFrameCeiling', 'RuntimeSelectionMode',
-  'HDRCompatibilityMode', 'DepthEdgeGuardLevel'
+  'HDRCompatibilityMode', 'DepthEdgeGuardLevel', 'ReflexSourceFpsCap'
 ]);
 const BOOLEAN_KEYS = Object.freeze([
   'Enabled', 'ForceFlipMeteringOff', 'TemporalFix', 'BlackwellFrameworkKernels',
@@ -27,7 +29,7 @@ const BOOLEAN_KEYS = Object.freeze([
 ]);
 const REQUEST_KEYS = Object.freeze([
   'mode', 'multiplier', 'targetFps', 'runtimeMode', 'hdrMode',
-  'depthEdgeGuard', 'freezeFallback', 'reflexSourceCap', 'maxCount',
+  'depthEdgeGuard', 'freezeFallback', 'reflexSourceCap', 'fpsCap', 'maxCount',
   'temporalFix', 'blackwellFrameworkKernels',
   'thinGeometryIntermediateScatter', 'thinGeometryValidatedWarpBlend',
   'thinGeometryPreviousScatter', 'raiseFrameCeiling'
@@ -40,7 +42,8 @@ const DEFAULTS = Object.freeze({
   ThinGeometryValidatedWarpBlend: 1, ThinGeometryPreviousScatter: 0,
   ForceMultiplier: 0, DynamicMFG: 0, DynamicTargetFPS: 0,
   DynamicReflexSourceCap: 0, RaiseFrameCeiling: 0,
-  RuntimeSelectionMode: 0, HDRCompatibilityMode: 0, DepthEdgeGuardLevel: 0
+  RuntimeSelectionMode: 0, HDRCompatibilityMode: 0, DepthEdgeGuardLevel: 0,
+  ReflexSourceFpsCap: 0
 });
 
 const sha256 = text => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
@@ -102,7 +105,9 @@ function current(text) {
   optional('HDRCompatibilityMode', 'hdrMode', Object.keys(HDR_MODES).find(key => HDR_MODES[key] === resolved.HDRCompatibilityMode));
   optional('DepthEdgeGuardLevel', 'depthEdgeGuard', resolved.DepthEdgeGuardLevel);
   optional('ForceFlipMeteringOff', 'freezeFallback', boolValue(raw, 'ForceFlipMeteringOff') === 1);
-  optional('DynamicReflexSourceCap', 'reflexSourceCap', boolValue(raw, 'DynamicReflexSourceCap') === 1);
+  // Only a Dynamic request carries the legacy cap; outside Dynamic it is not editable.
+  if (request.mode === 'dynamic') optional('DynamicReflexSourceCap', 'reflexSourceCap', boolValue(raw, 'DynamicReflexSourceCap') === 1);
+  optional('ReflexSourceFpsCap', 'fpsCap', integer(raw, 'ReflexSourceFpsCap', value => value >= 0 && value <= 1000));
   optional('MaxCount', 'maxCount', resolved.MaxCount);
   for (const [key, name] of [
     ['TemporalFix', 'temporalFix'], ['BlackwellFrameworkKernels', 'blackwellFrameworkKernels'],
@@ -137,6 +142,8 @@ function validateRequest(request) {
   if (request.runtimeMode !== undefined && !Object.hasOwn(RUNTIME_MODES, request.runtimeMode)) fail('SETTINGS_INPUT', '运行库策略须为跟随游戏、优先本地或强制 OTA。');
   if (request.hdrMode !== undefined && !Object.hasOwn(HDR_MODES, request.hdrMode)) fail('SETTINGS_INPUT', 'HDR 兼容模式无效。');
   if (request.depthEdgeGuard !== undefined && (!Number.isInteger(request.depthEdgeGuard) || request.depthEdgeGuard < 0 || request.depthEdgeGuard > 4)) fail('SETTINGS_INPUT', '边缘保护等级须为 0–4。');
+  if (request.fpsCap !== undefined && (!Number.isInteger(request.fpsCap) || request.fpsCap !== 0 && (request.fpsCap < 10 || request.fpsCap > 1000)))
+    fail('SETTINGS_INPUT', '帧率上限须为 0（不限制）或 10–1000 FPS。');
   if (request.maxCount !== undefined && (!Number.isInteger(request.maxCount) || request.maxCount < 2 || request.maxCount > 5)) fail('SETTINGS_INPUT', '运行库报告上限须为 2–5。');
   for (const key of ['freezeFallback', 'reflexSourceCap', 'temporalFix', 'blackwellFrameworkKernels', 'thinGeometryIntermediateScatter', 'thinGeometryValidatedWarpBlend', 'thinGeometryPreviousScatter', 'raiseFrameCeiling'])
     if (request[key] !== undefined && typeof request[key] !== 'boolean') fail('SETTINGS_INPUT', `${key} 必须为开或关。`);
@@ -164,6 +171,8 @@ function compile(text, input) {
   optional('freezeFallback', 'ForceFlipMeteringOff', value => value ? 1 : 0);
   optional('reflexSourceCap', 'DynamicReflexSourceCap', value => value ? 1 : 0);
   optional('maxCount', 'MaxCount');
+  // Always written: an absent key lets 1.2 fall back to the legacy Dynamic cap.
+  if (request.fpsCap !== undefined) changes.push(['ReflexSourceFpsCap', request.fpsCap]);
   for (const [name, key] of [
     ['temporalFix', 'TemporalFix'], ['blackwellFrameworkKernels', 'BlackwellFrameworkKernels'],
     ['thinGeometryIntermediateScatter', 'ThinGeometryIntermediateScatter'],
@@ -180,6 +189,7 @@ function compile(text, input) {
   ];
   if (request.mode === 'dynamic') warnings.push('Dynamic MFG 仅支持 D3D12、DLSS-G 310.9.1、Streamline 2.14.1、驱动 595.41 或更新且运行库报告支持的完整组合。');
   if (request.mode === 'fixed' && request.multiplier > 4) warnings.push('5× / 6× 属于高级请求；管理器不会自动打开可能破坏旧游戏的 RaiseFrameCeiling。');
+  if (request.fpsCap > 0) warnings.push('帧率上限对所有补帧模式生效；MFG Unlock 1.2 起支持，更早的版本会忽略这一项。');
   if (request.freezeFallback) warnings.push('已启用 3×/4× 卡死救援的软件节奏模式；仅在确实卡死的游戏中使用。');
   return {
     schema: 2,

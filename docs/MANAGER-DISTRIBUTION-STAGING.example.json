@@ -27,8 +27,16 @@
     }
   },
   "mfg": {
-    "defaultProvider": "mfgunlock-1.1.5",
+    "defaultProvider": "mfgunlock-1.2.1",
     "providers": [
+      {
+        "id": "mfgunlock-1.2.1",
+        "version": "1.2.1",
+        "file": "C:/path/to/renodx-mfgunlock-1.2.1.addon64",
+        "bytes": 1021440,
+        "sha256": "3c91e4190026015d19b236453057ebae46f42b296968e0819fd50a75f9cd0af9",
+        "url": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1.2.1/renodx-mfgunlock.addon64"
+      },
       {
         "id": "mfgunlock-1.1.5",
         "version": "1.1.5",

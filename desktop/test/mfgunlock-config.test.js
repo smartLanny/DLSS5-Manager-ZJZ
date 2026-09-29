@@ -44,3 +44,27 @@ test('a newly introduced empty section can be removed, but a player-added field 
   const edited = after + 'TemporalFix=0\n';
   assert.match(config.restore(edited, '', owned), /\[RenoDX.MFGUnlock\]\n+TemporalFix=0/);
 });
+
+test('1.2 frame cap is written explicitly, read back in every mode and validated', () => {
+  const base = '[RenoDX.MFGUnlock]\r\nEnabled=1\r\nDynamicMFG=1\r\nDynamicTargetFPS=120\r\nDynamicReflexSourceCap=1\r\n';
+  // "No cap" must be written: an absent key lets 1.2 fall back to the legacy Dynamic cap.
+  const off = config.compile(base, { mode: 'dynamic', targetFps: 120, fpsCap: 0 });
+  assert.match(off.content, /\r\nReflexSourceFpsCap=0(\r\n|$)/);
+  const fixed = config.compile(base, { mode: 'fixed', multiplier: 3, fpsCap: 141 });
+  assert.match(fixed.content, /\r\nReflexSourceFpsCap=141(\r\n|$)/); assert.match(fixed.warnings.join(' '), /所有补帧模式/);
+  assert.equal(config.current(fixed.content).request.fpsCap, 141);
+  assert.equal(config.restore(fixed.content, base, { ReflexSourceFpsCap: '141' }).includes('ReflexSourceFpsCap'), false);
+  for (const fpsCap of [5, 1001, 1.5, -1]) assert.throws(() => config.compile(base, { mode: 'follow', fpsCap }), { code: 'SETTINGS_INPUT' });
+  assert.deepEqual(policy.validateRequest('fg', { backend: 'mfgunlock', mode: 'follow', fpsCap: 60 }), { backend: 'mfgunlock', mode: 'follow', fpsCap: 60 });
+  const untouched = config.compile(base, { mode: 'dynamic', targetFps: 120 });
+  assert.doesNotMatch(untouched.content, /ReflexSourceFpsCap/, 'keeping the plugin setting writes nothing');
+});
+
+test('settings read from any saved mode can be applied again without an input error', () => {
+  for (const text of ['[RenoDX.MFGUnlock]\nForceMultiplier=3\nDynamicReflexSourceCap=0\n', '[RenoDX.MFGUnlock]\nDynamicReflexSourceCap=1\n',
+    '[RenoDX.MFGUnlock]\nDynamicMFG=1\nDynamicTargetFPS=90\nDynamicReflexSourceCap=1\nReflexSourceFpsCap=90\n']) {
+    const { backend, ...request } = config.current(text).request;
+    assert.doesNotThrow(() => config.compile(text, request), text);
+    assert.equal(Object.hasOwn(request, 'reflexSourceCap'), request.mode === 'dynamic');
+  }
+});
