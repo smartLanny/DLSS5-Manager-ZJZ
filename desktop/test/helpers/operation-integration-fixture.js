@@ -17,6 +17,10 @@ const { createLaunchCoordinator } = require('../../src/product/launch-coordinato
 const { enhancementEvidence } = require('./enhancement-evidence');
 const policy = require('../../src/product/launch-settings-policy');
 const pe = require('../../src/core/pe');
+// For HoYo tests built on the fixture Cores: they stand in for the stable and
+// current Cores, so the production selection rules apply to them unchanged.
+const FIXTURE_HOYO_CORE_POLICY = require('../../src/shared/hoyo-core-policy').create({
+  standard: 'fixture-core-2', current: 'fixture-core-1', currentLabel: 'fixture-core-1' });
 
 const PROJECT = path.resolve(__dirname, '../..');
 // Optional integration assets live outside the lightweight source checkout.
@@ -152,4 +156,5 @@ async function fixture(t, options = {}) {
   return { root, gameRoot, exeDir, exe, id, userData, resourcesPath, payload, family, hardware, scan, guards, service, installer,
     plans, planOptions, apply, layout, events, driver, settings, components, workflow, coordinator, componentsOptions, special };
 }
-module.exports = { fixture, peBytes, put, hashFile, sha, PROJECT, COMPONENT_RESOURCES, INSTALLED_NAMES, PAYLOAD_FILES, DX11_COMPAT_CARRIER };
+module.exports = { fixture, peBytes, put, hashFile, sha, PROJECT, COMPONENT_RESOURCES, INSTALLED_NAMES, PAYLOAD_FILES, DX11_COMPAT_CARRIER,
+  FIXTURE_HOYO_CORE_POLICY };

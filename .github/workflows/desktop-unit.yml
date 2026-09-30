@@ -1,0 +1,52 @@
+name: Desktop unit tests (Windows)
+
+# The whole desktop unit suite on the platform players use. The only external
+# files are the pinned public ReShade fixture and the official MFG Unlock
+# release add-ons, each checked against the digest committed in this repository.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'src/**'
+      - 'scripts/build-desktop-contract.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/desktop-unit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-unit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - run: npm ci
+      - run: npm --prefix desktop ci
+      - name: Prepare pinned public ReShade test dependency
+        run: python desktop/scripts/prepare-ui-test-reshade.py
+      - name: Prepare official MFG Unlock add-ons (digest-checked)
+        shell: pwsh
+        run: ./desktop/scripts/prepare-fg-mfgunlock.ps1
+      # The spec reporter lists every failure again at the end of the log.
+      - name: Full desktop unit suite
+        run: npm --prefix desktop run test:unit
+        env:
+          NODE_OPTIONS: --test-reporter=spec

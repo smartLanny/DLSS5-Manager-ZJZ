@@ -60,6 +60,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     portableExecutable:overrides.portableExecutable, applicationDir:overrides.applicationDir });
   const library = overrides.library || createLibraryWorkerClient({ documentsDir });
   const installer = overrides.installer || createInstaller();
+  const hoyoCorePolicy = overrides.hoyoCorePolicy || require('../shared/hoyo-core-policy');
   const externalDeployment = overrides.externalDeployment || createExternalRuntime({ userData,
     knownComponents: async game => [...knownComponentCatalog(), ...(typeof overrides.getKnownComponents === 'function' ? await overrides.getKnownComponents(game.id) : [])],
     guards: { ...require('../core/install-guards'), ...(overrides.assertGameClosed ? { assertGameClosed: overrides.assertGameClosed } : {}) },
@@ -706,7 +707,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     await require('./launch-safety').noLinks(source); await require('./launch-safety').noLinks(destination);
     const original = await digest(source), existingTarget = source === destination ? original : await digest(destination);
     const loader = manifest?.files.find(row => row.kind === 'reshade');
-    const projected = deployment?.changes?.find(row => row.role === 'reshade' && path.resolve(row.path).toLowerCase() === path.resolve(source).toLowerCase());
+    // Leaving an external layout puts the loader back as its `game-proxy` row.
+    const projected = deployment?.changes?.find(row => ['reshade', 'game-proxy'].includes(row.role) && path.resolve(row.path).toLowerCase() === path.resolve(source).toLowerCase());
     const expected = projected?.afterSha256 || loader?.installedSha256 || (current === 'dxgi' && original && installer.isAddonReShade(source) ? original : null);
     if (!expected || !original && !projected?.afterSha256 || original && loader && original !== loader.installedSha256) blockers.push('无法验证当前受管 ReShade 入口；缺失时请先预览修复。');
     if (desired !== current && existingTarget) blockers.push(`${desired}.dll 已被其他文件占用，请先核对。`);
@@ -720,10 +722,13 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return withSelectedCore(id, request, () => previewHoYoDeployment(id, request, internal));
     const game = findGame(id), inputRoute = request.route || await resolveInputRoute(id, request);
     if (!['native', 'feeder'].includes(inputRoute)) throw Object.assign(new Error('米哈游模式尚未提供当前 API 的输入配套。'), { code: 'HOYO_INPUT_ROUTE' });
-    const installedFeed = internal.maintainInstalled === true ? feeder.summary(game) : null;
-    const maintainingFeed = installedFeed?.installed === true && inputRoute === 'feeder' && request.version === installedFeed.packageId &&
+    // An installed HoYo Feeder keeps its own package when it is repaired or
+    // rebound without choosing a Core; the Core rule applies to a new choice.
+    const installedFeed = internal.maintainInstalled === true || request.version === undefined ? feeder.summary(game) : null;
+    const maintainingFeed = installedFeed?.installed === true && inputRoute === 'feeder' &&
+      (request.version === undefined || internal.maintainInstalled === true && request.version === installedFeed.packageId) &&
       gameLayout(game).loadingBackend === 'hoyoshade' && gameLayout(game).inputRoute === 'feeder';
-    if (!maintainingFeed) require('../shared/hoyo-core-policy').assertTarget(request.version || gameLayout(game).version ||
+    if (!maintainingFeed) hoyoCorePolicy.assertTarget(request.version || gameLayout(game).version ||
       readManifest(game.dir)?.payloadVersion || readBundle(payloadDir).defaultVersion, inputRoute);
     const { maintainInstalled: ignoredMaintenance, ...profileInternal } = internal;
     const { api, routed } = deploymentApi(game, request.api || 'auto');
@@ -1551,7 +1556,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     const current = await externalDeployment.inspect(game), manifest = readManifest(game.dir);
     const targetVersion = request.version || current.version || manifest?.payloadVersion || selectedVersionForGame(routed);
     if (current.loadingBackend === 'hoyoshade' || hoyo.supportedProfileOptions?.(game)?.length)
-      require('../shared/hoyo-core-policy').assertTarget(targetVersion, 'native');
+      hoyoCorePolicy.assertTarget(targetVersion, 'native');
     const adoption = await inspectInstallationAdoption(id, request);
     if (adoption?.replaceProxy?.name === 'd3d11.dll') adoption.blockers.push({ code: 'ADOPTION_ALTERNATE_HOST',
       message: '当前普通 ReShade 使用 d3d11.dll；请先将入口切回其安装器支持的 DXGI 方式，再确认接管，未自动改名。' });

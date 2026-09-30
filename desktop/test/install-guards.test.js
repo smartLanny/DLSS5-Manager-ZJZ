@@ -113,7 +113,8 @@ test('real, unrelated and path-hidden game processes remain blocked with useful 
 });
 
 function unrealFixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-unreal-'));
+  // TEMP can be an 8.3 short path (C:\Users\RUNNER~1); these checks compare canonical paths.
+  const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'guard-unreal-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const exe = path.join(root, 'ht', 'binaries', 'win64', 'htgame.exe');
   const reporter = path.join(root, 'engine', 'binaries', 'win64', 'crashreportclient.exe');

@@ -70,6 +70,12 @@ test('config contract, face resources and HoYo policy follow the catalog', () =>
   assert.equal(hoyo.allowed(catalog.RECOMMENDED, 'feeder'), true);
   assert.equal(hoyo.allowed('0.4.7beta', 'feeder'), false);
   assert.throws(() => hoyo.assertTarget('0.5-dline21-unified5'), /0\.4\.7 或当前 0\.5\.2 Beta 13/);
+  // Fixtures get the same rules over their own IDs.
+  const fixture = hoyo.create({ standard: 'core-a', current: 'core-b', currentLabel: 'Core B' });
+  assert.equal(fixture.allowed('core-a'), true); assert.equal(fixture.allowed('core-a', 'feeder'), false);
+  assert.equal(fixture.allowed('core-b', 'feeder'), true); assert.equal(fixture.allowed(catalog.RECOMMENDED), false);
+  assert.throws(() => fixture.assertTarget('core-a', 'feeder'), { code: 'HOYO_CORE_ROUTE_UNAVAILABLE' });
+  assert.throws(() => fixture.assertTarget('core-c'), { code: 'HOYO_CORE_UNAVAILABLE', message: /0\.4\.7 或当前 Core B/ });
 });
 
 function catalogEntries({ language = 'zh-CN', addon = 'core bytes', build = {} } = {}) {
