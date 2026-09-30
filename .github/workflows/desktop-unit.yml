@@ -43,5 +43,8 @@ jobs:
       - name: Prepare official MFG Unlock add-ons (digest-checked)
         shell: pwsh
         run: ./desktop/scripts/prepare-fg-mfgunlock.ps1
+      # Same files as `npm run test:unit`; the spec reporter lists every failure
+      # again at the end of the log.
       - name: Full desktop unit suite
-        run: npm --prefix desktop run test:unit
+        working-directory: desktop
+        run: node --test --test-concurrency=1 --test-reporter=spec "test/*.test.js"
