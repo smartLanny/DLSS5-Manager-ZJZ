@@ -14,7 +14,8 @@ const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 
 function fixture(t, options = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaofeng-vulkan-service-'));
+  // TEMP can be an 8.3 short path (C:\Users\RUNNER~1); these checks compare canonical paths.
+  const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'xiaofeng-vulkan-service-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const userData = path.join(root, options.userFolder || 'user'), appDir = path.join(root, 'app'), resourcesPath = path.join(root, 'resources');
   const runtimeRoot = path.join(resourcesPath, 'vulkan-runtime'), layerRoot = path.join(resourcesPath, 'vulkan-reshade');

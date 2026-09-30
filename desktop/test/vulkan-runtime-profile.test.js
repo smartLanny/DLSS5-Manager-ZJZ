@@ -12,7 +12,8 @@ const { createVulkanRuntimeProfile } = require('../src/product/vulkan-runtime-pr
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 
 function fixture(t, options = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaofeng-vulkan-runtime-'));
+  // TEMP can be an 8.3 short path (C:\Users\RUNNER~1); these checks compare canonical paths.
+  const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'xiaofeng-vulkan-runtime-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const userData = path.join(root, 'user'), packageRoot = path.join(root, 'package'), game = path.join(root, 'game');
   fs.mkdirSync(path.join(packageRoot, 'bin'), { recursive: true }); fs.mkdirSync(game);
