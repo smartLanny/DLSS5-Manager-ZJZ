@@ -1,12 +1,15 @@
 'use strict';
 
-// Turn a delivered Core OTA ZIP into a fresh staging tree for build-manager.
-// The ZIP must be registered in src/shared/core-catalog.js: readOtaPackage
-// recomputes the archive digest and every member digest before anything is
+// Turn a delivered Core OTA ZIP or Core handoff package into a fresh staging tree
+// for build-manager. The ZIP must be registered in src/shared/core-catalog.js: the
+// reader recomputes the archive digest and every member digest before anything is
 // written here, and each written file is hashed again after the copy.
 //
-//   node scripts/import-core-ota.cjs --ota <zh-CN OTA.zip> --staging <current staging.json>
-//     --output <new empty directory> [--ini <nr_before_sr.ini>] [--package-version <version>]
+//   node scripts/import-core-ota.cjs (--ota <zh-CN OTA.zip> | --package <DLSS5-<version>-RTX40-50.zip>)
+//     --staging <current staging.json> --output <new empty directory> [--ini <nr_before_sr.ini>] [--package-version <version>]
+//
+// A handoff package also contains an NVIDIA DLSS5 model. It is never staged: until
+// redistribution is confirmed, players import the paired model themselves.
 //
 // The new Core becomes the default when it is the catalog's recommended Core.
 // The previous payload is copied unchanged; player INIs are never touched.
@@ -15,6 +18,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const catalog = require('../src/shared/core-catalog');
 const { readOtaPackage } = require('../src/product/ota');
+const { readCorePackage } = require('../src/product/core-package');
 const { DX11_COMPAT_CARRIER } = require('../src/product/constants');
 
 const CORE_FILE = 'nr-before-sr.zh-CN.addon64';
@@ -49,15 +53,21 @@ function defaultIni({ ini, bundle, priorRoot }) {
   fail('OTA 包不含 INI，现有 payload 里也没有可沿用的统一 Core INI；请用 --ini 指定。');
 }
 
-async function importCoreOta({ ota, staging, output, ini = null, packageVersion = null, readOta = readOtaPackage }) {
-  if (!ota || !staging || !output) fail('用法：--ota <OTA.zip> --staging <staging.json> --output <新目录> [--ini <INI>]');
+async function importCoreOta({ ota, package: handoff = null, staging, output, ini = null, packageVersion = null, readOta = readOtaPackage, readPackage = readCorePackage }) {
+  if (!ota === !handoff || !staging || !output) fail('用法：(--ota <OTA.zip> | --package <Core 包.zip>) --staging <staging.json> --output <新目录> [--ini <INI>]');
   output = path.resolve(output);
   if (fs.existsSync(output)) fail('请使用新的空输出目录。');
-  const pkg = await readOta(path.resolve(ota));
-  const cataloged = catalog.coreForArchive(pkg.archiveSha256);
-  if (!cataloged || pkg.canonicalCore?.id !== cataloged.core.id)
-    fail('这个 ZIP 未在 src/shared/core-catalog.js 登记，或内容与登记身份不符。');
-  const { core } = cataloged;
+  let pkg, core;
+  if (handoff) {
+    pkg = await readPackage(path.resolve(handoff)); // runtime not extracted
+    core = pkg.core;
+  } else {
+    pkg = await readOta(path.resolve(ota));
+    const cataloged = catalog.coreForArchive(pkg.archiveSha256);
+    if (!cataloged || pkg.canonicalCore?.id !== cataloged.core.id)
+      fail('这个 ZIP 未在 src/shared/core-catalog.js 登记，或内容与登记身份不符。');
+    core = cataloged.core;
+  }
 
   const stagingFile = path.resolve(staging), manifest = JSON.parse(fs.readFileSync(stagingFile, 'utf8'));
   const priorRoot = path.resolve(path.dirname(stagingFile), manifest.core?.payloadRoot || '');
@@ -78,7 +88,7 @@ async function importCoreOta({ ota, staging, output, ini = null, packageVersion 
   const target = path.join(payloadRoot, 'versions', core.id), config = defaultIni({ ini, bundle, priorRoot });
   writeExact(path.join(target, CORE_FILE), pkg.addon, pkg.addonSha256);
   writeExact(path.join(target, CHAIN_FILE), pkg.bridge, pkg.bridgeSha256);
-  writeExact(path.join(target, DX11_COMPAT_CARRIER), pkg.carrier, pkg.carrierSha256);
+  if (pkg.carrier) writeExact(path.join(target, DX11_COMPAT_CARRIER), pkg.carrier, pkg.carrierSha256);
   writeExact(path.join(target, INI_FILE), config.bytes, config.sha256);
   const companions = {};
   for (const row of pkg.companions) { writeExact(path.join(target, row.name), row.data, row.sha256); companions[row.name] = row.sha256; }
@@ -87,8 +97,9 @@ async function importCoreOta({ ota, staging, output, ini = null, packageVersion 
     configContract: core.configContract, compatibility: 'dx11', supportsPresent: true, inputInterfaces: ['NGX-D3D12-Feature1'],
     capabilities: ['same-frame-output'], validation: 'candidate', stableRelease: false, comparisonOnly: false, coreUpdateOnly: false,
     // Only an explicit per-game choice pairs the external Bridge/Feeder stack.
-    externalRoutesAutoEnabled: false, explicitSelectionAutoPairs: core.provider === true, otaArchiveSha256: pkg.archiveSha256,
-    files: { [CORE_FILE]: pkg.addonSha256, [CHAIN_FILE]: pkg.bridgeSha256, [DX11_COMPAT_CARRIER]: pkg.carrierSha256, [INI_FILE]: config.sha256 },
+    externalRoutesAutoEnabled: false, explicitSelectionAutoPairs: core.provider === true,
+    ...(handoff ? { packageSha256: pkg.archiveSha256 } : { otaArchiveSha256: pkg.archiveSha256 }),
+    files: { [CORE_FILE]: pkg.addonSha256, [CHAIN_FILE]: pkg.bridgeSha256, ...(pkg.carrier ? { [DX11_COMPAT_CARRIER]: pkg.carrierSha256 } : {}), [INI_FILE]: config.sha256 },
     companions
   };
   if (core.id === catalog.RECOMMENDED) bundle.defaultVersion = core.id;
@@ -109,7 +120,7 @@ async function importCoreOta({ ota, staging, output, ini = null, packageVersion 
 }
 
 function parseArgs(argv) {
-  const keys = { '--ota': 'ota', '--staging': 'staging', '--output': 'output', '--ini': 'ini', '--package-version': 'packageVersion' }, out = {};
+  const keys = { '--ota': 'ota', '--package': 'package', '--staging': 'staging', '--output': 'output', '--ini': 'ini', '--package-version': 'packageVersion' }, out = {};
   for (let i = 0; i < argv.length; i += 2) {
     if (!keys[argv[i]] || !argv[i + 1]) fail(`参数无效：${argv[i]}`);
     out[keys[argv[i]]] = argv[i + 1];

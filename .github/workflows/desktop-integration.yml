@@ -44,7 +44,7 @@ jobs:
         run: python desktop/scripts/prepare-ui-test-reshade.py
       - name: Settings and upgrade preservation
         working-directory: desktop
-        run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js test/core-menu.test.js test/game-assessment.test.js test/package-release-policy.test.js test/packaged-validation-environment.test.js test/nr-reconstruction.test.js
+        run: node --test test/state-store-startup.test.js test/startup-ui.test.js test/version-selection.test.js test/payload-source.test.js test/bundled-core-update.test.js test/core-menu.test.js test/game-assessment.test.js test/package-release-policy.test.js test/packaged-validation-environment.test.js test/nr-reconstruction.test.js test/core-catalog.test.js test/core-package.test.js
       - name: Unified game page
         run: npm --prefix desktop run test:game-page
       - name: Maintenance actions stay bound to the selected game

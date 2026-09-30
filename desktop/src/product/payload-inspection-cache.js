@@ -55,7 +55,7 @@ function createPayloadInspectionCache(options = {}) {
   const entries = new Map();
   const pending = new Map(); let generation = 0;
   function keyFor(dir, inspectOptions) {
-    return JSON.stringify([pathKey(dir), Boolean(inspectOptions.allowMissingBundle), inspectOptions.hardwareFamily || null, inspectOptions.version || null, Boolean(inspectOptions.selectedOnly)]);
+    return JSON.stringify([pathKey(dir), Boolean(inspectOptions.allowMissingBundle), inspectOptions.hardwareFamily || null, inspectOptions.hardwareSeries || null, inspectOptions.version || null, Boolean(inspectOptions.selectedOnly)]);
   }
   function touch(key, entry) { entries.delete(key); entries.set(key, entry); }
   function trim() { while (entries.size > maximum) entries.delete(entries.keys().next().value); }
@@ -74,7 +74,7 @@ function createPayloadInspectionCache(options = {}) {
       const task = new Promise((resolve, reject) => {
         const worker = new Worker(options.workerFile || path.join(__dirname, 'payload-inspection-worker.js'), {
           workerData: { dir: path.resolve(dir), options: { allowMissingBundle: inspectOptions.allowMissingBundle === true,
-            hardwareFamily: inspectOptions.hardwareFamily, version: inspectOptions.version, selectedOnly: inspectOptions.selectedOnly === true } } });
+            hardwareFamily: inspectOptions.hardwareFamily, hardwareSeries: inspectOptions.hardwareSeries || null, version: inspectOptions.version, selectedOnly: inspectOptions.selectedOnly === true } } });
         let settled = false;
         const finish = (error, result) => { if (settled) return; settled = true; void worker.terminate(); error ? reject(error) : resolve(result); };
         worker.once('message', message => {

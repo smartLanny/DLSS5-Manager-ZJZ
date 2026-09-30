@@ -12,7 +12,7 @@ test('primary choices retain actual identities and separate unified3 from the pr
   const original = structuredClone(input), result = coreMenu(input, { defaultVersion: '0.4.7beta' });
   assert.deepEqual(result.map(row => row.id), input.map(row => row.id));
   assert.equal(result.length, CORE_CHOICES.length); assert.match(result.find(row => row.id === '0.4.7beta').label, /0\.4\.7.*新安装推荐/);
-  assert.match(result.find(row => row.id === catalog.RECOMMENDED).label, /0\.5\.1.*（推荐）/);
+  assert.match(result.find(row => row.id === catalog.RECOMMENDED).label, /0\.5\.2 Beta 13.*（推荐）/);
   assert.match(result.find(row => row.id === '0.5-dline21-unified3').label, /unified3.*测试/);
   const d21 = result.find(row => row.id === '0.5-dline21');
   assert.match(d21.label, /D21.*测试/); assert.doesNotMatch(d21.label, /默认|推荐/);

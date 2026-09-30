@@ -19,7 +19,10 @@
     if (!required) return;
     const family = setup.hardwareFamily === 'RTX50' ? 'RTX 50' : setup.hardwareFamily === 'RTX40' ? 'RTX 20/30/40' : '当前显卡';
     $('componentRuntimeGuideTitle').textContent = '首次安装需要 DLSS5 模型';
-    $('componentRuntimeGuideText').textContent = '导入 DLSS5 模型后，回到游戏点击“应用”。';
+    const paired = setup.pairedRuntime, pairedLabel = { 'RTX40-50': '40/50 系', 'RTX20-30': '20/30 系' }[paired?.variant] || paired?.variant;
+    $('componentRuntimeGuideText').textContent = paired ? (paired.unknownSeries ? `还没认出显卡系列，暂时不能为 ${paired.core} 选择配套模型。`
+        : `${paired.core} 需要配套的 ${pairedLabel} 模型：导入 ${paired.package} 或其中的 nvngx_dlssnr.dll。`)
+      : setup.seriesProblem || '导入 DLSS5 模型后，回到游戏点击“安装”。';
     $('componentRuntimeGuideBadge').textContent = setup.hardwareFamily || '待识别';
   }
   function renderGroups(overview) {

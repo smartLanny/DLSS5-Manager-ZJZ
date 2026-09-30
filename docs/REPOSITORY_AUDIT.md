@@ -39,7 +39,8 @@ npm run build:release -- --work-root D:\DLSS5-Build
 
 该命令仅生成目录式 `Portable.zip`，并额外验证：
 
-- 新装默认是 Core 清单推荐版 `0.5.1-beta-ui1`，`0.4.7beta` 是稳定回退；D21、Unified5 只在历史版本里手选。
+- 新装默认是 Core 清单推荐版 `0.5.2-beta13`，`0.4.7beta` 是稳定回退；0.5.1、D21、Unified5 只在历史版本里手选。
+- Beta 13 的两份 DLSS5 模型（40/50 系、20/30 系）只按哈希登记在清单里，二进制不进仓库，也不进公开发布包。
 - 精确 `0.3.3.4` Core 大小为 652288 bytes，SHA-256 为 `2869d7d6b2d184b4200c3eb7ac671db0299be64e7625c4f816ee26b41890bfb9`。
 - Bridge 与 Feeder 已进入公开组件目录。
 - MFG 1.2.1 是默认，1.1.5、1.0 和 0.9 是回退，0.7 不进入安装矩阵。

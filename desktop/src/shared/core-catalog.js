@@ -47,11 +47,37 @@
       ota: { 'zh-CN': '7b9dcb58260edc18e2dfd55111213cfb589d2bf958127bedde8e869cfc7f4e14',
         en: '6f37b47bd1d3be8d48094f0624362ba4fcce5824841ba5f52ddd62cd3dec505b' },
       blocker: '外部 Provider 路线（Bridge / Feeder 自动搭配）仍按游戏确认；原生 DX12 路线已由维护者实测。'
+    },
+    {
+      // Maintainer handoff 2026-09-29 (product source cd8ba700, tag v0.5.2-beta.13).
+      // One Core ships in two packages that differ only in the paired DLSS5 model
+      // (RTX 40/50, RTX 20/30).
+      // Maintainer game check of the default routes passed on 2026-09-29. Package
+      // digests were recomputed from the downloaded files on 2026-09-30.
+      id: '0.5.2-beta13', menuKey: '052', label: '0.5.2 Beta 13', menuLabel: '0.5.2 Beta 13 · 支持 RTX 20/30',
+      displayVersion: '0.5.2-beta.13', buildVersion: '0.5.2-beta.13',
+      sourceCommit: 'cd8ba7009d333f7b03c463dc4237a913f9913081', configContract: 'nr-uniform-colour-v2', provider: true, faceCompanions: true,
+      reconstruction: true,
+      addon: { 'zh-CN': '46dc1cd9e4a9a5542230219ec2dfcd8bc39889e94b8e922c636792d745b40d64',
+        en: '6264bc14269431478053ef55e153e87344b836b1dff6d6f18db904c97e584032' },
+      chain: '1acf3cbe509a031be1763a8231cd81e6019aa3532368cd0b08a6c17bc94b70a2',
+      carrier: null,
+      ota: {},
+      // Handoff packages: install/ holds the Chinese Core, nrchain, one DLSS5 model and nr_face.
+      packages: {
+        'RTX40-50': { sha256: 'fed1aa879c498955cf5b044aa1e2475da679003444c3737921de596fd6c56c2e', bytes: 128847877,
+          runtime: 'a2d16f9fba2b619559427821169918df56fc8e410a6ac87569953598a00b66fa', series: ['RTX40', 'RTX50'] },
+        'RTX20-30': { sha256: 'e2994429b4433fc484a4aa59cc34dc4f7b3eb715ca29e9b341abdaab5bade29f', bytes: 153481194,
+          runtime: '6dac1b40f0c87af84a8177b18c741e84fb0c914f204c9d87d95916b665ba3af8', series: ['RTX20', 'RTX30'] }
+      },
+      blocker: '维护者已在两款游戏中验收默认设置；RTX 20/30 版还没有在 20/30 系显卡上实测。'
     }
-  ].map(row => Object.freeze({ ...row, addon: Object.freeze({ ...row.addon }), ota: Object.freeze({ ...row.ota }) })));
+  ].map(row => Object.freeze({ ...row, addon: Object.freeze({ ...row.addon }), ota: Object.freeze({ ...row.ota }),
+    packages: Object.freeze(Object.fromEntries(Object.entries(row.packages || {}).map(([key, value]) =>
+      [key, Object.freeze({ ...value, series: Object.freeze([...value.series]) })]))) })));
   // New installations default to RECOMMENDED; STABLE stays one click away. Every
   // other Core is listed under “历史版本与回退”.
-  const RECOMMENDED = '0.5.1-beta-ui1';
+  const RECOMMENDED = '0.5.2-beta13';
   const STABLE = '0.4.7beta';
   const MAIN_MENU = Object.freeze([RECOMMENDED, STABLE]);
 
@@ -64,15 +90,30 @@
     for (const row of CORES) for (const [language, digest] of Object.entries(row.ota)) if (digest === hash) return { core: row, language };
     return null;
   };
+  // A Core with packages only runs with the DLSS5 model paired for the GPU series.
+  // Older Cores (no packages) keep the shared runtime; unknown series get null.
+  const pairedRuntime = (id, series) => {
+    const row = byId(id); if (!row) return null;
+    for (const [variant, item] of Object.entries(row.packages)) if (item.series.includes(series)) return { variant, sha256: item.runtime, series: item.series };
+    return null;
+  };
+  const requiresPairedRuntime = id => Object.keys(byId(id)?.packages || {}).length > 0;
+  const isPairedRuntime = hash => CORES.some(row => Object.values(row.packages).some(item => item.runtime === hash));
+  // A handoff package (install/ layout) of a cataloged Core, by archive digest.
+  const coreForPackage = hash => {
+    for (const row of CORES) for (const [variant, item] of Object.entries(row.packages)) if (item.sha256 === hash) return { core: row, variant, ...item };
+    return null;
+  };
   const sourceCommits = contract => CORES.filter(row => !contract || row.configContract === contract).map(row => row.sourceCommit);
   const faceCompanionIds = () => CORES.filter(row => row.faceCompanions).map(row => row.id);
 
   const valid = CORES.every(row => HASH.test(row.chain) && (row.carrier === null || HASH.test(row.carrier)) &&
       (row.ini === undefined || HASH.test(row.ini)) && /^[0-9a-f]{40}$/.test(row.sourceCommit) &&
-      Object.values(row.addon).every(value => HASH.test(value)) && Object.values(row.ota).every(value => HASH.test(value))) &&
+      Object.values(row.addon).every(value => HASH.test(value)) && Object.values(row.ota).every(value => HASH.test(value)) &&
+      Object.values(row.packages).every(item => HASH.test(item.sha256) && HASH.test(item.runtime) && Number.isSafeInteger(item.bytes) && item.series.length > 0)) &&
     new Set(CORES.map(row => row.id)).size === CORES.length && isProviderCoreId(RECOMMENDED);
   if (!valid) throw new Error('Core catalog is invalid.');
 
   return Object.freeze({ CORES, RECOMMENDED, STABLE, MAIN_MENU, byId, isProviderCoreId, isProviderCore,
-    coreForAddonHash, coreForArchive, sourceCommits, faceCompanionIds });
+    coreForAddonHash, coreForArchive, coreForPackage, pairedRuntime, requiresPairedRuntime, isPairedRuntime, sourceCommits, faceCompanionIds });
 });

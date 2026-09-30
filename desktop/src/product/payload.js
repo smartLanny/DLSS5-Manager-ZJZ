@@ -7,6 +7,7 @@ const { PAYLOAD_FILES, DX11_COMPAT_CARRIER } = require('./constants');
 const { FAMILIES } = require('./gpu');
 const { appError } = require('./errors');
 const companionPolicy = require('./payload-companions');
+const coreCatalog = require('../shared/core-catalog');
 
 const OPTIONAL_PAYLOAD_FILES = Object.freeze({
   carrier: DX11_COMPAT_CARRIER
@@ -159,8 +160,11 @@ function inspectVersion(dir, entry, digest = sha256, safetyRoot = dir) {
   };
 }
 
-function inspectCompactVersion(root, id, entry, fixed, digest = sha256, families = FAMILIES) {
+function inspectCompactVersion(root, id, entry, fixed, digest = sha256, families = FAMILIES, series = null) {
   const variants = {};
+  // A Core registered with paired DLSS5 models never uses the shared runtime: it
+  // needs the model paired for this GPU series in its own version directory.
+  const paired = coreCatalog.requiresPairedRuntime(id) ? coreCatalog.pairedRuntime(id, series) : null;
   for (const family of families) {
     const fixedEntry = fixed && fixed[family];
     const versionDir = path.join(root, 'versions', id);
@@ -168,12 +172,16 @@ function inspectCompactVersion(root, id, entry, fixed, digest = sha256, families
     const fixedExpected = fixedEntry && fixedEntry.files ? fixedEntry.files : {};
     const versionExpected = entry && entry.files ? entry.files : {};
     const expected = { ...fixedExpected, ...versionExpected };
+    if (coreCatalog.requiresPairedRuntime(id)) {
+      if (paired) expected[PAYLOAD_FILES.runtime] = paired.sha256; else delete expected[PAYLOAD_FILES.runtime];
+    }
     const files = inspectFilesAt('', expected, {
       reshade: path.join(fixedDir, PAYLOAD_FILES.reshade),
       bridge: entry && entry.files && entry.files[PAYLOAD_FILES.bridge]
         ? path.join(versionDir, PAYLOAD_FILES.bridge)
         : path.join(fixedDir, PAYLOAD_FILES.bridge),
-      runtime: fixedEntry?.paths?.runtime ? path.join(root, fixedEntry.paths.runtime) : path.join(fixedDir, PAYLOAD_FILES.runtime),
+      runtime: coreCatalog.requiresPairedRuntime(id) ? path.join(versionDir, PAYLOAD_FILES.runtime)
+        : fixedEntry?.paths?.runtime ? path.join(root, fixedEntry.paths.runtime) : path.join(fixedDir, PAYLOAD_FILES.runtime),
       addon: path.join(versionDir, PAYLOAD_FILES.addon),
       config: path.join(versionDir, PAYLOAD_FILES.config)
     }, digest, root);
@@ -213,6 +221,7 @@ function inspectCompactVersion(root, id, entry, fixed, digest = sha256, families
     trustedUpgradeFrom: Array.isArray(entry?.trustedUpgradeFrom) ? entry.trustedUpgradeFrom.filter(value => /^[a-f0-9]{64}$/i.test(value)).slice(0, 16) : [],
     ota: Boolean(entry && entry.ota),
     variants,
+    ...(paired ? { pairedRuntime: paired } : coreCatalog.requiresPairedRuntime(id) ? { pairedRuntime: null, pairedRuntimeRequired: true } : {}),
     ready: families.every(family => variants[family].ready)
   };
 }
@@ -275,7 +284,7 @@ function inspectPayload(dir, options = {}) {
     for (const [id, entry] of Object.entries(bundle.versions || {})) {
       if (options.selectedOnly && id !== wanted) continue;
       const families = options.selectedOnly && FAMILIES.includes(options.hardwareFamily) ? [options.hardwareFamily] : FAMILIES;
-      versions[id] = inspectCompactVersion(dir, id, { ...entry, id }, bundle.fixed || {}, digest, families);
+      versions[id] = inspectCompactVersion(dir, id, { ...entry, id }, bundle.fixed || {}, digest, families, options.hardwareSeries || null);
     }
     const ids = Object.keys(versions);
     const selectedVersion = ids.includes(options.version)
@@ -298,8 +307,8 @@ function inspectPayload(dir, options = {}) {
   return { dir, bundle, files: legacy.files, ready: Boolean(bundle) && legacy.ready, missing: legacy.missing, invalid: legacy.invalid };
 }
 
-function requirePayload(dir, hardwareFamily, version) {
-  const result = inspectPayload(dir, { hardwareFamily, version, selectedOnly: true });
+function requirePayload(dir, hardwareFamily, version, hardwareSeries = null) {
+  const result = inspectPayload(dir, { hardwareFamily, version, selectedOnly: true, hardwareSeries });
   if ((result.variants || result.versions) && !FAMILIES.includes(hardwareFamily)) throw appError('ERR_GPU_UNSUPPORTED');
   if (result.versions && !result.selectedVersion) throw appError('ERR_PAYLOAD_MISSING', { file: 'bundle.versions' });
   if (result.missing.length) throw appError('ERR_PAYLOAD_MISSING', { files: result.missing });

@@ -56,7 +56,7 @@ async function unpack(file, target) {
     })().catch(stop); }); zip.readEntry();
   }));
 }
-function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALOG }) {
+function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALOG, hardwareSeries = () => null }) {
   const root = path.resolve(selectedRoot || path.join(userData, 'component-library'));
   const inventoryFile = path.join(root, 'inventory.json');
   const releaseFile = path.join(root, 'release-catalog.json');
@@ -271,7 +271,13 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
       if (stat.isDirectory()) rows = await importDirectory(selected);
       else if (/\.zip$/i.test(selected)) {
         const hash = await digest(selected), known = availableCatalog().packages.find(row => row.archive && row.sha256 === hash);
-        if (known) {
+        if (require('../shared/core-catalog').coreForPackage(hash)) {
+          // A Core handoff package: take its paired DLSS5 model (verified against the
+          // catalog while it streams to disk) and register it by its known identity.
+          temp = await fsp.mkdtemp(path.join(root, '.import-'));
+          const pkg = await require('./core-package').readCorePackage(selected, { runtimeFile: path.join(temp, 'nvngx_dlssnr.dll') });
+          rows = [await importPlain(pkg.runtime.file)];
+        } else if (known) {
           if (stat.size !== known.bytes) fail('上游压缩包长度不符。');
           rows = [{ ...known, files:[{file:await storeFile(selected,hash,known.filename),name:known.filename,sha256:hash,bytes:stat.size}],
             source:'catalog',validation:'candidate',requiresAdapter:true,importedAt:new Date().toISOString() }];
@@ -416,6 +422,18 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
       base.versions[versionId] = entry;
       if (core.id === data.selected.core) base.defaultVersion = versionId;
     }
+    // A Core with paired DLSS5 models gets the imported model for this GPU series
+    // in its own version directory; it never uses the shared runtime above.
+    const coreCatalog = require('../shared/core-catalog');
+    for (const version of Object.keys(base.versions).filter(id => coreCatalog.requiresPairedRuntime(id))) {
+      const paired = coreCatalog.pairedRuntime(version, hardwareSeries()), dest = path.join(root, 'versions', version, 'nvngx_dlssnr.dll');
+      const model = paired && data.packages.find(p => p.kind === 'nr-runtime' && p.files?.some(f => f.sha256 === paired.sha256));
+      await noLinks(dest);
+      if (!model) { await fsp.rm(dest, { force: true }); continue; }
+      const file = model.files.find(f => f.sha256 === paired.sha256), source = path.join(root, relativeName(file.file));
+      if (await digest(source) !== file.sha256) fail('DLSS5 模型缓存被修改。');
+      await fsp.mkdir(path.dirname(dest), { recursive: true }); await fsp.copyFile(source, dest);
+    }
     await atomicJson(path.join(root, 'bundle.json'), base); await atomicJson(inventoryFile, data);
     return { payloadDir: root, changedGames: false };
   }
@@ -427,7 +445,8 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
         binaries.length !== 1 || path.basename(binaries[0].name) !== 'nvngx_dlssnr.dll' ||
         !Array.isArray(row.hardwareFamilies) || !row.hardwareFamilies.length || row.hardwareFamilies.some(family => !['RTX40','RTX50'].includes(family)) ||
         (approved ? binaries[0].sha256 !== approved.sha256 : row.source !== 'user-imported')) fail('请选择 DLSS5 模型（nvngx_dlssnr.dll）或带显卡系列说明的模型包。');
-    for (const family of row.hardwareFamilies) data.selected[family] = id;
+    // A model paired with a newer Core never replaces the runtime older Cores share.
+    if (!require('../shared/core-catalog').isPairedRuntime(binaries[0].sha256)) for (const family of row.hardwareFamilies) data.selected[family] = id;
     return { ...(await materializePayload(data,bundledPayloadDir)), hardwareFamilies: row.hardwareFamilies, runtimeVerified:false };
   }); }
   async function activateCore(id, bundledPayloadDir) { return serialize(async () => {
@@ -441,13 +460,18 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
     const bundle = readBundle(payloadDir), entry = bundle.versions?.[version];
     if (bundle.version !== 4 || !entry || !['RTX40','RTX50'].includes(family)) fail('当前 Core 或显卡运行包尚未确定。');
     const data = await inventory();
+    // A Core with paired DLSS5 models registers the model paired for this GPU series.
+    const coreCatalog = require('../shared/core-catalog'), paired = coreCatalog.requiresPairedRuntime(version) ? coreCatalog.pairedRuntime(version, hardwareSeries()) : null;
+    if (coreCatalog.requiresPairedRuntime(version) && !paired) fail('还没认出显卡系列，不能为这个 Core 选择配套的 DLSS5 模型。');
+    const runtime = paired ? { sha256: paired.sha256, file: path.join(payloadDir, 'versions', version, 'nvngx_dlssnr.dll') }
+      : { sha256: bundle.fixed[family].files['nvngx_dlssnr.dll'],
+        file: bundle.fixed[family].paths?.runtime ? path.join(payloadDir, relativeName(bundle.fixed[family].paths.runtime)) : path.join(payloadDir, 'fixed', family, 'nvngx_dlssnr.dll') };
     const files = [
       { kind:'core', name:'nr-before-sr.zh-CN.addon64', sha256:entry.files['nr-before-sr.zh-CN.addon64'], file:path.join(payloadDir,'versions',version,'nr-before-sr.zh-CN.addon64') },
       { kind:'core-config', name:'nr_before_sr.ini', sha256:entry.files['nr_before_sr.ini'], file:path.join(payloadDir,'versions',version,'nr_before_sr.ini') },
       { kind:'core-companion', name:'nrchain_nvngx.dll', sha256:entry.files['nrchain_nvngx.dll'] || bundle.fixed[family].files['nrchain_nvngx.dll'],
         file:entry.files['nrchain_nvngx.dll'] ? path.join(payloadDir,'versions',version,'nrchain_nvngx.dll') : path.join(payloadDir,'fixed',family,'nrchain_nvngx.dll') },
-      { kind:'nr-runtime', name:'nvngx_dlssnr.dll', sha256:bundle.fixed[family].files['nvngx_dlssnr.dll'],
-        file:bundle.fixed[family].paths?.runtime ? path.join(payloadDir,relativeName(bundle.fixed[family].paths.runtime)) : path.join(payloadDir,'fixed',family,'nvngx_dlssnr.dll') }
+      { kind:'nr-runtime', name:'nvngx_dlssnr.dll', sha256:runtime.sha256, file:runtime.file }
     ];
     for (const [name, sha256] of Object.entries(require('./payload-companions').validateMap(entry.companions, version)))
       files.push({ kind: 'core-resource', name, sha256, file: path.join(payloadDir, 'versions', version, name) });
