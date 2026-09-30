@@ -11,6 +11,8 @@ on:
       - 'desktop/**'
       - 'src/**'
       - 'scripts/build-desktop-contract.mjs'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/desktop-unit.yml'
   workflow_dispatch:
 
