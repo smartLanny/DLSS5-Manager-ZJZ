@@ -1385,7 +1385,11 @@ function renderPayloadSource() {
   status.className = `badge ${ready ? 'good' : 'warn'}`;
   $('payloadSourceLabel').textContent = runtimeDlcRequired ? '精简管理器本体' : source?.mode === 'external' ? '外部组件目录' : source?.mode === 'unconfigured' ? '尚未选择组件' : '随程序提供';
   $('payloadSourcePath').textContent = runtimeDlcRequired ? 'Core 已包含；DLSS5 模型需要单独导入。' : source?.mode === 'unconfigured' ? '选择完整组件目录后会记住位置。' : source?.path || state.payload?.dir || '未提供完整组件目录';
-  $('payloadSourceDetail').textContent = runtimeDlcRequired ? `请点击上方“导入 DLSS5 模型”，选择 nvngx_dlssnr.dll 或 ${source?.requiredHardwareFamily === 'RTX50' ? 'NR-Runtime-RTX50.zip' : 'NR-Runtime-RTX40.zip'}。导入后会用于之后的安装。`
+  const paired = source?.pairedRuntime, pairedLabel = { 'RTX40-50': '40/50 系', 'RTX20-30': '20/30 系' }[paired?.variant] || paired?.variant;
+  $('payloadSourceDetail').textContent = paired ? (paired.unknownSeries ? `还没认出显卡系列，暂时不能为 ${paired.core} 选择配套的 DLSS5 模型。`
+      : `${paired.core} 需要配套的 ${pairedLabel} DLSS5 模型：点击“导入 DLSS5 模型”，选择 ${paired.package} 或其中的 nvngx_dlssnr.dll。旧版 Core 不受影响。`)
+    : source?.runtimeSeriesProblem ? source.runtimeSeriesProblem.message
+    : runtimeDlcRequired ? `请点击上方“导入 DLSS5 模型”，选择 nvngx_dlssnr.dll 或 ${source?.requiredHardwareFamily === 'RTX50' ? 'NR-Runtime-RTX50.zip' : 'NR-Runtime-RTX40.zip'}。导入后会用于之后的安装。`
     : source?.mode === 'unconfigured' ? '本程序未附带完整 NR 组件；选择已有的完整组件目录即可继续。'
     : source?.error?.message || (ready ? '已核对清单和文件；安装或修复前还会再次校验。' : '请确认完整组件、文件校验和显卡匹配。');
   $('payloadSourceDetail').classList.toggle('error', !runtimeDlcRequired && Boolean(source?.error) && source?.mode !== 'unconfigured');

@@ -77,10 +77,18 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   let feeder;
   const feedback = createFeedbackCollector({ userData, productVersion: version,
     resolveFeederLogDirectory: game => feeder.feedbackLogDirectory(game) });
-  const payloadInspection = createPayloadInspectionCache();
+  const payloadInspectionCache = createPayloadInspectionCache();
+  // Paired DLSS5 models (0.5.2 Beta 13) depend on the exact GPU series, not only
+  // on the shared payload family, so every inspection carries the single series.
+  const singleSeries = () => { const series = [...new Set(deploymentHardware().series || [])]; return series.length === 1 ? series[0] : null; };
+  const payloadInspection = Object.freeze({
+    inspect: (dir, options = {}) => payloadInspectionCache.inspect(dir, { ...options, hardwareSeries: singleSeries() }),
+    prime: (dir, options = {}) => payloadInspectionCache.prime(dir, { ...options, hardwareSeries: singleSeries() }),
+    invalidate: dir => payloadInspectionCache.invalidate(dir)
+  });
   const bundledPayloadDir = payloadRoot(fs.existsSync(path.join(resourcesPath || '', 'payload')) ? resourcesPath : appDir);
   const componentLibrary = require('./component-library').createComponentLibrary({ userData,
-    root:overrides.componentLibraryRoot || componentStorage.root });
+    root:overrides.componentLibraryRoot || componentStorage.root, hardwareSeries: () => singleSeries() });
   const componentOverview = require('./component-overview').createComponentOverview({ appDir, resourcesPath, libraryRoot: componentLibrary.root });
   const userAddons = require('./user-addon-manager').createUserAddonManager({
     componentRoot: componentLibrary.root,
@@ -321,6 +329,21 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       throw appError('ERR_PAYLOAD_SOURCE_CHANGED', { path: payloadDir, file: 'bundle.json' });
   }
 
+  // Known DLSS5 models may be built for specific GPU series (Beta 13: RTX 40/50
+  // or RTX 20/30). RTX 20/30 cards share the RTX40 slot, so check the series too.
+  const SERIES_LABEL = { RTX20: 'RTX 20', RTX30: 'RTX 30', RTX40: 'RTX 40', RTX50: 'RTX 50' };
+  function runtimeSeriesProblem(row) {
+    const series = [...new Set(deploymentHardware().series || [])];
+    if (!Array.isArray(row?.hardwareSeries) || series.length !== 1 || row.hardwareSeries.includes(series[0])) return null;
+    return { series: series[0], supported: [...row.hardwareSeries],
+      message: `这个 DLSS5 模型只适用于 ${row.hardwareSeries.map(value => SERIES_LABEL[value] || value).join('/')} 系显卡，当前是 ${SERIES_LABEL[series[0]] || series[0]} 系。请导入对应版本的 nvngx_dlssnr.dll。` };
+  }
+  function activeRuntimeSeriesProblem(bundle, family) {
+    const hash = bundle?.fixed?.[family]?.files?.['nvngx_dlssnr.dll'];
+    const known = hash && componentLibrary.catalog().packages.find(row => row.kind === 'nr-runtime' && row.sha256 === hash);
+    return known ? runtimeSeriesProblem(known) : null;
+  }
+
   function inspectCurrentPayload(options = {}) {
     const external = Boolean(store.read().payloadSourcePath);
     const bundledAvailable = fs.existsSync(path.join(bundledPayloadDir, 'bundle.json'));
@@ -328,13 +351,22 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     try {
       assertSourceIdentity();
       const inspected = payloadInspection.inspect(payloadDir, options);
-      const runtimeDlcRequired = Boolean(inspected.bundle) && inspected.missing.length > 0 && inspected.invalid.length === 0 &&
+      const seriesProblem = inspected.bundle ? activeRuntimeSeriesProblem(inspected.bundle, options.hardwareFamily || hardware.family) : null;
+      // A Core with paired DLSS5 models (0.5.2 Beta 13) needs the model for this GPU series.
+      const selectedEntry = inspected.versions?.[inspected.selectedVersion], selectedCore = coreCatalog.byId(inspected.selectedVersion);
+      const pairedMissing = selectedEntry && (selectedEntry.pairedRuntimeRequired === true ||
+        selectedEntry.pairedRuntime && inspected.missing.some(file => String(file).split(/[\\/]/).pop().toLowerCase() === 'nvngx_dlssnr.dll'));
+      const pairedRuntime = pairedMissing ? { core: selectedCore?.label || inspected.selectedVersion, unknownSeries: !selectedEntry.pairedRuntime,
+        variant: selectedEntry.pairedRuntime?.variant || null,
+        package: selectedEntry.pairedRuntime ? `DLSS5-${selectedCore?.displayVersion || inspected.selectedVersion}-${selectedEntry.pairedRuntime.variant}.zip` : null } : null;
+      const runtimeDlcRequired = Boolean(seriesProblem) || Boolean(inspected.bundle) && inspected.missing.length > 0 && inspected.invalid.length === 0 &&
         inspected.missing.every(file => String(file).split(/[\\/]/).pop().toLowerCase() === 'nvngx_dlssnr.dll');
       const sourceError = !inspected.ready && mode !== 'unconfigured' && !runtimeDlcRequired
         ? normalizeError(appError(inspected.missing.length ? 'ERR_PAYLOAD_MISSING' : 'ERR_PAYLOAD_HASH',
           { path: payloadDir, files: inspected.missing.length ? inspected.missing : inspected.invalid })) : null;
       return { ...inspected, source: { mode, bundledAvailable, path: mode === 'unconfigured' ? '' : payloadDir,
-        ready: Boolean(inspected.bundle && inspected.ready), runtimeDlcRequired,
+        ready: Boolean(inspected.bundle && inspected.ready) && !seriesProblem, runtimeDlcRequired,
+        ...(seriesProblem ? { runtimeSeriesProblem: seriesProblem } : {}), ...(pairedRuntime ? { pairedRuntime } : {}),
         requiredHardwareFamily: runtimeDlcRequired && ['RTX40','RTX50'].includes(options.hardwareFamily) ? options.hardwareFamily : null,
         error: sourceError } };
     } catch (error) {
@@ -385,6 +417,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   }
 
   async function useRuntimeComponent(id) {
+    const row = (await componentLibrary.inventory()).packages?.find(item => item.id === id);
+    const problem = runtimeSeriesProblem(row);
+    if (problem) throw Object.assign(new Error(problem.message), { code: 'ERR_RUNTIME_DLC_MISMATCH' });
     const activated = await componentLibrary.activateRuntime(id, bundledPayloadDir);
     await selectPayloadSource(activated.payloadDir);
     await refreshProviderSources({ selectDefault: true, force: true });
@@ -398,14 +433,17 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     if (!runtimes.length) throw Object.assign(new Error('这不是 DLSS5 模型。请选择 nvngx_dlssnr.dll，或名称含 NR-Runtime-RTX40 / RTX50 的 ZIP 包。'), { code: 'ERR_RUNTIME_DLC_REQUIRED' });
     if (!['RTX40','RTX50'].includes(family)) return { ...imported, activated: false, hardwareFamily: family || null,
       message: 'DLSS5 模型已导入；还没认出显卡系列，请在设置中确认显卡后再选用。', state: payloadState() };
-    const matches = runtimes.filter(item => Array.isArray(item.hardwareFamilies) && item.hardwareFamilies.includes(family));
+    const suitable = runtimes.filter(item => Array.isArray(item.hardwareFamilies) && item.hardwareFamilies.includes(family));
+    const matches = suitable.filter(item => !runtimeSeriesProblem(item));
+    if (suitable.length === 1 && !matches.length) throw Object.assign(new Error(`已导入，暂未启用。${runtimeSeriesProblem(suitable[0]).message}`), { code: 'ERR_RUNTIME_DLC_MISMATCH' });
     if (matches.length !== 1) {
       const current = family === 'RTX50' ? 'RTX 50 系' : 'RTX 40 系及 RTX 20/30 系兼容路线';
       throw Object.assign(new Error(`这个模型包不含 ${current} 需要的 DLSS5 模型。请改选对应版本，或直接选择 nvngx_dlssnr.dll。`), { code: 'ERR_RUNTIME_DLC_MISMATCH' });
     }
     const activated = await useRuntimeComponent(matches[0].id);
+    const pairedWith = coreCatalog.CORES.find(core => Object.values(core.packages).some(item => item.runtime === matches[0].sha256));
     return { ...imported, ...activated, activated: true, hardwareFamily: family, packageId: matches[0].id,
-      message: matches[0].userSupplied ? `DLSS5 模型 ${matches[0].version} 已导入，之后安装的游戏会使用它。` :
+      message: pairedWith ? `${pairedWith.label} 的配套 DLSS5 模型（${matches[0].variant}）已导入，安装 ${pairedWith.label} 时会用它；旧版 Core 不受影响。` : matches[0].userSupplied ? `DLSS5 模型 ${matches[0].version} 已导入，之后安装的游戏会使用它。` :
         `${family === 'RTX50' ? 'RTX 50 系' : 'RTX 40 系'} DLSS5 模型已导入，之后安装的游戏会使用它。` };
   }
   let registeredProviderContext = null;
@@ -416,12 +454,15 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       const interfaces = Array.isArray(entry?.inputInterfaces) ? entry.inputInterfaces : [];
       const v1 = interfaces.some(value => value === 'NRExternalProviderV1' || value?.name === 'NRExternalProviderV1' && value.version === 1);
       const coreHash = entry?.files?.['nr-before-sr.zh-CN.addon64'];
-      const runtimeHash = bundle.fixed?.[family]?.files?.['nvngx_dlssnr.dll'];
+      const pairedModel = coreCatalog.requiresPairedRuntime(version) ? coreCatalog.pairedRuntime(version, singleSeries()) : null;
+      const runtimeHash = coreCatalog.requiresPairedRuntime(version) ? pairedModel?.sha256 : bundle.fixed?.[family]?.files?.['nvngx_dlssnr.dll'];
       const chainHash = entry?.files?.['nrchain_nvngx.dll'] || bundle.fixed?.[family]?.files?.['nrchain_nvngx.dll'];
       const configHash = entry?.files?.['nr_before_sr.ini'];
       if (!v1 || !/^[a-f0-9]{64}$/.test(coreHash || '') || !/^[a-f0-9]{64}$/.test(runtimeHash || '') ||
           !/^[a-f0-9]{64}$/.test(chainHash || '') || !/^[a-f0-9]{64}$/.test(configHash || '') || !['RTX40', 'RTX50'].includes(family))
         return { registered: false, selectedId: null, reason: '当前 payload 没有完整 V1 Core、同源 chain、配置与运行库。' };
+      if (pairedModel && !fs.existsSync(path.join(payloadDir, 'versions', version, 'nvngx_dlssnr.dll')))
+        return { registered: false, selectedId: null, reason: '还没导入这个 Core 配套的 DLSS5 模型。' };
       const identity = [path.resolve(payloadDir).toLowerCase(), version, family, coreHash, chainHash, configHash, runtimeHash, JSON.stringify(entry.companions || {})].join('|');
       if (force || registeredProviderContext !== identity) {
         await componentLibrary.registerPayloadContext(payloadDir, version, family);
@@ -842,7 +883,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       }
       return result;
     }
-    const result = requirePayload(payloadDir, deploymentHardware().family, version);
+    const result = requirePayload(payloadDir, deploymentHardware().family, version, singleSeries());
     if (requestedVersion && result.version !== requestedVersion) throw appError('ERR_ADDON_NOT_FOUND');
     result.replacement = choice.replacement;
     return require('./component-registry').selectNativeComponents(payloadDir, result, { api: classifyApi(game.scan?.chosen),
@@ -861,7 +902,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     catch { return null; } // Independent Vulkan/Feeder routes do not require this catalog.
     if (entry?.coreUpdateOnly !== true) return null;
     assertSourceIdentity();
-    const payload = requirePayload(payloadDir, deploymentHardware().family, version);
+    const payload = requirePayload(payloadDir, deploymentHardware().family, version, singleSeries());
     return { id: version, label: displayVersionLabel(entry.label || version), source: 'bundled',
       notes: entry.notes || '', coreUpdateOnly: true, addonOnly: true, ota: true, ready: true,
       compatibility: null, file: payload.addon.file, addonSha256: payload.addon.actual,
@@ -2039,6 +2080,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return { ...inventory, catalog, componentOverview: await componentOverview.read({ inventory, catalog, currentCore: providerContext().currentCore }),
         runtimeSetup: { hardwareFamily: hardware.family || null, ready: currentPayload.ready === true,
           runtimeDlcRequired: currentPayload.source?.runtimeDlcRequired === true,
+          ...(currentPayload.source?.runtimeSeriesProblem ? { seriesProblem: currentPayload.source.runtimeSeriesProblem.message } : {}),
+          ...(currentPayload.source?.pairedRuntime ? { pairedRuntime: currentPayload.source.pairedRuntime } : {}),
           selectedRuntimeId: inventory.selected?.[hardware.family] || null },
         storage:{ root:componentLibrary.root, mode:componentStorage.mode, cDrive:/^c:/i.test(componentLibrary.root) }, warnings:[...componentSeedErrors] }; },
     moveComponentLibrary: async destinationBase => {
