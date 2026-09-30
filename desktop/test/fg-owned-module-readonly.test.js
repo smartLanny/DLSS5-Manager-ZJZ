@@ -10,7 +10,7 @@ const { ADDON } = require('../src/product/fg-mfgunlock-resources');
 const journal = require('../src/core/file-journal');
 const { createCompactBundle } = require('../src/product/payload');
 const { RECEIPT: EXTERNAL_RECEIPT } = require('../src/product/external-runtime');
-const { fixture: operationFixture, peBytes, put, PROJECT, COMPONENT_RESOURCES } = require('./helpers/operation-integration-fixture');
+const { fixture: operationFixture, peBytes, put, PROJECT, COMPONENT_RESOURCES, FIXTURE_HOYO_CORE_POLICY } = require('./helpers/operation-integration-fixture');
 const LEGACY_PAYLOAD_ROOT = process.env.DLSS5_TEST_LEGACY_PAYLOAD_ROOT
   ? path.resolve(process.env.DLSS5_TEST_LEGACY_PAYLOAD_ROOT) : path.join(PROJECT, 'payload/nr-before-sr');
 
@@ -108,7 +108,8 @@ test('an actual interrupted FG copy without a receipt remains blocking after Add
 test('the real HoYo preview hook accepts an unowned custom AddonPath after direct HoYo restore and preserves personal bytes', async t => {
   let components, queries = 0;
   const f = await operationFixture(t, { api: 'dx12', family: 'RTX50', exeName: 'ZenlessZoneZero.exe',
-    serviceOverrides: { getKnownComponents: async id => { queries++; return components ? components.ownedModuleManifest(id) : []; } },
+    serviceOverrides: { getKnownComponents: async id => { queries++; return components ? components.ownedModuleManifest(id) : []; },
+      hoyoCorePolicy: FIXTURE_HOYO_CORE_POLICY },
     specialSetup: async ({ root, resourcesPath }) => {
       const payload = path.join(resourcesPath, 'payload/nr-before-sr');
       const loader = fs.readFileSync(path.join(LEGACY_PAYLOAD_ROOT, 'fixed/RTX50/ReShade64.dll'));

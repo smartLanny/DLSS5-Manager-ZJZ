@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { fixture, peBytes, put, sha, PROJECT } = require('./helpers/operation-integration-fixture');
+const { fixture, peBytes, put, sha, PROJECT, FIXTURE_HOYO_CORE_POLICY } = require('./helpers/operation-integration-fixture');
 const { createCompactBundle } = require('../src/product/payload');
 const { createExternalRuntime, RECEIPT: PROFILE_RECEIPT } = require('../src/product/external-runtime');
 const { createHoYoProfileService } = require('../src/product/hoyoshade-profile');
@@ -75,7 +75,8 @@ async function jointFixture(t, mode, { existingHotkey = true, nativeIntegration 
       const original = '; personal INI\r\n[ADDON]\r\nAddonPath=.\\personal-addons\r\n[GENERAL]\r\nPresetPath=.\\PersonalPreset.ini\r\n[STYLE]\r\nHdrOverlayBrightness=178\r\n' +
         (existingHotkey ? '[INPUT]\r\nKeyOverlay=36,0,0,0\r\n' : '');
       put(path.join(exeDir, 'ReShade.ini'), original); put(path.join(exeDir, 'PersonalPreset.ini'), 'Techniques=UserEffect');
-      return { overrides: { feeder, hoyo, externalDeployment: external }, runtime, modern, hoyo, external, feeder, events, launcher, original, exe };
+      return { overrides: { feeder, hoyo, externalDeployment: external, hoyoCorePolicy: FIXTURE_HOYO_CORE_POLICY },
+        runtime, modern, hoyo, external, feeder, events, launcher, original, exe };
     } });
 }
 async function stablePreview(f, request) {
