@@ -706,7 +706,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     await require('./launch-safety').noLinks(source); await require('./launch-safety').noLinks(destination);
     const original = await digest(source), existingTarget = source === destination ? original : await digest(destination);
     const loader = manifest?.files.find(row => row.kind === 'reshade');
-    const projected = deployment?.changes?.find(row => row.role === 'reshade' && path.resolve(row.path).toLowerCase() === path.resolve(source).toLowerCase());
+    // Leaving an external layout puts the loader back as its `game-proxy` row.
+    const projected = deployment?.changes?.find(row => ['reshade', 'game-proxy'].includes(row.role) && path.resolve(row.path).toLowerCase() === path.resolve(source).toLowerCase());
     const expected = projected?.afterSha256 || loader?.installedSha256 || (current === 'dxgi' && original && installer.isAddonReShade(source) ? original : null);
     if (!expected || !original && !projected?.afterSha256 || original && loader && original !== loader.installedSha256) blockers.push('无法验证当前受管 ReShade 入口；缺失时请先预览修复。');
     if (desired !== current && existingTarget) blockers.push(`${desired}.dll 已被其他文件占用，请先核对。`);
