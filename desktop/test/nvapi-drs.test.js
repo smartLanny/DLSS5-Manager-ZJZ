@@ -34,11 +34,12 @@ test('PowerShell helper contains SR-only Driver Settings ids', () => {
   assert.doesNotMatch(source, /0x10E41E02|0x10E41E03|0x10E41DF7|0x10E41DF1/);
 });
 
-test('PowerShell helper C# layout self-test compiles on Windows', { skip: process.platform !== 'win32' }, () => {
+// Add-Type compilation can take well over 20 s on a busy CI runner; the budget only bounds a hang.
+test('PowerShell helper C# layout self-test compiles on Windows', { skip: process.platform !== 'win32', timeout: 70000 }, () => {
   const output = execFileSync(systemPowerShell, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', helper, '-Action', 'selftest'
-  ], { encoding: 'utf8', timeout: 20000, windowsHide: true });
+  ], { encoding: 'utf8', timeout: 60000, windowsHide: true });
   const parsed = parseJsonLine(output);
   assert.equal(parsed.ok, true);
   assert.match(parsed.layout, /NVDRS_SETTING=12320/);
