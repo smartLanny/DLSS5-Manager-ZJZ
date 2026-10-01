@@ -1742,7 +1742,8 @@ async function enrichMissingArtwork() {
     if (!game.poster && game.launcher !== '手动添加') {
       try {
         const poster = unwrap(await window.manager.fetchGameArt(game.id));
-        if (poster) { game.poster = poster; changed = true; }
+        // The service only returns a portrait 600x900 cover, so the game page can show it.
+        if (poster) { game.poster = poster; game.cover ||= poster; changed = true; }
       } catch {}
     }
     // Every game gets its EXE icon: the list shows it even when Steam has art.

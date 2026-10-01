@@ -10,7 +10,7 @@ const output = path.resolve(process.argv[2] || path.join(os.tmpdir(), 'manager-u
 fs.mkdirSync(output, { recursive: true });
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'manager-usability-'));
 app.setPath('userData', path.join(root, 'profile')); app.disableHardwareAcceleration();
-const features = { on40: { sr: { eligible: true, state: 'configurable', blockers: [] }, fg: { eligible: false, blockers: [{ message: '游戏未提供原生补帧' }] } }, hoyoProfiles: [], uniform: resolveContract('0.5-dline21-unified3'), dual: resolveContract('0.5-dline13'), icon: 'data:image/png;base64,' + fs.readFileSync(path.join(__dirname, '../src/renderer/app-icon.png')).toString('base64') };
+const features = { on40: { sr: { eligible: true, state: 'configurable', blockers: [] }, fg: { eligible: false, blockers: [{ message: '游戏未提供原生补帧' }] } }, hoyoProfiles: [], cover: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"><rect width="600" height="900" fill="#345"/></svg>'), uniform: resolveContract('0.5-dline21-unified3'), dual: resolveContract('0.5-dline13'), icon: 'data:image/png;base64,' + fs.readFileSync(path.join(__dirname, '../src/renderer/app-icon.png')).toString('base64') };
 for (const name of ['uniform', 'dual']) {
   const contract = features[name];
   const config = path.join(root, name + '.ini');
@@ -23,6 +23,7 @@ function scenario() {
   const mock = window.__gpMock, h = window.__hoyoMock;
   window.auditCapture = name => require('electron').ipcRenderer.invoke('usability-capture', name);
   window.manager.getGameIcon = async id => { mock.calls.push(['get-game-icon', id]); return { ok: true, value: mock.features.icon }; };
+  window.manager.fetchGameArt = async id => { mock.calls.push(['fetch-game-art', id]); return { ok: true, value: id === 'fixture' ? mock.features.cover : null }; };
   h.flow.phase = 'install'; h.flow.nextAction = 'preview-install'; h.flow.api = { api: 'dx11' }; h.flow.channel = 'cn';
   h.flow.binding.status = 'confirmed'; h.flow.binding.launcher = h.flow.binding.launchers[0];
   const g = mock.assessments['fixture-hoyo']; g.api.effectiveApi = g.api.detectedApi = g.game.chosen.apiResolution.api = 'dx11';
@@ -53,6 +54,8 @@ async function audit() {
   await until(() => document.querySelector('[data-id="fixture"] .game-card-head'), 'library');
   await capture('01-library', document.getElementById('view-games'));
   document.querySelector('[data-id="fixture"] .game-card-head').click(); await until(() => state()?.loaded.includes('installation'), 'editor');
+  // A cover the artwork service fetched (only for games without local art) is the game page's portrait cover.
+  await until(() => document.querySelector('#gameDetailPane .gp-hero-art .game-art[data-art="cover"] img')?.getAttribute('src') === mock.features.cover, 'fetched portrait cover on the game page');
   assert(state().tab === 'nr', 'an installed game opens on 画质增强');
   await tab('overview'); await capture('02-installation', host());
   assert(host().querySelector('[data-gp-tab="launch"]') && !host().querySelector('[data-gp-detail="startup"]'), 'launch settings have their own tab');
