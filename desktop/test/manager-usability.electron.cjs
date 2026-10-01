@@ -56,7 +56,7 @@ async function audit() {
   document.querySelector('[data-id="fixture"] .game-card-head').click(); await until(() => state()?.loaded.includes('installation'), 'editor');
   // A cover the artwork service fetched (only for games without local art) is the game page's portrait cover.
   await until(() => document.querySelector('#gameDetailPane .gp-hero-art .game-art[data-art="cover"] img')?.getAttribute('src') === mock.features.cover, 'fetched portrait cover on the game page');
-  assert(state().tab === 'nr', 'an installed game opens on 画质增强');
+  assert(state().tab === 'nr', 'an installed game opens on DLSS5');
   await tab('overview'); await capture('02-installation', host());
   assert(host().querySelector('[data-gp-tab="launch"]') && !host().querySelector('[data-gp-detail="startup"]'), 'launch settings have their own tab');
   assert([...host().querySelectorAll('.primary')].filter(visible).length === 1, 'one main action');
@@ -64,7 +64,7 @@ async function audit() {
   const nr = mock.assessment.nr, contract = mock.features.uniform;
   mock.assessment.nr = { ...contract.defaults, ...mock.features.uniformConfig, contract, readable: true, defaults: contract.defaults };
   await host().__gpController.refresh(true); await capture('04-nr-multilayer', host());
-  assert(host().querySelector('[data-gp-detail="layers"]:not([open])'), 'additional layers collapsed');
+  assert(host().querySelector('[data-gp-group="nr-layers"][value="1"]:checked') && !host().querySelector('[data-gp-field="Layer2Intensity"]'), 'one layer count; extra layers stay out of sight');
   const input = host().querySelector('[data-gp-field="Intensity"]'); input.value = '1.234567'; input.dispatchEvent(new Event('input', { bubbles: true }));
   assert(state().draft.nr.Intensity === 1.234567, 'numeric precision retained');
   assert(host().querySelector('[data-gp-detail="draft-summary"]:not([open])'), 'change details do not displace the main action');

@@ -303,6 +303,184 @@ html[data-theme] .game-art[data-art="icon"], .game-art[data-art="icon"] { backgr
 #view-games.is-split .game-pane-card .detail-panel { padding: 12px 24px 20px; }
 .game-pane-empty { display: grid; place-items: center; min-height: 240px; color: var(--muted); font-size: 13px; }
 
+/* ---- Game page settings. Content sits in one left-aligned column of at most
+   680px, so the eye stays on it; the header and tabs share that column. Groups
+   are cards with soft shadows. Each setting is a row: its name and a one-line
+   hint on the left, the control on the right (at most 280px). ---- */
+#view-games.is-split .gp-hero { max-width: 736px; padding: 22px 28px 16px; }
+#view-games.is-split .game-pane-card .gp-tabs { gap: 26px; padding: 0 28px; }
+#view-games.is-split .game-pane-card .gp-tabs button { padding: 10px 0 11px; font-size: 14px; font-weight: 500; }
+#view-games.is-split .game-pane-card .gp-tabs button[aria-selected="true"] { font-weight: 600; }
+#view-games.is-split .game-pane-card .gp-message { max-width: 680px; margin: 12px 28px 0; }
+#view-games.is-split .gp-inline .gp-apply-bar { padding: 10px max(28px, calc(100% - 708px)) 10px 28px; }
+#view-games .game-pane-card .detail-panel { max-width: 736px; padding: 20px 28px 40px; }
+
+/* Cards: the DLSS5 groups and every section on the other tabs. */
+#view-games .game-pane-card .detail-panel :is(.gp-card, .gp-section) { margin: 0; padding: 0; border: 0; border-radius: 10px; background: var(--card-bg); box-shadow: var(--card-shadow); overflow: hidden; }
+#view-games .game-pane-card .detail-panel :is(.gp-card, .gp-section) .gp-section { border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
+#view-games .game-pane-card .detail-panel > * + *,
+#view-games .game-pane-card .detail-panel .gp-cards > * + *,
+#view-games .game-pane-card .detail-panel .launch-grid > * + *,
+#view-games .game-pane-card .detail-panel :is(.gp-card, .gp-section, .launch-grid, .gp-caption, .gp-message, .gp-hardware) + :is(.gp-card, .gp-section, .launch-grid, .gp-caption) { margin-top: 14px; }
+#view-games .game-pane-card .detail-panel .launch-grid { display: block; }
+#view-games .game-pane-card .detail-panel :is(.gp-card > header, .gp-section-title, .gp-section > h3, .gp-section > h4, .gp-layer > h4) { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; padding: 16px 18px 6px; }
+#view-games .game-pane-card .detail-panel :is(.gp-card > header h3, .gp-section-title h3) { margin: 0; padding: 0; }
+#view-games .game-pane-card .detail-panel :is(.gp-card > header h3, .gp-section-title h3, .gp-section > h3, .gp-section > h4, .gp-layer > h4) { color: var(--text); font-size: 14px; font-weight: 600; letter-spacing: 0; }
+#view-games .game-pane-card .detail-panel .gp-section-title > div h3 { padding: 0; }
+#view-games .game-pane-card .detail-panel .gp-controls,
+#view-games .game-pane-card .detail-panel .gp-controls.gp-nr-primary { display: block; margin: 0; }
+#view-games .game-pane-card .detail-panel .gp-layer { margin: 0; padding: 0; border: 0; background: none; }
+
+/* Rows, separated by hairlines. */
+#view-games .game-pane-card .detail-panel .gp-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 280px);
+  /* The label row takes spare height, so a label without a hint is centred. */
+  grid-template-rows: 1fr auto auto;
+  column-gap: 20px;
+  row-gap: 0;
+  align-items: center;
+  min-height: 54px;
+  margin: 0;
+  padding: 10px 18px;
+  border-top: 1px solid var(--card-line);
+  background: transparent;
+}
+#view-games .game-pane-card .detail-panel :is(.gp-card > header, .gp-section-title, .gp-section > h3, .gp-card-sub) + .gp-field,
+#view-games .game-pane-card .detail-panel :is(.gp-card > header, .gp-section-title, .gp-section > h3) + .gp-controls > .gp-field:first-child { border-top-color: transparent; }
+#view-games .game-pane-card .detail-panel .gp-field:hover { background: var(--card-hover); }
+#view-games .game-pane-card .detail-panel .gp-field > span:first-child { grid-column: 1; color: var(--text); font-size: 13.5px; font-weight: 500; line-height: 1.35; }
+#view-games .game-pane-card .detail-panel .gp-field > small { grid-column: 1; margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+#view-games .game-pane-card .detail-panel .gp-field > small.gp-note { color: var(--faint, var(--muted)); font-size: 11.5px; }
+#view-games .game-pane-card .detail-panel .gp-field > :is(select, input, textarea, .gp-number, .gp-seg, .gp-switch, .gp-key-control) { grid-column: 2; grid-row: 1 / -1; }
+#view-games .game-pane-card .detail-panel .gp-field > :is(select, input:not([type="checkbox"]), textarea, .gp-number) { width: 100%; }
+.gp-seg-field { grid-template-columns: minmax(0, 1fr) auto !important; }
+#view-games .game-pane-card .detail-panel .gp-field > :is(.gp-seg, .gp-switch) { justify-self: end; }
+#view-games .game-pane-card .detail-panel .gp-field select,
+#view-games .game-pane-card .detail-panel .gp-field > input:not([type="checkbox"]) { min-height: 32px; height: 32px; border-radius: 6px; font-size: 13px; }
+#view-games .game-pane-card .detail-panel .gp-caption { margin: 0; padding: 8px 18px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+#view-games .game-pane-card .detail-panel .gp-cards > .gp-caption { padding: 0 4px; }
+#view-games .game-pane-card .detail-panel .gp-small-actions,
+#view-games .game-pane-card .detail-panel .gp-actions { margin: 0; padding: 10px 18px 14px; gap: 8px; border-top: 1px solid var(--card-line); background: transparent; }
+#view-games .game-pane-card .detail-panel .gp-hardware { margin: 0 0 2px; padding: 0 4px; color: var(--muted); font-size: 12.5px; }
+#view-games .game-pane-card .detail-panel .gp-card-sub { padding: 14px 18px 4px; border-top: 1px solid var(--card-line); color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .3px; }
+#view-games .game-pane-card .detail-panel .gp-card-foot { display: flex; justify-content: flex-end; padding: 10px 18px 14px; border-top: 1px solid var(--card-line); }
+
+/* The DLSS5 switch card leads the page. */
+#view-games .game-pane-card .detail-panel .gp-card-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 18px 20px; background: var(--card-main-bg); }
+.gp-card-main h3 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 17px; font-weight: 650; }
+.gp-card-main h3 .gp-key { min-width: 0; height: 22px; margin: 0; padding: 0 6px; font-size: 11px; }
+.gp-card-main p { margin: 5px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.gp-card-main-side { display: flex; align-items: center; gap: 14px; }
+.gp-card-main-side .button { min-height: 30px; height: 30px; padding: 0 12px; font-size: 12.5px; }
+.gp-main-state b { font-size: 13px; font-weight: 600; }
+.gp-main-state .is-on { color: var(--accent); }
+.gp-main-state .is-off { color: var(--muted); }
+.gp-card-main:has([data-gp-field="Enabled"]:checked) .gp-main-state .is-off,
+.gp-card-main:not(:has([data-gp-field="Enabled"]:checked)) .gp-main-state .is-on { display: none; }
+
+/* Folded groups read as a card with a chevron. */
+#view-games .game-pane-card .detail-panel details:is(.gp-card, .gp-section, .gp-nr-details, .gp-capability-details) > summary { display: flex; align-items: center; justify-content: space-between; min-height: 52px; margin: 0; padding: 0 18px; color: var(--text); font-size: 13.5px; font-weight: 500; cursor: pointer; list-style: none; }
+#view-games .game-pane-card .detail-panel details > summary small { margin-left: 10px; color: var(--muted); font-size: 12px; font-weight: 400; }
+#view-games .game-pane-card .detail-panel details > summary::-webkit-details-marker { display: none; }
+#view-games .game-pane-card .detail-panel details > summary::after { content: ""; flex: none; width: 14px; height: 14px; background: var(--muted); -webkit-mask: url(icons/phosphor/caret-down.svg) center / contain no-repeat; mask: url(icons/phosphor/caret-down.svg) center / contain no-repeat; transition: transform var(--motion-fast) var(--ease-standard); }
+#view-games .game-pane-card .detail-panel details[open] > summary::after { transform: rotate(180deg); }
+#view-games .game-pane-card .detail-panel details[open] > summary { border-bottom: 1px solid var(--card-line); }
+#view-games .game-pane-card .detail-panel details[open] > summary + .gp-field { border-top-color: transparent; }
+#view-games .game-pane-card .detail-panel :is(.gp-card, .gp-section) details:is(.gp-nr-details, .gp-capability-details, .gp-section) { border-top: 1px solid var(--card-line); border-radius: 0; box-shadow: none; }
+html[data-motion="off"] #view-games .game-pane-card .detail-panel details > summary::after { transition: none; }
+
+/* Number box with its slider. */
+.gp-number { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.gp-number input[type="range"] { -webkit-appearance: none; appearance: none; flex: 1; min-width: 0; height: 18px; margin: 0; background: transparent; cursor: pointer; }
+.gp-number input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(var(--accent), var(--accent)) 0 / var(--fill, 0%) 100% no-repeat, var(--track, #454545); }
+.gp-number input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6px; border: 0; border-radius: 50%; background: #f4f4f4; box-shadow: 0 1px 4px rgba(0, 0, 0, .45); }
+.gp-number input[type="range"]:hover::-webkit-slider-thumb { background: #fff; }
+.gp-number input[type="number"] { flex: none; width: 60px; min-height: 30px; height: 30px; padding: 0 8px; border: 1px solid var(--line-strong, #444); border-radius: 6px; font: inherit; font-size: 13px; text-align: center; font-variant-numeric: tabular-nums; box-shadow: inset 0 1px 2px rgba(0, 0, 0, .12); }
+.gp-number input[type="number"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#view-games .game-pane-card .detail-panel .gp-number input[type="number"] { width: 60px; }
+.gp-number input[type="range"]:disabled { opacity: .45; cursor: default; }
+
+/* Segmented choices (style, layers, position): native radios underneath. */
+.gp-seg { display: inline-flex; flex-wrap: nowrap; justify-content: flex-end; gap: 2px; padding: 3px; border: 1px solid var(--seg-line); border-radius: 8px; background: var(--seg-bg); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .14); }
+.gp-seg label { position: relative; display: block; margin: 0; cursor: pointer; }
+.gp-seg input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.gp-seg span { display: block; min-width: 34px; padding: 5px 12px; border-radius: 6px; color: var(--muted); font-size: 12.5px; font-weight: 500; line-height: 18px; text-align: center; white-space: nowrap; transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard); }
+.gp-seg label:hover span { color: var(--text); }
+.gp-seg input:checked + span { background: var(--seg-on); color: var(--text); font-weight: 600; box-shadow: var(--seg-on-shadow); }
+.gp-seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.gp-seg input:disabled, .gp-seg input:disabled + span { cursor: default; opacity: .5; }
+html[data-motion="off"] .gp-seg span { transition: none; }
+
+/* On/off switches: the row toggles, the Core-style settings toggles and the settings page. */
+.gp-switch { position: relative; display: inline-flex; flex: none; }
+.gp-switch input,
+#view-games .game-pane-card .detail-panel .gp-check input[type="checkbox"],
+#view-settings .setting-row input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 22px;
+  margin: 0;
+  border: 0;
+  border-radius: 11px;
+  background: var(--switch-off);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .3);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-standard);
+}
+.gp-switch input::after,
+#view-games .game-pane-card .detail-panel .gp-check input[type="checkbox"]::after,
+#view-settings .setting-row input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f4f4f4;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+  -webkit-mask: none;
+  mask: none;
+  transition: left var(--motion-fast) var(--ease-standard);
+}
+.gp-switch input:checked,
+#view-games .game-pane-card .detail-panel .gp-check input[type="checkbox"]:checked,
+#view-settings .setting-row input[type="checkbox"]:checked { background: var(--accent); }
+.gp-switch input:checked::after,
+#view-games .game-pane-card .detail-panel .gp-check input[type="checkbox"]:checked::after,
+#view-settings .setting-row input[type="checkbox"]:checked::after { left: 21px; background: #fff; }
+/* The global checkbox draws a tick mask on :checked; a switch keeps its round knob. */
+html[data-theme] .gp-switch input::after,
+html[data-theme] .gp-switch input:checked::after { width: 16px; height: 16px; border-radius: 50%; -webkit-mask: none; mask: none; }
+html[data-theme] .gp-switch input[type="checkbox"]:checked::after { background: #fff; }
+html[data-theme] .gp-switch input[type="checkbox"]::after { background: #f4f4f4; }
+html[data-theme] .gp-switch input[type="checkbox"]:checked::after { background: #fff; }
+html[data-theme] .gp-switch input:checked { border-color: transparent; background: var(--accent); }
+html[data-theme] .gp-switch.big input::after,
+html[data-theme] .gp-switch.big input:checked::after { width: 22px; height: 22px; }
+.gp-switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gp-switch input:disabled,
+#view-games .game-pane-card .detail-panel .gp-check input[type="checkbox"]:disabled,
+#view-settings .setting-row input[type="checkbox"]:disabled { opacity: .45; cursor: default; }
+.gp-switch.big input { width: 52px; height: 28px; border-radius: 14px; }
+.gp-switch.big input::after { width: 22px; height: 22px; }
+.gp-switch.big input:checked::after { left: 27px; }
+.gp-switch i { display: none; }
+html[data-motion="off"] :is(.gp-switch, #view-games .game-pane-card .gp-check, #view-settings .setting-row) input,
+html[data-motion="off"] :is(.gp-switch, #view-games .game-pane-card .gp-check, #view-settings .setting-row) input::after { transition: none; }
+#view-games .game-pane-card .detail-panel .gp-check,
+#view-settings .setting-row label.switch-line { display: inline-flex; flex-direction: row-reverse; align-items: center; gap: 10px; margin: 0; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+#view-games .game-pane-card .detail-panel .gp-section > .gp-check,
+#view-games .game-pane-card .detail-panel .gp-small-actions > .gp-check { display: flex; justify-content: flex-end; flex-direction: row-reverse; }
+
+/* Hotkey rows: the current key as a keycap, then its buttons. */
+#view-games .game-pane-card .detail-panel .gp-field > .gp-key-control { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+#view-games .game-pane-card .detail-panel .gp-key-control .button { min-height: 28px; height: 28px; padding: 0 10px; font-size: 12px; }
+.gp-key { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; height: 26px; margin-right: auto; padding: 0 8px; border: 1px solid var(--line-strong, #444); border-bottom-width: 2px; border-radius: 5px; background: #2b2b2b; color: var(--text); font: 600 12px/1 var(--font-ui, inherit); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 /* ================= Dark theme palette (default) ================= */
 html[data-theme="dark"] {
   --bg: #1b1b1b;
@@ -383,6 +561,13 @@ html[data-theme="dark"] .gp-more-menu { border-color: #3a3a3a; background: #2626
 html[data-theme="dark"] .gp-more-menu .button:hover:not(:disabled) { background: #333; }
 html[data-theme="dark"] #view-games.is-split .gp-inline .gp-apply-bar { border-color: #333; background: #1f1f1f; }
 html[data-theme="dark"] { --backdrop-veil: rgba(27, 27, 27, .25); --backdrop-veil-strong: rgba(27, 27, 27, .72); }
+html[data-theme="dark"] { --card-bg: #242424; --card-line: #313131; --card-hover: rgba(255, 255, 255, .025); --faint: #6f6f6f;
+  --card-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), 0 1px 2px rgba(0, 0, 0, .45), 0 8px 24px rgba(0, 0, 0, .22);
+  --card-main-bg: linear-gradient(135deg, rgba(118, 185, 0, .13), rgba(118, 185, 0, 0) 55%), #242424;
+  --seg-bg: #1b1b1b; --seg-line: #3a3a3a; --seg-on: #343434; --seg-on-shadow: 0 1px 3px rgba(0, 0, 0, .4), 0 0 0 1px #444; --switch-off: #555; --track: #454545; }
+html[data-theme="dark"] .gp-key { border-color: #4a4a4a; background: #2b2b2b; color: #f0f0f0; }
+html[data-theme="dark"] .gp-number input[type="number"] { border-color: #444; background: #2b2b2b; color: var(--text); }
+html[data-theme="dark"] .gp-number input[type="number"]:disabled { color: #8f8f8f; }
 html[data-theme="dark"] :is(.icon-button, .expand-arrow) { border-color: #444; background: transparent; color: #cfcfcf; }
 html[data-theme="dark"] :is(.icon-button, .expand-arrow):hover { border-color: #5a5a5a; background: #2c2c2c; color: #fff; }
 html[data-theme="dark"] .game-detail { border-color: #333; background: #1f1f1f; }
@@ -443,6 +628,13 @@ html[data-theme="light"] .component-kind-icon { background: #eceeef; color: #4b5
 html[data-theme="light"] { --backdrop-veil: rgba(250, 250, 249, .45); --backdrop-veil-strong: rgba(250, 250, 249, .85); }
 html[data-theme="light"] .gp-backdrop img { opacity: .4; }
 html[data-theme="light"] .gp-hero-art .game-art:not([data-art="icon"]) { box-shadow: 0 8px 22px rgba(0, 0, 0, .22); }
+html[data-theme="light"] { --card-bg: #ffffff; --card-line: #eceef0; --card-hover: #f8f9fa; --faint: #8b9298;
+  --card-shadow: 0 1px 2px rgba(16, 24, 32, .08), 0 6px 20px rgba(16, 24, 32, .07);
+  --card-main-bg: linear-gradient(135deg, rgba(95, 152, 0, .1), rgba(95, 152, 0, 0) 55%), #ffffff;
+  --seg-bg: #f1f3f4; --seg-line: #dde1e4; --seg-on: #ffffff; --seg-on-shadow: 0 1px 3px rgba(16, 24, 32, .18); --switch-off: #c3c8cd; --track: #d5d9dd; }
+html[data-theme="light"] .gp-key { border-color: #c9cdd1; background: #f4f5f6; color: #1f2328; }
+html[data-theme="light"] .gp-number input[type="number"] { border-color: #c9cdd1; background: #fff; color: var(--text); }
+html[data-theme="light"] .gp-number input[type="range"]::-webkit-slider-thumb { background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .25), 0 1px 3px rgba(0, 0, 0, .2); }
 html[data-theme="light"] #view-games.is-split .game-card-head:hover { background: #eceeef; }
 html[data-theme="light"] #view-games.is-split .game-card.expanded .game-card-head { background: #e2e4e6; }
 html[data-theme="light"] #view-games.is-split .game-card .badge { color: #6b7076; }

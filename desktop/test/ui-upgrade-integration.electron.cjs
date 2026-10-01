@@ -83,7 +83,7 @@ app.whenReady().then(async () => {
       window.__gpMock.assessment.game.addonVersion = window.__gpMock.assessment.deployment.version = window.__gpMock.assessment.defaults.version = '0.5-dline12';
       return document.querySelector('.game-detail').__gpController.refresh(true);
     });
-    // An installed game opens on 画质增强; the Core picker is under 高级.
+    // An installed game opens on DLSS5; the Core picker is under 高级.
     await evaluate(() => document.querySelector('.game-detail [data-gp-tab="overview"]').click());
     await check(() => document.querySelector('[data-gp-group="route"][data-gp-field="version"]').value === '0.5-dline12', 'installed D12 survives curated menu');
     await check(() => {

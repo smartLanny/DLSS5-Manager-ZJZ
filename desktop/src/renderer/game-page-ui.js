@@ -12,6 +12,10 @@
     const NR = [ ['Intensity', '模型强度', 0, 2, .05], ['LocalToneStrength', '局部明暗对比', 0, 2, .05], ['LocalStructureStrength', '整体细节强度', 0, 2, .05], ['WorkMode', 'NR 工作模式', 0, 5, 1], ['CustomWorkScale', '自定义工作比例', .5, 1, .05],
     ['Style', '画面风格', 0, 2, 1], ['ColorStrength', '颜色强度', 0, 2, .05], ['SkinStructureStrength', '人脸强度', -1, 2, .05],
     ['TransferStrength', '前置传递强度', 0, 4, .05], ['PostTransferStrength', '后置传递强度', 0, 4, .05] ];
+  // One plain sentence under the main picture controls.
+  const NR_HINTS = { Intensity: '数值越大，画面变化越明显', LocalToneStrength: '亮处和暗处的层次感', LocalStructureStrength: '纹理和边缘的清晰程度',
+    TransferStrength: '整体增强效果的强弱', ColorStrength: 'AI 调整颜色的力度', Style: '不同风格的色彩和锐利程度不同', SkinStructureStrength: '人物皮肤的细节程度' };
+  const hint = key => { const text = NR_HINTS[String(key).replace(/^Layer[2-5]/, '')]; return text ? `<small class="gp-hint">${text}</small>` : ''; };
   const unwrap = result => { if (result?.ok !== true) throw Object.assign(new Error(result?.error?.message || '操作未完成。'), result?.error); return result.value; };
   const errorText = value => `${value?.code ? `[${value.code}] ` : ''}${value?.message || value || '操作未完成。'}`;
   const option = (value, label, selected, disabled = false) => `<option value="${esc(value)}"${String(value) === String(selected) ? ' selected' : ''}${disabled ? ' disabled' : ''}>${esc(label)}</option>`;
@@ -60,7 +64,7 @@
   function mount(host, manager, options = {}) {
     const eventController = new AbortController();
     let id = null, data = null, draft = {}, fields = {}, invalidFields = {}, tab = 'overview', busy = false, launching = false, message = '', error = false,
-      modal = null, generation = 0, session = null, unsubscribe = null, disposed = false, tabController = null, capturingHotkey = false, faceStrength = 1,
+      modal = null, generation = 0, session = null, unsubscribe = null, disposed = false, tabController = null, capturingHotkey = false, faceStrength = 1, editLayer = 1,
       readinessState = null, readinessEpoch = -1, readinessOrder = -1, assessmentOrder = 0, launchAttempt = 0,
       apiSave = Promise.resolve(), draftBackup = null, waitingUnsubscribe = null, progressUnsubscribe = null, configChecking = false, resumeAfterImport = null, progress = null, waitingBackupIdentity = null;
     const pageDrafts = new Map();
@@ -227,7 +231,7 @@
     function tabKeys() { return options.hero ? ['nr', 'enhance', 'launch', 'overview'] : ['overview', 'nr', 'enhance']; }
     function head() {
       const labels = options.hero
-        ? { nr: '画质增强', enhance: '超分与补帧', launch: '启动与快捷键', overview: data.game.installed ? '高级' : '安装设置' }
+        ? { nr: 'DLSS5', enhance: '超分与补帧', launch: '启动与快捷键', overview: data.game.installed ? '高级' : '安装设置' }
         : { overview: '安装与启动', nr: 'NR 画面增强', enhance: 'DLSS 超分与补帧' };
       const tabs = tabKeys().map(key => [key, labels[key]]);
       return `<div class="detail-tabs gp-tabs" role="tablist" aria-label="游戏设置">${tabs.map(([key, label]) => `<button class="detail-tab" type="button" role="tab" data-detail-tab="${DETAIL_TAB[key]}" data-gp-tab="${key}" aria-selected="${tab === key}" tabindex="${tab === key ? 0 : -1}">${label}</button>`).join('')}</div>`;
@@ -253,21 +257,38 @@
         ${data.antiCheat?.detected ? `<section class="gp-section gp-risk"><h3>游戏保护与账号风险</h3><p>${esc(data.antiCheat.message)}</p><div class="gp-actions">${act('anti-cheat', '官方说明')}${act('compatibility-search', '搜索此游戏兼容资料')}${act('maintenance-tab', '维护与恢复')}</div></section>` : ''}
         ${(data.failures || []).length ? `<details class="gp-section"><summary>部分检查暂不可用</summary>${data.failures.map(row => `<p class="gp-caption">${esc(row.section)}：${esc(errorText(row))}</p>`).join('')}</details>` : ''}`;
     }
-    function selectField(group, key, label, markup, disabled = false, note = '') {
-      return `<label class="gp-field"><span>${label}</span><select data-gp-group="${group}" data-gp-field="${key}"${disabled ? ' disabled' : ''}>${markup}</select>${note ? `<small>${note}</small>` : ''}</label>`;
+    const sliderFill = (value, lo, hi) => `${Math.round((value - lo) / (hi - lo) * 1000) / 10}%`;
+    function moveSlider(slider, value) {
+      slider.value = value;
+      slider.style.setProperty('--fill', sliderFill(Number(slider.value), Number(slider.min), Number(slider.max)));
     }
+    // A number box with a slider beside it. The box stays the labelled,
+    // keyboard-accessible control; the slider is a pointer shortcut.
+    // Special values (0 stops CustomWorkScale or PostWorkPercent) are typed into
+    // the number box; the slider keeps the ordinary range.
+    function numberControl(key, value, min, max, step, disabled, special = []) {
+      const lo = Number(min), hi = Number(max), slide = Number.isFinite(lo) && Number.isFinite(hi) && hi > lo && hi - lo <= 10;
+      const current = Number(value), position = value !== '' && value != null && Number.isFinite(current) ? Math.min(hi, Math.max(lo, current)) : lo;
+      const extra = special.length ? ` data-gp-floor="${lo}" data-gp-special="${special.join(' ')}"` : '';
+      return `<span class="gp-number">${slide ? `<input type="range" min="${lo}" max="${hi}" step="${hi - lo <= 4 ? .01 : .1}" value="${position}" data-gp-slider tabindex="-1" aria-hidden="true"${disabled ? ' disabled' : ''}>` : ''}<input type="number" min="${Math.min(lo, ...special)}" max="${max}" step="${step}" value="${esc(value ?? '')}" data-gp-group="nr" data-gp-field="${key}"${extra}${disabled ? ' disabled' : ''}></span>`;
+    }
+    function selectField(group, key, label, markup, disabled = false, note = '', hintText = '') {
+      return `<label class="gp-field"><span>${label}</span>${hintText ? `<small class="gp-hint">${hintText}</small>` : ''}<select data-gp-group="${group}" data-gp-field="${key}"${disabled ? ' disabled' : ''}>${markup}</select>${note ? `<small>${note}</small>` : ''}</label>`;
+    }
+    // The side-by-side page names the group after its tab; other hosts keep the NR wording.
+    const nrTitle = () => options.hero ? '画质增强（NR）' : 'NR 画面增强';
     function nrFields() {
       const nr = { ...(data.nr || {}), ...(data.nr?.contract?.colourMemory && data.nr.effective?.ColorStrength != null ? { ColorStrength: data.nr.effective.ColorStrength } : {}), ...(draft.nr || {}) }, available = Boolean(data.game.installed && data.nr && data.nr.status !== 'error' && data.nr.readable !== false);
       if (data.nr?.capabilities?.Layer2Enabled === true) return uniformNrFields(nr, available);
       const primary = ['Intensity', 'LocalToneStrength', 'LocalStructureStrength'];
       const controls = rows => rows.filter(([key]) => data.nr?.capabilities?.[key] !== false).map(([key, label, min, max, step]) => {
           const capable = available && (!Object.hasOwn(data.nr?.capabilities || {}, key) || data.nr.capabilities[key] === true);
-          if (NR_CHOICES[key]) return selectField('nr', key, label, NR_CHOICES[key].map((label, value) => option(value, label, nr[key] ?? 0)).join(''), !capable);
+          if (NR_CHOICES[key]) return selectField('nr', key, label, NR_CHOICES[key].map((label, value) => option(value, label, nr[key] ?? 0)).join(''), !capable, '', NR_HINTS[key]);
           const limits = data.nr?.limits?.[key] || {}, lower = limits.min === undefined ? key === 'SkinStructureStrength' ? 0 : min : Number(limits.min), upper = limits.max === undefined ? max : Number(limits.max);
           const source = data.nr?.fields?.[key];
-          return `<label class="gp-field"><span>${label}</span><input type="number" min="${lower}" max="${upper}" step="any" value="${esc(nr[key] ?? '')}" data-gp-group="nr" data-gp-field="${key}"${capable ? '' : ' disabled'}>${source?.status === 'invalid' ? `<small>保存值无效：${esc(source.raw)}；请核对后修改。</small>` : source?.source === 'default' ? '<small>此键未保存，显示当前 Core 缺省值。</small>' : ''}${capable ? key === 'CustomWorkScale' ? '<small>工作模式选为“自定义”后生效。</small>' : '' : '<small>当前 Core 或配置未提供此项。</small>'}</label>`;
+          return `<label class="gp-field"><span>${label}</span>${hint(key)}${numberControl(key, nr[key], lower, upper, 'any', !capable, (limits.special || []).map(Number))}${source?.status === 'invalid' ? `<small>保存值无效：${esc(source.raw)}；请核对后修改。</small>` : source?.source === 'default' ? '<small>此键未保存，显示当前 Core 缺省值。</small>' : ''}${capable ? key === 'CustomWorkScale' ? '<small>工作模式选为“自定义”后生效。</small>' : '' : '<small>当前 Core 或配置未提供此项。</small>'}</label>`;
       }).join('');
-      return `<section class="gp-section"><div class="gp-section-title"><h3>NR 画面增强</h3><label class="check-line gp-check"><input type="checkbox" data-gp-group="nr" data-gp-field="Enabled"${nr.Enabled ? ' checked' : ''}${available ? '' : ' disabled'}>开启</label></div>
+      return `<section class="gp-section"><div class="gp-section-title"><h3>${nrTitle()}</h3><label class="check-line gp-check"><input type="checkbox" data-gp-group="nr" data-gp-field="Enabled"${nr.Enabled ? ' checked' : ''}${available ? '' : ' disabled'}>开启</label></div>
         ${!available ? `<p class="gp-caption">${esc((data.nr?.error ? errorText(data.nr.error) : '') || (data.game.installed ? '当前配置或 Core 身份尚未核实，请重新检查。' : '安装后可调整画面增强。'))}</p>` : ''}
         ${effectiveApi() === 'dx9' ? '<p class="gp-caption">游戏内面板提供 NR 回填开关；完整参数在此调整，退出游戏后应用。</p>' : ''}
         <div class="gp-controls gp-nr-primary">${controls(NR.filter(([key]) => primary.includes(key)))}</div>
@@ -288,12 +309,12 @@
         return field.source === 'default' ? '<small>文件未写入，当前 Core 缺省值</small>' : '';
       };
       const check = (key, label) => `<label class="check-line gp-check"><input type="checkbox" data-gp-group="nr" data-gp-field="${key}"${Number(nr[key]) ? ' checked' : ''}${capable(key) ? '' : ' disabled'}>${label}${note(key)}</label>`;
-      const number = (key, label, min = 0, max = 2, step = 'any') => `<label class="gp-field"><span>${label}</span><input type="number" step="${step}" min="${min}" max="${max}" value="${esc(nr[key] ?? '')}" data-gp-group="nr" data-gp-field="${key}"${capable(key) ? '' : ' disabled'}>${note(key)}</label>`;
+      const number = (key, label, min = 0, max = 2, step = 'any') => `<label class="gp-field"><span>${label}</span>${hint(key)}${numberControl(key, nr[key], min, max, step, !capable(key))}${note(key)}</label>`;
       const choice = (key, label, choices) => selectField('nr', key, label,
         (choices.some(([value]) => String(value) === String(nr[key])) ? '' : option(nr[key], `文件保存：${nr[key] ?? '未写入'}`, nr[key], true)) +
-        choices.map(([value, text]) => option(value, text, nr[key])).join(''), !capable(key), note(key));
+        choices.map(([value, text]) => option(value, text, nr[key])).join(''), !capable(key), note(key), NR_HINTS[key]);
       const model = (prefix, layer) => `<div class="gp-controls">${choice(prefix + 'Style', '画面风格', NR_CHOICES.Style.map((label, value) => [value, label]))}${number(prefix + 'Intensity', '模型强度')}</div><details class="gp-nr-details" data-gp-detail="layer-${layer}"><summary>明暗、结构与保护</summary><div class="gp-controls">${number(prefix + 'LocalToneStrength', '局部明暗')}${number(prefix + 'LocalStructureStrength', '局部结构')}${number(prefix + 'SkinStructureStrength', '皮肤强度', -1, 2)}</div><div class="gp-small-actions">${check(prefix + 'AutoMask', '原生皮肤遮罩')}${check(prefix + 'UICorrection', '文字 / UI 保护')}${act('nr-reset-layer-' + layer, '恢复本层默认', !available, 'subtle')}</div></details>`;
-      return `<section class="gp-section"><div class="gp-section-title"><h3>NR 画面增强</h3>${check('Enabled', '开启')}</div>${available ? '' : '<p class="gp-caption">配置暂不可编辑，请检查安装或读取错误。</p>'}
+      return `<section class="gp-section"><div class="gp-section-title"><h3>${nrTitle()}</h3>${check('Enabled', '开启')}</div>${available ? '' : '<p class="gp-caption">配置暂不可编辑，请检查安装或读取错误。</p>'}
         ${(data.nr?.warnings || []).map(row => `<p class="gp-caption">${esc(row.message)}</p>`).join('')}
         <div class="gp-controls">${number('TransferStrength', '最终增强', 1, 4)}${number('ColorStrength', 'AI 色彩')}</div>
         <section class="gp-layer"><h4>第 1 层</h4>${model('', 1)}</section>
@@ -305,6 +326,93 @@
         <p class="gp-caption">工作比例正常范围为 50–100%；自定义比例和后置比例设为 0 会停用增强。实际运行效果需在游戏内确认。</p>
         </details>
         <details class="gp-nr-details" data-gp-detail="nr-common"><summary>光照、细节与保护</summary><div class="gp-controls">${choice('NRInputFilter', '输入滤波', [[0, '关闭'], [1, '开启']])}${number('LightingLock', '亮度锁定', 0, 1)}${number('EdgeGuard', '边缘保护', 0, 1)}${number('DetailStability', '细节稳定', 0, 1)}${choice('LightControlMode', '光照控制', [[0, '分项光照'], [1, '整体明暗']])}${choice('LightPreset', '光照预设', [[0, '原始'], [1, '自然'], [2, '减少光晕'], [3, '自定义']])}${number('LightBroad', '整体光照')}${number('LightDark', '暗部光照')}${number('LightReflection', '反射')}${number('LightStructure', '光照结构')}${number('LightGlow', '光晕', 0, 1)}</div><div class="gp-small-actions">${check('HighStrengthProtection', '高强度保护')}${check('ColorProtection', '色彩保护')}</div></details></section>`;
+    }
+    // The games page lays DLSS5 out like the Core's own in-game picture panel:
+    // the same groups, names and order, limited to what this Core's INI has.
+    // Uniform Cores (0.5.x) use their layered names; older Cores keep theirs.
+    function nrCards() {
+      const nr = { ...(data.nr || {}), ...(data.nr?.contract?.colourMemory && data.nr.effective?.ColorStrength != null ? { ColorStrength: data.nr.effective.ColorStrength } : {}), ...(draft.nr || {}) };
+      const available = Boolean(data.game.installed && data.nr && data.nr.status !== 'error' && data.nr.readable !== false);
+      const uniform = data.nr?.capabilities?.Layer2Enabled === true, caps = data.nr?.capabilities || {};
+      const shown = key => uniform ? caps[key] === true : caps[key] !== false;
+      const editable = key => available && (uniform ? caps[key] === true : !Object.hasOwn(caps, key) || caps[key] === true);
+      const note = key => {
+        const field = data.nr?.fields?.[key];
+        if (Object.hasOwn(draft.nr || {}, key)) return '<small class="gp-note">待应用</small>';
+        if (!uniform) return field?.status === 'invalid' ? `<small class="gp-note">保存值无效：${esc(field.raw)}；请核对后修改。</small>` : field?.source === 'default' ? '<small class="gp-note">此键未保存，显示当前 Core 缺省值。</small>' : '';
+        if (!field) return '<small class="gp-note">此项状态尚未确认</small>';
+        if (field.status === 'invalid') return `<small class="gp-note">文件保存：${esc(field.raw)}；Core ${field.effectiveKnown ? '采用：' + esc(field.effective) : '采用值待确认'}</small>`;
+        if (field.adjusted) return `<small class="gp-note">文件保存值；Core 采用：${esc(field.effective)}</small>`;
+        if (!field.effectiveKnown) return `<small class="gp-note">${field.present ? '文件保存值' : '当前 Core 缺省参考'}；运行时采用值待确认</small>`;
+        return '';
+      };
+      const tip = text => text ? `<small class="gp-hint">${text}</small>` : '';
+      const range = (key, min, max) => { const limits = data.nr?.limits?.[key] || {}; return [limits.min === undefined ? min : Number(limits.min), limits.max === undefined ? max : Number(limits.max), (limits.special || []).map(Number)]; };
+      const number = (key, label, min = 0, max = 2, text = null, disabled = false) => {
+        if (!shown(key)) return '';
+        const [lo, hi, special] = range(key, min, max);
+        return `<label class="gp-field"><span>${label}</span>${text === null ? hint(key) : tip(text)}${numberControl(key, nr[key], lo, hi, 'any', disabled || !editable(key), special)}${note(key)}</label>`;
+      };
+      const toggle = (key, label, text = '', group = 'nr', checked = Number(nr[key])) => (group === 'nr' && !shown(key)) ? '' :
+        `<label class="gp-field gp-toggle"><span>${label}</span>${tip(text)}<span class="gp-switch"><input type="checkbox" data-gp-group="${group}" data-gp-field="${group === 'nr' ? key : 'enabled'}"${checked ? ' checked' : ''}${editable(key) ? '' : ' disabled'}><i aria-hidden="true"></i></span>${group === 'nr' ? note(key) : ''}</label>`;
+      const seg = (group, key, label, choices, current, text = '', disabled = !editable(key)) => {
+        const known = choices.some(([value]) => String(value) === String(current));
+        return `<div class="gp-field gp-seg-field" role="radiogroup" aria-label="${esc(label)}"><span>${label}</span>${tip(text)}<span class="gp-seg">${choices.map(([value, text]) =>
+          `<label><input type="radio" name="gp-${esc(id)}-${group}-${key}" value="${esc(value)}" data-gp-group="${group}" data-gp-field="${key}"${String(value) === String(current) ? ' checked' : ''}${disabled ? ' disabled' : ''}><span>${esc(text)}</span></label>`).join('')}</span>${known || group !== 'nr' ? '' : `<small class="gp-note">文件保存：${esc(current ?? '未写入')}</small>`}${group === 'nr' ? note(key) : ''}</div>`;
+      };
+      const choice = (key, label, choices, text = '') => !shown(key) ? '' : selectField('nr', key, label,
+        (choices.some(([value]) => String(value) === String(nr[key])) ? '' : option(nr[key], `文件保存：${nr[key] ?? '未写入'}`, nr[key], true)) +
+        choices.map(([value, text]) => option(value, text, nr[key])).join(''), !editable(key), '', text);
+      const card = (title, body, attrs = '') => body.trim() ? `<section class="gp-card"${attrs}><header><h3>${title}</h3></header>${body}</section>` : '';
+      const fold = (detail, title, summary, body) => body.trim() ? `<details class="gp-card gp-card-fold" data-gp-detail="${detail}"><summary><span>${title}${summary ? `<small>${summary}</small>` : ''}</span></summary>${body}</details>` : '';
+      const reason = (data.nr?.error ? errorText(data.nr.error) : '') || (data.game.installed ? '当前配置或 Core 身份尚未核实，请重新检查。' : '安装后可开关 DLSS5 和调整画面。');
+      const key = String(data.hotkeys?.nr?.label || 'F6').replace(/\s*开关$/, '');
+      const main = `<section class="gp-card gp-card-main"><div class="gp-card-main-text"><h3>DLSS5 开关 <kbd class="gp-key">${esc(key)}</kbd></h3><p>${available ? `开启后进入游戏即生效；游戏里按 ${esc(key)} 也能随时开关` : esc(reason)}</p></div>
+        <div class="gp-card-main-side">${act('nr-recommended', '恢复推荐画质', !available || busy || !data.nr?.recommended, 'subtle', '把画面设置恢复为全新安装时的推荐值；DLSS5 开关保持不变，应用后生效。')}<span class="gp-main-state" aria-hidden="true"><b class="is-on">已开启</b><b class="is-off">已关闭</b></span>
+        <label class="gp-switch big" title="DLSS5 开关"><input type="checkbox" data-gp-group="nr" data-gp-field="Enabled" aria-label="DLSS5 开关"${Number(nr.Enabled) ? ' checked' : ''}${editable('Enabled') ? '' : ' disabled'}><i aria-hidden="true"></i></label></div></section>`;
+      const unwritten = uniform && Object.values(data.nr?.fields || {}).some(field => ['default', 'migration'].includes(field?.source));
+      const notices = [...(data.nr?.warnings || []).map(row => row.message), ...(unwritten ? ['部分设置文件未写入，显示的是当前 Core 缺省值（新增的层沿用旧版层设置）；应用后会写入。'] : []), ...(effectiveApi() === 'dx9' ? ['游戏内面板提供 DLSS5 开关；完整参数在此调整，退出游戏后应用。'] : [])].map(text => `<p class="gp-caption gp-card-note">${esc(text)}</p>`).join('');
+      const WORK = NR_CHOICES.WorkMode.map((label, value) => [value, label]);
+      if (!uniform) {
+        const face = Number(nr.AutoMask) === 1;
+        const dual = data.nr?.contract?.dualLayer ? `<label class="gp-field"><span>增强层数</span><select data-gp-group="nr" data-gp-field="NRPasses"${available ? '' : ' disabled'}>${option(1, '单层', nr.NRPasses) + option(2, '双层', nr.NRPasses)}</select></label>
+          <details class="gp-nr-details" data-gp-detail="dual-scale"><summary>第二层工作比例 · ${esc(nr.NRSecondScaleNumerator)} / ${esc(nr.NRSecondScaleDenominator)}</summary>${number('NRSecondScaleNumerator', '分子', 1, 10000, '')}${number('NRSecondScaleDenominator', '分母', 1, 10000, '')}<p class="gp-caption">比例范围 1/4–1；切回单层会保留第二层比例。</p></details>` : '';
+        return `<div class="gp-cards">${main}${notices}
+          ${card('处理方式', choice('WorkMode', 'NR 渲染比例', WORK, '比例越低越省性能，画面细节也会减少') + (Number(nr.WorkMode) === 5 ? number('CustomWorkScale', '自定义比例', .5, 1, '工作模式选为“自定义”后生效') : ''))}
+          ${card('模型细节', (shown('Style') ? seg('nr', 'Style', '风格', NR_CHOICES.Style.map((label, value) => [value, label]), nr.Style ?? 0) : '') + number('Intensity', '模型强度') +
+            number('LocalToneStrength', '局部明暗对比') + number('LocalStructureStrength', '整体细节强度') + dual +
+            toggle('SkinStructureStrength', '人脸调节', face ? '单独调整 AI 识别到的人脸细节' : '关闭时人脸随整体细节一起变化', 'face', face) + (face ? number('SkinStructureStrength', '人脸细节强度', 0, 2) : '') +
+            (caps.UICorrection === true ? toggle('UICorrection', '文字与界面保护', '尽量保留字幕和游戏界面') : ''), ' data-gp-card="model"')}
+          ${card('高级画质', number('TransferStrength', '额外增强', 0, 4, '整体增强效果的强弱') + number('PostTransferStrength', '后置额外增强', 0, 4, '超分后增强时的强弱') + number('ColorStrength', 'AI 色彩强度'))}</div>`;
+      }
+      let count = 1; for (let layer = 2; layer <= 5 && Number(nr[`Layer${layer}Enabled`]); layer++) count++;
+      if (editLayer > count) editLayer = 1;
+      const prefix = editLayer === 1 ? '' : `Layer${editLayer}`, masked = Number(nr[prefix + 'AutoMask']) === 1;
+      const start = String(nr.ProcessingStart ?? 'Before');
+      const ratio = start === 'After' ? number('PostWorkPercent', 'NR 工作比例 %', 0, 100, '先放大后增强时使用；设为 0 会停用增强') :
+        start === 'Present' ? number('CompatPostPercent', 'NR 工作比例 %', 50, 100, '自动兼容位置使用') :
+        choice('WorkMode', 'NR 工作比例', WORK, '比例越低越省性能，画面细节也会减少') + (Number(nr.WorkMode) === 5 ? number('CustomWorkScale', '自定义比例', 0, 1, '设为 0 会停用增强') : '');
+      const layers = shown('Layer2Enabled') ? seg('nr-layers', 'count', '模型层数', [1, 2, 3, 4, 5].map(n => [n, String(n)]), count, '层数越多效果越强，也更耗性能', !editable('Layer2Enabled')) : '';
+      const which = count > 1 ? seg('nr-edit-layer', 'layer', '正在调整', Array.from({ length: count }, (_, n) => [n + 1, `第 ${n + 1} 层`]), editLayer, '', false) : '<div class="gp-card-sub">第 1 层</div>';
+      const model = (shown(prefix + 'Style') ? seg('nr', prefix + 'Style', '风格', NR_CHOICES.Style.map((label, value) => [value, label]), nr[prefix + 'Style'] ?? 0) : '') +
+        number(prefix + 'Intensity', '模型强度') + number(prefix + 'LocalStructureStrength', '局部结构') + number(prefix + 'LocalToneStrength', '局部色调') +
+        toggle(prefix + 'AutoMask', '皮肤保护', '用模型自带的皮肤遮罩保留人物皮肤质感') +
+        number(prefix + 'SkinStructureStrength', '皮肤结构', masked ? 0 : -1, 2, masked ? '人物皮肤的细节程度' : '打开皮肤保护后可调', !masked) +
+        toggle(prefix + 'UICorrection', '文字保护', '避免游戏文字和界面被改动');
+      return `<div class="gp-cards">${main}${notices}
+        ${card('处理位置', (shown('ProcessingStart') ? seg('nr', 'ProcessingStart', '增强位置', [['Before', '先增强后放大'], ['After', '先放大后增强'], ['Present', '自动兼容']], start, '默认先增强再放大；不兼容时 Core 会自动换位置') : '') + ratio)}
+        ${card('模型与层数', layers + which + model + `<div class="gp-card-foot">${act('nr-reset-layer-' + editLayer, editLayer === 1 && count === 1 ? '重置本层' : `重置第 ${editLayer} 层`, !available, 'subtle')}</div>`, ' data-gp-card="model"')}
+        ${card('最终合成', number('TransferStrength', '效果强度', 1, 4, '1 为原量，越大变化越明显') + number('ColorStrength', 'AI 色彩强度') +
+          (shown('ColourLabMode') ? choice('ColourLabMode', '颜色策略', [[2, '保守 · 默认'], [1, '颜色优先 · 实验'], [0, '保留旧版许可设置']], '保守不放行未确认的 HDR 颜色；两种模式各自记住色彩强度') : ''))}
+        ${shown('ReconstructionMode') ? card('恢复与暗部保护', seg('nr', 'ReconstructionMode', '低分辨率细节增强', [[0, '关闭'], [1, '均衡'], [2, '精细']], nr.ReconstructionMode ?? 0, 'NR 分辨率较低时保住头发、衣物和人脸轮廓；精细更耗性能') +
+          toggle('NearBlackChromaGuard', '去除暗噪', '减少暗部和人脸的黑灰、彩色杂点')) : ''}
+        ${fold('nr-light', '光影微调', '', (shown('LightControlMode') ? seg('nr', 'LightControlMode', '光影范围', [[1, '全部亮暗变化'], [0, '仅细小变化']], nr.LightControlMode ?? 1) : '') +
+          (shown('LightPreset') ? seg('nr', 'LightPreset', '预设', [[0, '原样效果'], [1, '自然耐看'], [2, '减少辉光'], ...(Number(nr.LightPreset) === 3 ? [[3, '自定义']] : [])], nr.LightPreset ?? 0) : '') +
+          number('LightReflection', '增亮强度', 0, 2, 'AI 新增的提亮，1 为原量') + number('LightStructure', '压暗强度', 0, 2, 'AI 新增的压暗，1 为原量') + number('LightGlow', '辉光抑制', 0, 1, '减少 AI 新增的大片提亮') +
+          number('LightBroad', '模型新增提亮', 0, 2, '') + number('LightDark', '模型新增压暗', 0, 2, ''))}
+        ${fold('nr-protect', '画质保护（高级）', '', number('DetailStability', '细节稳定保护', 0, 1, '') + number('LightingLock', '原始光照保护', 0, 1, '') + number('EdgeGuard', '边缘保护', 0, 1, '') +
+          toggle('HighStrengthProtection', '高强度颜色与亮度保护', '默认开启') + toggle('ColorProtection', '色彩保护', '默认开启'))}
+        ${fold('nr-compare', '算法对照', '', choice('NRInputFilter', 'NR 输入滤波', [[0, '精确面积'], [1, 'Lanczos-2 抗混叠（实验）']]))}</div>`;
     }
     // Installed MFG Unlock build, or the one the next preparation installs.
     function mfgVersion() {
@@ -461,7 +569,7 @@
     // Side-by-side page: launch choice and hotkeys on 启动与快捷键; install
     // location and loading method stay with the install settings on 高级.
     function launchTab() {
-      return `${hoyoLoading() ? '' : `<section class="gp-section gp-startup"><h3>启动方式</h3><div class="gp-controls">${launchModeField()}</div></section>`}${hotkeySection()}`;
+      return `${hoyoLoading() ? '' : `<section class="gp-section gp-startup"><h3>启动</h3><div class="gp-controls">${launchModeField()}</div></section>`}${hotkeySection()}`;
     }
     function placementSection() {
       return `<section class="gp-section gp-placement"><h3>安装位置与加载</h3><div class="gp-controls">${placementFields()}</div>${hoyoPlacementNote()}</section>`;
@@ -515,6 +623,11 @@
         ${removeLibraryEntry()}`;
     }
     function hotkeySection() {
+      if (options.hero) {
+        const keyRow = (label, note, key, actions = '') => `<div class="gp-field gp-key-field"><span>${label}</span><small class="gp-hint">${note}</small><div class="gp-key-control"><kbd class="gp-key">${esc(key)}</kbd>${actions}</div></div>`;
+        return `<section class="gp-section gp-hotkeys"><h3>游戏内快捷键</h3><div class="gp-controls">${keyRow('打开 ReShade 面板', '新安装默认用 Home，已有的自定义键会保留',
+          bindingLabel(draft.hotkeys?.reshade || data.hotkeys?.reshade), act('capture-hotkey', capturingHotkey ? '请按组合键 · Esc 取消' : '点击录入快捷键', busy || !data.game.installed) + act('panel-default', '恢复默认 Home', busy || !data.game.installed))}${keyRow('开关 DLSS5', '由 Core 决定，这里不能修改', data.hotkeys?.nr?.label || '由 Core 提供')}</div></section>`;
+      }
       return `<section class="gp-section"><h3>游戏内面板快捷键</h3><p class="gp-caption">ReShade：${esc(bindingLabel(draft.hotkeys?.reshade || data.hotkeys?.reshade))} · NR：${esc(data.hotkeys?.nr?.label || '由 Core 提供')}</p>
         <p class="gp-caption">新安装默认使用 Home；已有自定义键会保留，也可以在这里修改。</p><div class="gp-small-actions">${act('capture-hotkey', capturingHotkey ? '请按组合键 · Esc 取消' : '点击录入快捷键', busy || !data.game.installed)}${act('panel-default', '恢复默认 Home', busy || !data.game.installed)}</div></section>`;
     }
@@ -626,8 +739,10 @@
       const expanded = [...host.querySelectorAll('details[data-gp-detail][open]')].map(row => row.dataset.gpDetail);
       tabController?.dispose();
       const notice = `<div class="gp-message${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}"${message || deploymentChanged() ? '' : ' hidden'}>${esc(message)}${recoveryNotice()}</div>`;
-      host.innerHTML = options.maintenanceOnly ? notice + (loaded.has('diagnostics') && loaded.has('enhancements') ? maintenance() : '<p class="gp-caption" role="status">正在读取维护记录…</p>') : (options.hero ? hero() + (dirty() ? footer() : '') : footer()) + head() + notice + tabKeys().map(key => `<div class="detail-panel" data-detail-panel="${DETAIL_TAB[key]}" role="tabpanel"${tab === key ? '' : ' hidden'}>${tab === key ? key === 'overview' ? installation() : key === 'nr' ? nrFields() : key === 'launch' ? launchTab() : enhancements() : ''}</div>`).join('');
+      host.innerHTML = options.maintenanceOnly ? notice + (loaded.has('diagnostics') && loaded.has('enhancements') ? maintenance() : '<p class="gp-caption" role="status">正在读取维护记录…</p>') : (options.hero ? hero() + (dirty() ? footer() : '') : footer()) + head() + notice + tabKeys().map(key => `<div class="detail-panel" data-detail-panel="${DETAIL_TAB[key]}" role="tabpanel"${tab === key ? '' : ' hidden'}>${tab === key ? key === 'overview' ? installation() : key === 'nr' ? (options.hero ? nrCards() : nrFields()) : key === 'launch' ? launchTab() : enhancements() : ''}</div>`).join('');
       if (!options.maintenanceOnly) syncHeaderAction(); else options.onActionState?.({ busy });
+      // The CSP blocks inline styles, so the filled part of each slider is set here.
+      for (const slider of host.querySelectorAll('[data-gp-slider]')) moveSlider(slider, slider.value);
       if (scope.GameDetailTabs && !options.maintenanceOnly) tabController = scope.GameDetailTabs.mount(host, { initial: DETAIL_TAB[tab], onSelect: value => selectTab(Object.keys(DETAIL_TAB).find(key => DETAIL_TAB[key] === value)) });
       for (const key of expanded) { const detail = host.querySelector(`details[data-gp-detail="${key}"]`); if (detail) detail.open = true; }
       if (focusKey) host.querySelector(`[data-gp-group="${focusGroup}"][data-gp-field="${focusKey}"]`)?.focus({ preventScroll: true });
@@ -820,7 +935,7 @@
       if (id && dirty()) pageDrafts.set(id, { draft: structuredClone(draft), fields: structuredClone(fields), invalidFields: { ...invalidFields } });
       launchAttempt++; launching = false;
       generation++; id = gameId; resumeAfterImport = null; waitingBackupIdentity = null; loaded.clear(); sectionTokens.clear(); sectionRequests.clear(); sectionFailures.clear(); draft = {}; invalidFields = {};
-      tab = initialTab === 'maintenance' ? 'overview' : tabKeys().includes(initialTab) ? initialTab : 'overview'; modal = null; message = ''; error = false; busy = false; launching = false; capturingHotkey = false; faceStrength = 1;
+      tab = initialTab === 'maintenance' ? 'overview' : tabKeys().includes(initialTab) ? initialTab : 'overview'; modal = null; message = ''; error = false; busy = false; launching = false; capturingHotkey = false; faceStrength = 1; editLayer = 1;
       readinessState = null; readinessEpoch = -1; readinessOrder = -1;
       const game = seed.game || { id: gameId, name: '游戏', installed: false };
       data = { gameId, game, api: game.chosen?.apiAssessment || { effectiveApi: game.apiOverride && game.apiOverride !== 'auto' ? game.apiOverride : game.chosen?.apiResolution?.api || 'unknown' }, ...seed };
@@ -872,8 +987,10 @@
       const value = input.type === 'checkbox' ? Number(input.checked) : input.type === 'number' && input.value === '' ? '' : group === 'nr' && key !== 'ProcessingStart' || input.type === 'range' || input.type === 'number' ? Number(input.value) : input.value;
       if (group === 'nr') {
         const invalidKey = 'nr:' + key;
-        if (input.type === 'number' && (input.value === '' || !Number.isFinite(value) || !input.validity.valid)) {
-          invalidFields[invalidKey] = `${input.closest('label')?.querySelector('span')?.textContent || key}：请输入 ${input.min}～${input.max} 范围内的有效数值。`;
+        const special = input.dataset.gpSpecial ? input.dataset.gpSpecial.split(' ').map(Number) : [];
+        if (input.type === 'number' && (input.value === '' || !Number.isFinite(value) || !input.validity.valid || special.length && !special.includes(value) && value < Number(input.dataset.gpFloor))) {
+          const allowed = special.length ? `${special.join('、')}（停用）或 ${input.dataset.gpFloor}～${input.max}` : `${input.min}～${input.max}`;
+          invalidFields[invalidKey] = `${input.closest('label')?.querySelector('span')?.textContent || key}：请输入 ${allowed} 范围内的有效数值。`;
           input.setAttribute('aria-invalid', 'true');
         } else { delete invalidFields[invalidKey]; input.removeAttribute('aria-invalid'); }
         message = Object.values(invalidFields).join('；'); error = Boolean(message);
@@ -889,9 +1006,15 @@
         }
         draft.nr = { ...(draft.nr || {}), [key]: value };
         if (value === data.nr?.[key]) delete draft.nr[key]; if (!Object.keys(draft.nr).length) delete draft.nr;
+        const slider = input.parentElement.querySelector('[data-gp-slider]'); if (slider && input.value !== '' && Number.isFinite(value)) moveSlider(slider, value);
         const out = input.parentElement.querySelector('output'); if (out) out.textContent = key === 'SkinStructureStrength' && value === -1 ? '关闭' : value;
         if (key === 'SkinStructureStrength' && value >= 0) faceStrength = value;
         if (data.nr?.capabilities?.Layer2Enabled === true && key === 'TransferStrength') draft.nr = { ...(draft.nr || {}), TransferStrength: value, PostTransferStrength: value, StrengthConfigVersion: 1 };
+        if (data.nr?.capabilities?.Layer2Enabled === true && /^(?:Layer[2-5])?AutoMask$/.test(key)) {
+          const skin = key.replace('AutoMask', 'SkinStructureStrength'), current = draft.nr?.[skin] ?? data.nr?.[skin];
+          if (value && Number(current) < 0) draft.nr = { ...(draft.nr || {}), [skin]: data.nr?.defaults?.[skin] ?? .4 };
+          render(); return;
+        }
         if (/^Layer[2-5]Enabled$/.test(key)) {
           const layer = Number(key[5]); draft.nr ||= {};
           for (let n = value ? 2 : layer; n <= (value ? layer : 5); n++) {
@@ -908,6 +1031,18 @@
         if (draft.nr.AutoMask === data.nr?.AutoMask) delete draft.nr.AutoMask;
         if (!Object.keys(draft.nr).length) delete draft.nr;
         render(); return;
+      } else if (group === 'nr-layers') {
+        // One layer count, as in the Core panel: layers 2..count on, the rest off.
+        const count = Number(value); draft.nr = { ...(draft.nr || {}) };
+        for (let layer = 2; layer <= 5; layer++) {
+          const on = Number(layer <= count), enabled = `Layer${layer}Enabled`, configured = `Layer${layer}Configured`;
+          draft.nr[enabled] = on; if (on) draft.nr[configured] = 1;
+          if (on === Number(data.nr?.[enabled])) { delete draft.nr[enabled]; if (Number(data.nr?.[configured]) === 1) delete draft.nr[configured]; }
+        }
+        if (!Object.keys(draft.nr).length) delete draft.nr;
+        editLayer = Math.min(editLayer, count); render(); return;
+      } else if (group === 'nr-edit-layer') {
+        editLayer = Number(value); render(); return;
       } else if (group === 'component') {
         draft.components = { ...(draft.components || {}), [key]: value };
       } else if (group === 'input-route') {
@@ -944,10 +1079,20 @@
         catch (failure) { invalidFields[group] = failure.message; }
         message = Object.values(invalidFields).join('；'); error = Boolean(message);
       }
-      if (input.tagName === 'SELECT') { const field = input.dataset.gpField; render(); host.querySelector(`[data-gp-group="${group}"][data-gp-field="${field}"]`)?.focus({ preventScroll: true }); }
+      if (input.tagName === 'SELECT' || input.type === 'radio') {
+        const field = input.dataset.gpField, picked = input.type === 'radio' ? `[value="${CSS.escape(input.value)}"]` : '';
+        render(); host.querySelector(`[data-gp-group="${group}"][data-gp-field="${field}"]${picked}`)?.focus({ preventScroll: true });
+      }
       else updateBar();
     }
-    host.addEventListener('input', event => { if (event.target.type === 'range' || event.target.type === 'number') change(event.target); }, { signal: eventController.signal });
+    host.addEventListener('input', event => {
+      if (event.target.dataset?.gpSlider !== undefined) {
+        const box = event.target.parentElement.querySelector('input[type="number"]');
+        if (box && !box.disabled) { box.value = event.target.value; moveSlider(event.target, event.target.value); change(box); }
+        return;
+      }
+      if (event.target.type === 'range' || event.target.type === 'number') change(event.target);
+    }, { signal: eventController.signal });
     host.addEventListener('change', event => {
       if (event.target.dataset.gpAddonKeep !== undefined && modal?.kind === 'apply') {
         modal.keepChanged = true;
@@ -963,6 +1108,17 @@
         if (action === 'back') requestLeave(() => options.onBack?.());
         else if (action === 'refresh') { message = ''; error = false; await refresh(true); if (!error) message = '已重新检查。'; render(); }
         else if (action === 'preview') await preview();
+        else if (action === 'nr-recommended') {
+          // The product's recommended picture (layer 1 and the shared values reset,
+          // extra layers off with their tuning kept, the DLSS5 switch untouched),
+          // filled in as a draft: nothing is written until Apply.
+          draft.nr = { ...(draft.nr || {}) };
+          for (const [key, value] of Object.entries(data.nr?.recommended || {})) {
+            if (String(data.nr?.[key]) === String(value)) delete draft.nr[key]; else draft.nr[key] = value;
+          }
+          if (!Object.keys(draft.nr).length) delete draft.nr;
+          editLayer = 1; message = draft.nr ? '已填入推荐画质，点“应用修改”后生效。' : '当前已是推荐画质。'; error = false; render();
+        }
         else if (/^nr-reset-layer-[1-5]$/.test(action)) {
           const layer = Number(action.at(-1)), prefix = layer === 1 ? '' : `Layer${layer}`;
           for (const [key, value] of Object.entries({ Intensity: 1.5, LocalToneStrength: 1, LocalStructureStrength: 1, SkinStructureStrength: .4, AutoMask: 1, Style: 0, UICorrection: 1 })) {
