@@ -216,7 +216,7 @@ async function smoke() {
   const host = () => document.querySelector('.game-card.expanded .game-detail.gp-inline');
   const state = () => host()?.__gpController.getState();
   const field = (group, key) => host()?.querySelector(`[data-gp-group="${group}"][data-gp-field="${key}"]`);
-  const button = action => host()?.querySelector(`[data-gp-action="${action}"]`) || (action === 'launch' ? host()?.closest('.game-card').querySelector('.unified-launch-btn') : null);
+  const button = action => host()?.querySelector(`[data-gp-action="${action}"]`);
   const count = kind => mock.calls.filter(row => row[0] === kind).length;
   const click = action => { const item = button(action); assert(item && !item.disabled, 'action unavailable: ' + action);
     const closed = []; for (let parent = item.parentElement; parent && parent !== host(); parent = parent.parentElement) if (parent.tagName === 'DETAILS' && !parent.open) closed.push(parent);
@@ -231,7 +231,7 @@ async function smoke() {
     input.dispatchEvent(new Event(input.type === 'range' || input.type === 'number' ? 'input' : 'change', { bubbles: true })); };
   const tab = async key => { if (key === 'maintenance') { host().__gpController.selectTab('maintenance'); return; } const item = host()?.querySelector(`[data-gp-tab="${key}"]`); assert(item, 'tab exists: ' + key); item.click();
     await until(() => host()?.querySelector(`[data-gp-tab="${key}"]`)?.getAttribute('aria-selected') === 'true', 'tab ' + key); };
-  const open = async id => { const item = card(id)?.querySelector('.open-game-page-btn'); assert(item, 'card can open: ' + id); item.click();
+  const open = async id => { const item = card(id)?.querySelector('.game-card-head'); assert(item, 'card can open: ' + id); item.click();
     await until(() => host()?.dataset.gameDetail === id, 'inline card ' + id, 1000); };
   const fold = async selector => { await until(() => host()?.querySelector(selector), 'details ' + selector); const details = host().querySelector(selector);
     if (!details.open) details.querySelector('summary').click(); assert(details.open, 'details can open: ' + selector); };
@@ -244,30 +244,31 @@ async function smoke() {
     discard(); mock.policyEnabled = false; mock.assessment = structuredClone(mock.baseline); mock.assessment.game.name = label; change?.(mock.assessment);
     await maintenance(); click('refresh'); await until(() => state().data.game.name === label && mock.pending === 0, 'fresh scenario ' + label); await settled();
   };
-  await until(() => card()?.querySelector('.open-game-page-btn') && card('fixture-two'), 'library cards');
-  assert(card('fixture-unmanaged').textContent.includes('已有插件待确认') && card('fixture-unmanaged').textContent.includes('检查已有安装'), 'unmanaged Core is disclosed on the collapsed card');
+  await until(() => card()?.querySelector('.game-card-head') && card('fixture-two'), 'library cards');
+  assert(card('fixture-unmanaged').textContent.includes('已有插件待确认'), 'unmanaged Core is disclosed in the game list');
   await open('fixture-unmanaged'); await until(() => state().loaded.includes('installation'), 'unmanaged installation assessment');
   assert(field('route', 'version').value === '', 'unmanaged Core does not inherit the new-install default');
   assert(host().textContent.includes('发现已有插件') && host().textContent.includes('确认备份再替换') && host().textContent.includes('_DLSS5_Backup'), 'existing files and backup boundary are explained');
   assert(button('prepare')?.disabled && button('prepare')?.textContent === '安装', 'preview waits for an explicit replacement target');
   set('route', 'version', '0.4.7beta'); await preview();
   assert(mock.plan.request.version === '0.4.7beta', 'explicit replacement target reaches the operation preview');
-  click('modal-cancel'); discard(); click('back');
+  click('modal-cancel'); discard();
   await open('fixture-dx9'); await until(() => state().loaded.includes('installation'), 'DX9 Feeder assessment');
   assert(state().data.game.supported === false && state().data.game.chosen.bitness === 32 && field('route', 'version').value === 'fixture-dx9-x86-on12', 'old unsupported marker does not suppress an available DX9 x86 Feeder package');
   await preview('prepare');
   assert(mock.plan.request.route === 'feeder' && mock.plan.request.api === 'auto' && mock.plan.request.version === 'fixture-dx9-x86-on12', 'DX9 x86 card reaches managed Feeder preview');
-  click('modal-cancel'); discard(); click('back');
+  click('modal-cancel'); discard();
   const openAt = performance.now(); await open('fixture');
   assert(performance.now() - openAt < 500, 'five-second installation check must not delay inline expansion');
   assert(document.getElementById('view-games').classList.contains('active'), 'library remains active');
   assert(!document.getElementById('view-game-detail').classList.contains('active'), 'independent detail view is never activated');
-  assert(host().querySelectorAll('[data-gp-tab]').length === 3, 'three tabs appear from the seed');
-  assert(host().querySelector('[data-detail-tab="enhance"]') && host().querySelector('[data-detail-tab="graphics"]') && host().querySelector('[data-detail-tab="advanced"]'), 'existing accessible tab identities are reused');
+  assert([...host().querySelectorAll('[data-gp-tab]')].map(row => row.textContent).join('|') === '画质增强|超分与补帧|启动与快捷键|高级', 'four task tabs appear from the seed');
+  assert(state().tab === 'nr', 'an installed game opens on 画质增强');
+  assert(['enhance', 'graphics', 'advanced', 'startup'].every(key => host().querySelector(`[data-detail-tab="${key}"]`)), 'accessible tab identities are reused');
   assert(!state().loaded.includes('installation'), 'seed appears while installation is unresolved');
   await until(() => state().loaded.includes('installation'), 'five-second installation response'); mock.delays['fixture:installation'] = 0;
   assert(!mock.calls.some(row => row[0] === 'assess' && row[2] !== 'installation'), 'first tab does not start expensive enhancement or diagnostic work');
-  assert(!field('nr', 'Intensity'), 'installation page keeps NR controls on their own page'); await tab('nr');
+  await tab('overview'); assert(!field('nr', 'Intensity'), 'installation page keeps NR controls on their own page'); await tab('nr');
   assert(['Intensity', 'LocalToneStrength', 'LocalStructureStrength'].every(key => field('nr', key)?.getClientRects().length > 0), 'three primary NR controls are visible on the NR page');
   assert(host().querySelectorAll('.gp-nr-primary input[type="number"]').length === 3 && !host().querySelector('.gp-nr-details').open && field('nr', 'WorkMode').closest('details') === host().querySelector('.gp-nr-details'), 'advanced NR starts collapsed below three precise numeric controls');
   await tab('overview'); assert(![...field('route', 'version').options].some(row => row.value.includes('bridge1411')), 'bridge comparison is absent from basic Core choices');
@@ -292,8 +293,9 @@ async function smoke() {
   assert(host() === firstHost && host().__gpController === firstController && mock.mounts.get('fixture') === 1, 'same host and controller survive cross-game expansion');
   assert(field('nr', 'Intensity').value === '0.65', 'first-game draft survives returning from another game');
   assert(field('nr', 'WorkMode').value === '5', 'advanced NR draft survives delayed diagnostics'); await tab('maintenance');
-  click('back'); assert(!host() && !document.querySelector('.gp-modal'), 'collapse keeps drafts without a leave confirmation');
-  await open('fixture'); assert(state().draft.nr.Intensity === .65 && state().draft.nr.WorkMode === 5, 'collapsed draft is retained');
+  assert(!button('back')?.getClientRects().length, 'the side-by-side page always shows a game, so there is nothing to collapse');
+  await open('fixture-two'); assert(!document.querySelector('.gp-modal'), 'switching games keeps drafts without a leave confirmation');
+  await open('fixture'); assert(state().draft.nr.Intensity === .65 && state().draft.nr.WorkMode === 5, 'the draft is retained after switching games');
   mock.delays['fixture:diagnostics'] = 0; discard(); await tab('enhance');
   await until(() => state().loaded.includes('enhancements'), 'SR/FG lazy section');
   assert(field('sr', 'preset').value === 'M' && field('sr', 'quality').value === 'preserve', 'RTX40 starts with explicit M and preserves the game quality');
@@ -310,9 +312,9 @@ async function smoke() {
   assert(count('apply') === passiveWrites && count('preview') === passivePreviews && count('legacy-mount') === 0, 'control changes never mount the old writer or auto-apply');
   assert(field('fg', 'mode').querySelector('option[value="dynamic"]').disabled, 'RTX40 Dynamic stays disabled');
   assert(field('fg', 'multiplier').querySelector('option[value="6"]').disabled, 'unverified multiplier stays disabled');
-  assert(button('launch').disabled, 'dirty draft blocks launch');
-  const dirtyBar = host().querySelector('.gp-apply-bar'), gameCard = host().closest('.game-card'), view = host().closest('.view');
-  assert(host().firstElementChild === dirtyBar && dirtyBar.classList.contains('is-dirty'), 'dirty actions are immediately below the card header and before all tabs');
+  assert(!button('launch'), 'dirty draft has no launch entry until it is applied or discarded');
+  const dirtyBar = host().querySelector('.gp-apply-bar'), gameCard = host().closest('.game-card'), view = host().closest('.game-detail-pane, .view');
+  assert(host().firstElementChild.classList.contains('gp-hero') && dirtyBar.previousElementSibling === host().firstElementChild && dirtyBar.nextElementSibling.classList.contains('gp-tabs') && dirtyBar.classList.contains('is-dirty'), 'dirty actions are immediately below the game header and before all tabs');
   assert(!host().querySelector('[data-gp-action="launch"]') && gameCard.querySelectorAll('.button.primary').length === 1 && button('preview').classList.contains('primary'), 'a dirty card has one prominent operation and no duplicate launch button');
   const originalScroll = view.scrollTop;
   view.scrollTop += dirtyBar.getBoundingClientRect().top - view.getBoundingClientRect().top + 120; await delay(40);
@@ -353,7 +355,7 @@ async function smoke() {
     value.launch.readiness = structuredClone(readiness); value.enhancements.launchReadiness = structuredClone(readiness);
   }); await tab('overview');
   assert(state().readiness?.state === 'blocked' && host().textContent.includes('旧版 SR'), 'old SR readiness is visible before launch without a new draft');
-  assert(button('resolve-readiness')?.textContent === '前往超分补帧设置' && button('launch')?.disabled, 'old SR blocks launch and exposes the settings entry');
+  assert(button('resolve-readiness')?.textContent === '前往超分补帧设置' && !button('launch'), 'old SR blocks launch and exposes the settings entry');
   click('resolve-readiness'); await until(() => state().tab === 'enhance', 'old SR settings entry');
   mock.assessment.enhancements.launchReadiness = { state: 'ready', known: true, source: 'settings-inspection', blockers: [], pending: [], requests: {} };
   click('refresh'); await until(() => state().readiness?.state === 'ready' && !state().busy, 'newer settings readiness'); await tab('overview');
@@ -364,7 +366,7 @@ async function smoke() {
     value.enhancements.requests.fg = { request: structuredClone(request) }; value.enhancements.applied.fg = { request: structuredClone(request), readbackVerified: true };
     value.enhancements.launchReadiness = { state: 'blocked', known: true, source: 'settings-inspection', blockers: [{ domain: 'fg', code: 'SETTINGS_FG_MIGRATION_REQUIRED', message: '旧补帧设置只保留恢复能力，请先迁移或撤销后再启动。', action: { kind: 'migrate' }, recovery: true }], pending: [], requests: { fg: { request: structuredClone(request) } } };
   }); await tab('overview');
-  assert(button('resolve-readiness')?.textContent === '前往补帧设置' && button('launch')?.disabled, 'old FG blocks launch with a migration entry');
+  assert(button('resolve-readiness')?.textContent === '前往补帧设置' && !button('launch'), 'old FG blocks launch with a migration entry');
   click('resolve-readiness'); await until(() => state().tab === 'enhance' && button('restore-fg'), 'old FG restore entry');
 
   await scenario('启动前回读失配 · UI fixture', value => {
@@ -372,7 +374,7 @@ async function smoke() {
     value.enhancements.requests.sr = { request: structuredClone(request) }; value.enhancements.applied.sr = { request: structuredClone(request), readbackVerified: false, requiresReapply: true };
     value.enhancements.launchReadiness = { state: 'blocked', known: true, source: 'settings-inspection', blockers: [{ domain: 'sr', code: 'SETTINGS_REQUIRE_REAPPLY', message: '当前设置已被其他程序改变，请重新预览并明确应用。', action: { kind: 'reapply' } }], pending: [], requests: { sr: { request: structuredClone(request) } } };
   }); await tab('overview');
-  assert(button('resolve-readiness')?.textContent === '重新预览设置' && button('launch')?.disabled, 'readback mismatch blocks launch with a reapply entry');
+  assert(button('resolve-readiness')?.textContent === '重新预览设置' && !button('launch'), 'readback mismatch blocks launch with a reapply entry');
   click('resolve-readiness'); await until(() => state().tab === 'enhance' && button('reapply'), 'readback reapply entry');
 
   discard(); mock.assessment = structuredClone(mock.baseline); mock.assessment.game.name = 'FG 文件恢复 · metadata 阶段';
@@ -415,19 +417,20 @@ async function smoke() {
   await scenario('折叠卡片启动 · 旧 SR 守卫', value => {
     const readiness = { state: 'blocked', known: true, source: 'metadata', blockers: [{ domain: 'sr', code: 'SETTINGS_LEGACY_APPLY_REQUIRED', message: '旧版 SR 模型 M 仍有恢复记录，请先处理。', action: { kind: 'open-settings' }, recovery: true }], pending: [], requests: {} };
     value.launch.readiness = structuredClone(readiness); value.enhancements.launchReadiness = structuredClone(readiness);
-  }); await tab('overview'); await until(() => state().readiness?.state === 'blocked' && !state().busy, 'collapsed launch blocker');
-  const blockedLaunches = count('launch'); click('back');
-  const collapsedBlockedCard = card('fixture'), collapsedBlockedLaunch = collapsedBlockedCard.querySelector('.unified-launch-btn');
-  assert(collapsedBlockedLaunch?.disabled === false, 'collapsed old SR card keeps its routed launch entry'); collapsedBlockedLaunch.click();
-  await until(() => host()?.__gpController.getState().tab === 'enhance' && !state().launching, 'collapsed old SR routes to settings');
-  assert(count('launch') === blockedLaunches, 'collapsed old SR launch entry cannot call manager.launch');
+  }); await tab('overview'); await until(() => state().readiness?.state === 'blocked' && !state().busy, 'launch blocker');
+  // Side by side, the selected game's primary action is its only launch entry.
+  const primary = () => host().querySelector('.gp-main-actions .button.primary');
+  const blockedLaunches = count('launch'), blockedLaunch = primary();
+  assert(blockedLaunch?.disabled === false, 'old SR keeps its routed primary action'); blockedLaunch.click();
+  await until(() => host()?.__gpController.getState().tab === 'enhance' && !state().launching, 'old SR routes to settings');
+  assert(count('launch') === blockedLaunches, 'old SR primary action cannot call manager.launch');
   const readyReadiness = { state: 'ready', known: true, source: 'settings-inspection', blockers: [], pending: [], requests: {} };
   mock.assessment.launch.readiness = structuredClone(readyReadiness); mock.assessment.enhancements.launchReadiness = structuredClone(readyReadiness);
-  await tab('overview'); click('refresh'); await until(() => state().readiness?.state === 'ready' && !state().busy, 'collapsed launch ready state');
-  click('back'); const collapsedReadyCard = card('fixture'), collapsedReadyLaunch = collapsedReadyCard.querySelector('.unified-launch-btn'), readyLaunches = count('launch');
-  assert(collapsedReadyLaunch?.disabled === false, 'normal collapsed card keeps its launch entry enabled'); collapsedReadyLaunch.click();
-  await until(() => count('launch') === readyLaunches + 1 && !state().launching, 'collapsed normal launch');
-  assert(mock.calls.filter(row => row[0] === 'launch').at(-1)[1] === 'fixture', 'collapsed normal launch reaches the current game only');
+  await tab('overview'); click('refresh'); await until(() => state().readiness?.state === 'ready' && !state().busy, 'launch ready state');
+  const readyLaunch = primary(), readyLaunches = count('launch');
+  assert(readyLaunch?.disabled === false && readyLaunch.dataset.gpAction === 'launch', 'a ready game keeps its launch action enabled'); readyLaunch.click();
+  await until(() => count('launch') === readyLaunches + 1 && !state().launching, 'normal launch');
+  assert(mock.calls.filter(row => row[0] === 'launch').at(-1)[1] === 'fixture', 'normal launch reaches the current game only');
 
   const session = { sessionId: 'b4aa3424-4828-40cd-9b5b-a49e566c5130', gameId: 'fixture', targetExe: mock.baseline.game.chosen.path,
     requestedAt: new Date().toISOString(), status: 'waiting-enhancement', process: { pid: 24001, exe: mock.baseline.game.chosen.path, startedAt: new Date().toISOString() } };
@@ -471,14 +474,14 @@ async function smoke() {
   runtimeCards = [...host().querySelectorAll('.gp-verification article')];
   assert(runtimeCards[2].querySelector('.badge').textContent === '已确认' && runtimeCards[3].querySelector('.badge').textContent === '已确认' && runtimeCards[3].textContent.includes('完成并回填计数持续增长'), 'host Core and successful NR readback display separately');
   assert(runtimeCards[4].querySelector('.badge').textContent === '待确认', 'actual NR success still requires separate visual observation');
-  await scenario('快捷键暂存 · UI fixture'); await tab('maintenance');
+  await scenario('快捷键暂存 · UI fixture'); await tab('launch');
   const beforeHotkeyApply = count('apply'); click('capture-hotkey');
   document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Insert', code: 'Insert', keyCode: 45, bubbles: true, cancelable: true })); await delay(100);
   assert(mock.assessment.hotkeys.reshade.key === 36 && count('direct-hotkey-write') === 0 && count('apply') === beforeHotkeyApply, 'shortcut only changes the draft');
   await preview(); assert(JSON.stringify(mock.plan.request) === JSON.stringify({ hotkeys: { reshade: { key: 45, ctrl: false, shift: false, alt: false } } }), 'Insert binding travels through unified preview');
   click('modal-cancel'); assert(mock.assessment.hotkeys.reshade.key === 36, 'cancel retains Home'); await preview(); click('modal-apply'); await settled();
   assert(mock.assessment.hotkeys.reshade.key === 45, 'unified Apply owns shortcut mutation');
-  await tab('maintenance');
+  await tab('launch');
   assert(button('panel-default').textContent === '恢复默认 Home' && !button('panel-home'), 'default action clearly uses Home');
   click('panel-default');
   assert(mock.assessment.hotkeys.reshade.key === 45, 'reset to Home is a draft until unified Apply');
@@ -563,7 +566,7 @@ async function smoke() {
   await scenario('能力结果缺失 · UI fixture', value => { delete value.enhancements.featureStates.sr; }); await tab('enhance');
   assert(field('sr', 'preset').disabled && button('preview-sr').disabled && !button('confirm-sr'), 'missing automatic feature evidence cannot inherit old boolean support flags');
 
-  await scenario('任意快捷键录入 · UI fixture'); await tab('maintenance');
+  await scenario('任意快捷键录入 · UI fixture'); await tab('launch');
   click('capture-hotkey'); document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Control', code: 'ControlLeft', ctrlKey: true, keyCode: 17, bubbles: true, cancelable: true }));
   assert(!state().draft.hotkeys && button('capture-hotkey').textContent.includes('请按组合键'), 'modifier alone is not accepted as a hotkey');
   document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
@@ -747,7 +750,7 @@ async function captureBaseline({ tab = 'overview', diagnostics = false, dirty = 
   const field = (group, key) => host()?.querySelector(`[data-gp-group="${group}"][data-gp-field="${key}"]`);
   const button = action => host()?.querySelector(`[data-gp-action="${action}"]`);
   const click = action => { const item = button(action); assert(item && !item.disabled && item.getClientRects().length, 'short action available: ' + action); item.click(); };
-  await until(() => card()?.querySelector('.open-game-page-btn'), 'library ready'); card().querySelector('.open-game-page-btn').click();
+  await until(() => card()?.querySelector('.game-card-head'), 'library ready'); card().querySelector('.game-card-head').click();
   await until(() => state()?.loaded.includes('installation'), 'installation baseline');
   assert(document.getElementById('view-games').classList.contains('active') && !document.getElementById('view-game-detail').classList.contains('active'), 'short baseline stays in library');
 
@@ -802,10 +805,10 @@ async function captureBaseline({ tab = 'overview', diagnostics = false, dirty = 
     const input = tab === 'enhance' ? field('sr', 'preset') : field('nr', 'Intensity');
     assert(input && !input.disabled, 'dirty capture has an editable setting'); input.value = tab === 'enhance' ? 'K' : '1.45';
     input.dispatchEvent(new Event(input.type === 'range' ? 'input' : 'change', { bubbles: true }));
-    const view = document.getElementById('view-games'), bar = host().querySelector('.gp-apply-bar');
-    view.scrollTop += card().getBoundingClientRect().top - view.getBoundingClientRect().top;
-    assert(host().firstElementChild === bar && button('preview') && button('discard'), 'dirty action row appears directly below the card header');
-    assert(card().querySelectorAll('.button.primary').length === 1 && !host().querySelector('[data-gp-action="launch"]'), 'dirty capture highlights one operation without repeated launch');
+    const view = host().closest('.game-detail-pane, .view'), bar = host().querySelector('.gp-apply-bar');
+    view.scrollTop = 0;
+    assert(bar?.previousElementSibling?.classList.contains('gp-hero') && button('preview') && button('discard'), 'dirty action row appears directly below the game header');
+    assert(host().querySelectorAll('.button.primary').length === 1 && !host().querySelector('[data-gp-action="launch"]'), 'dirty capture highlights one operation without repeated launch');
     await delay(40); const box = bar.getBoundingClientRect(), viewport = view.getBoundingClientRect();
     assert(box.top >= viewport.top && box.bottom < viewport.bottom, 'both dirty actions are visible without scrolling to the card bottom');
   }
@@ -829,7 +832,7 @@ async function captureReadiness({ readiness = 'blocked', tab = 'enhance' } = {})
   const card = () => document.querySelector('.game-card[data-id="fixture"]');
   const host = () => card()?.querySelector('.game-detail.gp-inline');
   const state = () => host()?.__gpController.getState();
-  await until(() => card()?.querySelector('.open-game-page-btn'), 'library ready'); card().querySelector('.open-game-page-btn').click();
+  await until(() => card()?.querySelector('.game-card-head'), 'library ready'); card().querySelector('.game-card-head').click();
   await until(() => state()?.loaded.includes('installation'), 'installation readiness');
   const blocked = readiness !== 'ready', value = mock.assessment;
   const request = { backend: 'native', quality: 'preserve', preset: 'M' };
@@ -838,10 +841,10 @@ async function captureReadiness({ readiness = 'blocked', tab = 'enhance' } = {})
   value.launch.readiness = blocked ? { state: 'blocked', known: true, source: 'metadata', blockers: [{ domain: 'sr', code: 'SETTINGS_LEGACY_APPLY_REQUIRED', message: '旧版 SR 模型 M 仍有恢复记录，请先在超分设置中处理。', action: { kind: 'open-settings' }, recovery: true }], pending: [], requests: {}, legacy: { configured: true, effective: 'm' } } : { state: 'ready', known: true, source: 'settings-inspection', blockers: [], pending: [], requests: { sr: { request: structuredClone(request) } }, legacy: { managed: true } };
   await host().__gpController.refresh(true); await until(() => state()?.readiness?.state === (blocked ? 'blocked' : 'ready') && !state()?.busy, 'readiness state');
   if (tab !== 'overview') { host().__gpController.selectTab(tab); await until(() => state()?.tab === tab && state()?.loaded.includes('enhancements'), 'readiness tab'); }
-  const unified = card().querySelector('.unified-launch-btn');
-  assert(blocked ? unified?.disabled === true : unified?.disabled === false, blocked ? 'old M disables the external launch entry' : 'ready state re-enables the external launch entry');
+  const launch = host().querySelector('.gp-main-actions [data-gp-action="launch"]');
+  assert(blocked ? !launch : launch?.disabled === false, blocked ? 'old M removes the launch entry' : 'ready state offers launch again');
   assert(blocked ? host().textContent.includes('旧版 SR') && host().querySelector('[data-gp-action="resolve-readiness"]') : host().textContent.includes('设置已就绪'), blocked ? 'old M reason and entry are visible' : 'ready state clears the old M reason');
-  return { scope: 'readiness contract screenshot · normal GamePageUi', assertionCount, readiness, tab, launchDisabled: Boolean(unified?.disabled), entry: Boolean(host().querySelector('[data-gp-action="resolve-readiness"]')) };
+  return { scope: 'readiness contract screenshot · normal GamePageUi', assertionCount, readiness, tab, launchDisabled: !launch || launch.disabled, entry: Boolean(host().querySelector('[data-gp-action="resolve-readiness"]')) };
 }
 
 async function captureHoYoReadiness({ readiness = 'blocked' } = {}) {
@@ -969,8 +972,8 @@ async function smokeTargeted() {
   const assert = (value, message) => { assertionCount++; if (!value) throw Error(message); };
   const until = async (predicate, label, timeout = 8000) => { const start = performance.now(); while (performance.now() - start < timeout) { if (predicate()) return; await delay(20); } throw Error('Targeted UI timeout: ' + label); };
   const card = id => document.querySelector(`.game-card[data-id="${id}"]`), host = () => document.querySelector('.game-card.expanded .game-detail.gp-inline'), state = () => host()?.__gpController.getState(), countLaunch = () => mock.calls.filter(row => row[0] === 'launch').length;
-  await until(() => card('fixture')?.querySelector('.open-game-page-btn') && card('fixture-two')?.querySelector('.open-game-page-btn'), 'ordinary cards');
-  card('fixture').querySelector('.open-game-page-btn').click(); await until(() => state()?.loaded.includes('installation') && !state().busy, 'ordinary installation');
+  await until(() => card('fixture')?.querySelector('.game-card-head') && card('fixture-two')?.querySelector('.game-card-head'), 'ordinary cards');
+  card('fixture').querySelector('.game-card-head').click(); await until(() => state()?.loaded.includes('installation') && !state().busy, 'ordinary installation');
   const controller = () => host().__gpController;
   const ready = { state: 'ready', known: true, source: 'settings-inspection', blockers: [], pending: [], requests: {} };
   mock.assessment.launch.readiness = structuredClone(ready); mock.assessment.enhancements.launchReadiness = structuredClone(ready);

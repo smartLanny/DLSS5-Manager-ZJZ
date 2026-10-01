@@ -49,10 +49,10 @@ async function smokeCompatibilityNormal({ leaveSurveyOpen = true } = {}) {
   const host = () => document.querySelector('.game-card.expanded .game-detail.gp-inline');
   const controller = () => host()?.__gpController;
   const openCard = async id => {
-    const button = card(id)?.querySelector('.open-game-page-btn');
+    const button = card(id)?.querySelector('.game-card-head');
     assert(button, 'normal card can open: ' + id); button.click();
     await delay(30);
-    if (!card(id)?.classList.contains('expanded')) card(id)?.querySelector('.open-game-page-btn')?.click();
+    if (!card(id)?.classList.contains('expanded')) card(id)?.querySelector('.game-card-head')?.click();
     try { await until(() => host()?.dataset.gameDetail === id && host()?.querySelector('.cx-panel'), 'normal card ' + id); }
     catch (error) { throw Error(error.message + ' [cards=' + [...document.querySelectorAll('.game-card')].map(row => `${row.dataset.id}:${row.classList.contains('expanded')}:${Boolean(row.querySelector('.cx-panel'))}`).join(',') + ']'); }
     await until(() => controller()?.getState().loaded.includes('installation'), 'normal installation ' + id);
@@ -80,7 +80,7 @@ async function smokeCompatibilityNormal({ leaveSurveyOpen = true } = {}) {
     await until(() => !dialog()?.open && host()?.querySelector('.cx-notice')?.textContent.includes('已保存'), 'feedback save');
   };
 
-  await until(() => card('fixture')?.querySelector('.open-game-page-btn'), 'normal library');
+  await until(() => card('fixture')?.querySelector('.game-card-head'), 'normal library');
   await openCard('fixture');
   assert(host().querySelectorAll('.cx-panel .cx-actions .cx-button').length === 1, 'normal page has one feedback operation');
 

@@ -226,7 +226,7 @@ app.whenReady().then(async () => {
         let motionPreference = null, themePreference = null, settingsRhythm = null, posterGeometry = null;
         if (viewName === 'games') {
           const captureArtwork = ${JSON.stringify(captureArtworkUrl)};
-          const firstPoster = view.querySelector('.game-card .poster');
+          const firstPoster = view.querySelector('#gameList .game-art');
           if (captureArtwork && firstPoster) {
             const image = document.createElement('img');
             image.src = captureArtwork;
@@ -234,17 +234,19 @@ app.whenReady().then(async () => {
             firstPoster.replaceChildren(image);
             try { await image.decode(); } catch {}
           }
-          posterGeometry = [...view.querySelectorAll('.game-card .poster')].map(poster => {
+          // List art is a 74x35 wide thumbnail: Steam art fills it, an EXE icon stays whole.
+          posterGeometry = [...view.querySelectorAll('#gameList .game-art')].map(poster => {
             const rect = poster.getBoundingClientRect();
             const image = poster.querySelector('img');
             return {
+              kind: poster.dataset.art,
               width: Math.round(rect.width),
               height: Math.round(rect.height),
               objectFit: image ? getComputedStyle(image).objectFit : null
             };
           });
-          if (!posterGeometry.length || posterGeometry.some(item => item.width !== item.height || item.objectFit && item.objectFit !== 'contain')) {
-            throw Error('game artwork is not a square contain-fit icon: ' + JSON.stringify(posterGeometry));
+          if (!posterGeometry.length || posterGeometry.some(item => item.width !== 74 || item.height !== 35 || item.objectFit && item.objectFit !== (item.kind === 'icon' ? 'contain' : 'cover'))) {
+            throw Error('game artwork is not a wide list thumbnail: ' + JSON.stringify(posterGeometry));
           }
         }
         if (viewName === 'settings') {
@@ -291,7 +293,7 @@ app.whenReady().then(async () => {
         if (horizontalOverflow) throw Error(viewName + ' view has horizontal overflow');
         if (viewName === 'repair' && repairGap !== null && repairGap < 16) throw Error('repair maintenance spacing regressed');
         if (activeMask && !/-fill\.svg/.test(activeMask)) throw Error(viewName + ' active navigation icon is not the fill variant');
-        if (viewName === 'games' && !/caret-down\.svg/.test(expandArrowBefore?.maskImage || '')) throw Error('game expand control is not using CaretDown');
+        if (viewName === 'games' && document.querySelector('#gameList .expand-arrow, #gameList .card-action')) throw Error('side-by-side game rows carry no expand or action buttons');
         if (customizableSelect && selectAlignment.some(item => item.display !== 'flex' || item.alignItems !== 'center')) throw Error(viewName + ' select content is not vertically centered');
         return {
           view: viewName,
@@ -313,21 +315,21 @@ app.whenReady().then(async () => {
       })()`);
       if (requestedView === 'games' && process.env.GAME_UI_MOTION_TARGET === 'card') {
         result.motionState = await win.webContents.executeJavaScript(`(async () => {
-          document.querySelector('#gameList .game-card .game-card-head')?.click();
+          document.querySelectorAll('#gameList .game-card .game-card-head')[1]?.click();
           await new Promise(resolve => setTimeout(resolve, 70));
-          const detail = document.querySelector('#gameList .game-card.expanded .game-detail');
+          const detail = document.querySelector('#gameDetailPane .game-card.expanded .game-detail');
           if (!detail) throw Error('game detail did not open for motion capture');
           const style = getComputedStyle(detail);
           return { animationName: style.animationName, animationDuration: style.animationDuration, opacity: style.opacity,
-            arrowExpanded: document.querySelector('#gameList .game-card.expanded .expand-arrow')?.getAttribute('aria-expanded') };
+            rowSelected: document.querySelectorAll('#gameList .game-card .game-card-head')[1]?.getAttribute('aria-current') };
         })()`);
-        if (result.motionState.animationName !== 'detail-enter' || result.motionState.animationDuration !== '0.22s' || result.motionState.arrowExpanded !== 'true') throw Error('game detail transition is not active');
+        if (result.motionState.animationName !== 'detail-enter' || result.motionState.animationDuration !== '0.22s' || result.motionState.rowSelected !== 'true') throw Error('game detail transition is not active');
       }
       if (requestedView === 'games' && process.env.GAME_UI_MOTION_TARGET === 'modal') {
         result.motionState = await win.webContents.executeJavaScript(`(async () => {
-          document.querySelector('#gameList .game-card .game-card-head')?.click();
+          document.querySelector('#gameDetailPane [data-gp-tab="overview"]')?.click();
           await new Promise(resolve => setTimeout(resolve, 70));
-          document.querySelector('#gameList .game-card.expanded [data-gp-action="rename-game"]')?.click();
+          document.querySelector('#gameDetailPane .game-card.expanded [data-gp-action="rename-game"]')?.click();
           await new Promise(resolve => setTimeout(resolve, 45));
           const modal = document.getElementById('modal'), card = modal?.querySelector('.modal-card');
           if (!modal || modal.classList.contains('hidden')) throw Error('rename modal did not open for motion capture');

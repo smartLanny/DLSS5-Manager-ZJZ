@@ -14,8 +14,8 @@ async function smokeVersionContract() {
     host().querySelector('[data-gp-tab="overview"]').click(); click('refresh');
     await until(() => host().__gpController.getState().data.game.name === name && !host().__gpController.getState().busy, 'scenario refresh did not complete');
   };
-  await until(() => document.querySelector('.game-card[data-id="fixture"] .open-game-page-btn'), 'library missing');
-  document.querySelector('.game-card[data-id="fixture"] .open-game-page-btn').click();
+  await until(() => document.querySelector('.game-card[data-id="fixture"] .game-card-head'), 'library missing');
+  document.querySelector('.game-card[data-id="fixture"] .game-card-head').click();
   await until(() => host()?.__gpController.getState().loaded.includes('installation'), 'installation assessment missing');
   for (const id of ['0.5-dline13', '0.4.7beta-corefix.8']) {
     const candidate = host().querySelector('[data-gp-detail="rollback"] option[value="' + id + '"]');

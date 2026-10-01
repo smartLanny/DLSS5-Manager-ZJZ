@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const TAB_NAMES = ['enhance', 'graphics', 'advanced'];
+  const TAB_NAMES = ['enhance', 'graphics', 'advanced', 'startup'];
 
   function noopTabs() {
     return {
@@ -20,7 +20,10 @@
       tab,
       button: host.querySelector(`[data-detail-tab="${tab}"]`),
       panel: host.querySelector(`[data-detail-panel="${tab}"]`)
-    })).filter(entry => entry.button && entry.panel);
+    })).filter(entry => entry.button && entry.panel)
+      // Arrow keys follow the order the tabs are shown in.
+      .sort((a, b) => typeof a.button.compareDocumentPosition === 'function' &&
+        a.button.compareDocumentPosition(b.button) & 2 ? 1 : -1);
     const byButton = new Map(entries.map(entry => [entry.button, entry]));
     const available = entries.map(entry => entry.tab);
     const requested = TAB_NAMES.includes(options.initial) ? options.initial : 'enhance';

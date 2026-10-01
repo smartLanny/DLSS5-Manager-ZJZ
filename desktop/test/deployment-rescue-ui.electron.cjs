@@ -47,8 +47,8 @@ async function smoke() {
   const ordinary = () => document.querySelector('[data-id="fixture"] .game-detail');
   const click = (root, action) => { const button = root.querySelector(`[data-gp-action="${action}"]`); check(button && !button.disabled, action + ' is reachable'); button.click(); };
   const idle = root => !root.__gpController.getState().busy;
-  await until(() => document.querySelector('[data-id="fixture"] .open-game-page-btn'), 'library');
-  document.querySelector('[data-id="fixture"] .open-game-page-btn').click();
+  await until(() => document.querySelector('[data-id="fixture"] .game-card-head'), 'library');
+  document.querySelector('[data-id="fixture"] .game-card-head').click();
   await until(() => ordinary()?.__gpController.getState().loaded.includes('installation'), 'assessment');
   ordinary().querySelector('[data-gp-tab="nr"]').click();
   const intensity = ordinary().querySelector('[data-gp-field="Intensity"]'); intensity.value = '.7654321'; intensity.dispatchEvent(new Event('input', { bubbles: true }));

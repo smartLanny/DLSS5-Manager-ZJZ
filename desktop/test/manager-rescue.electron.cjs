@@ -80,7 +80,7 @@ async function exercise(id) {
   const click = name => { const b = host().querySelector(`[data-gp-action="${name}"]`); check(b && !b.disabled, name + ' reachable'); b.click(); };
   const maintenance = () => { const details = host().querySelector('[data-gp-detail="maintenance"]'); check(details, 'maintenance section reachable'); if (!details.open) details.querySelector('summary').click(); };
   const evidence = async () => { const result = await window.__realRescue('evidence'); check(result.ok, 'production evidence readable'); return result.value; };
-  await until(() => document.querySelector('.open-game-page-btn'), 'library'); document.querySelector('.open-game-page-btn').click();
+  await until(() => document.querySelector('#gameList .game-card-head'), 'library'); document.querySelector('#gameList .game-card-head').click();
   await until(() => host()?.__gpController.getState().loaded.includes('installation'), 'broken installation renders');
   click('maintenance-tab'); await until(() => host().querySelector('[data-gp-action="rescue-repair"]'), 'recovery entry');
   click('rescue-repair'); await until(() => host().querySelector('.gp-modal'), 'actual repair preview');
@@ -97,7 +97,7 @@ async function exercise(id) {
   result = await evidence(); check(!result.state.installed, 'production state uninstalled'); check(result.unrelatedPreserved && result.foreignPreserved, 'unrelated files retained');
   const reinstall = await window.__realRescue('reinstall'); check(reinstall.ok, 'production install works after clean without manually deleting leftovers');
   await host().__gpController.refresh(true); maintenance(); await until(() => host().querySelector('[data-gp-action="remove-game"]'), 'library exit');
-  click('remove-game'); click('modal-cancel'); check(document.querySelector('.open-game-page-btn'), 'cancel retains game');
+  click('remove-game'); click('modal-cancel'); check(document.querySelector('#gameList .game-card-head'), 'cancel retains game');
   click('remove-game'); click('remove-confirm'); await until(() => !document.querySelector(`[data-id="${id}"]`), 'actual metadata removal');
   return { checks, count: checks.length };
 }

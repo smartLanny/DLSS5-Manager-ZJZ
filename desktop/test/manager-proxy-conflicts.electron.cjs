@@ -112,7 +112,7 @@ async function exercise(id) {
     row.value = value; row.dispatchEvent(new Event('change', { bubbles: true }));
   };
   const idle = () => !state().busy && !host().querySelector('.gp-modal');
-  await until(() => document.querySelector(`[data-id="${id}"] .open-game-page-btn`), 'library'); document.querySelector(`[data-id="${id}"] .open-game-page-btn`).click();
+  await until(() => document.querySelector(`[data-id="${id}"] .game-card-head`), 'library'); document.querySelector(`[data-id="${id}"] .game-card-head`).click();
   await until(() => host()?.__gpController.getState().loaded.includes('installation'), 'initial assessment');
   check(host().querySelector('.gp-proxy-entry')?.textContent.includes('加载入口：D3D12'), 'HTGame first installation visibly defaults to D3D12');
   click('prepare'); await until(() => idle() && state().data.game.installed, 'initial unified Apply');

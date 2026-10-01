@@ -127,14 +127,33 @@ function openGamePage(id, initialTab) {
   if (initialTab) entry?.controller.selectTab(initialTab);
   if (reopen) void entry?.controller.refresh(true);
   requestAnimationFrame(() => {
-    const card = entry?.host.closest('.game-card'), view = $('view-games');
-    if (card && state.expanded === id) view.scrollTop += card.getBoundingClientRect().top - view.getBoundingClientRect().top - 12;
+    const row = [...document.querySelectorAll('#gameList .game-card')].find(card => card.dataset.id === id);
+    if (state.expanded === id) row?.scrollIntoView({ block: 'nearest' });
   });
   return entry?.controller;
 }
 
-function mountInlineDetail(card, game) {
-  const placeholder = card.querySelector('.game-detail');
+// The selected game's page sits in the right-hand pane and draws its own
+// header. The pane is only rebuilt when another game (or EXE) is selected, so
+// the page, its drafts and the pane's scroll position survive list refreshes.
+function renderDetailPane() {
+  const pane = $('gameDetailPane'), game = state.games.find(row => row.id === state.expanded);
+  if (!game) {
+    delete pane.dataset.gameId;
+    pane.innerHTML = `<div class="game-pane-empty"><p>${state.games.length ? '从左侧选择一个游戏，查看和调整它的设置。' : '添加游戏后，在这里安装插件、调整画面和补帧。'}</p></div>`;
+    return;
+  }
+  const exe = String(game.chosen?.path || '').toLowerCase();
+  if (pane.dataset.gameId === game.id && pane.dataset.exe === exe && pane.querySelector(':scope > .game-pane-card')) return;
+  Object.assign(pane.dataset, { gameId: game.id, exe });
+  // The pane is the open card of the selected game, so the game page finds
+  // its card the same way it did inside the list.
+  pane.innerHTML = `<article class="game-card expanded game-pane-card" data-id="${escapeHtml(game.id)}">${gameDetail(game)}</article>`;
+  pane.scrollTop = 0;
+}
+
+function mountInlineDetail(root, game) {
+  const placeholder = game && root.querySelector(`.game-detail[data-game-detail="${CSS.escape(game.id)}"]`);
   if (!placeholder) return;
   let entry = inlineGameDetails.get(game.id);
   const exe = String(game.chosen?.path || '').toLowerCase();
@@ -147,6 +166,10 @@ function mountInlineDetail(card, game) {
     return;
   }
   const controller = window.GamePageUi.mount(placeholder, window.manager, {
+    hero: () => {
+      const current = state.games.find(row => row.id === game.id) || game;
+      return { art: gameArt(current), launcher: current.launcher };
+    },
     onBack: () => { state.expanded = null; renderGames(); },
     onRename: gameId => confirmRenameGame(gameId),
     runtimeRequired: version => {
@@ -165,7 +188,8 @@ function mountInlineDetail(card, game) {
   const seed = { game, hardware: state.hardware, coreVersions: state.addons,
     defaults: { version: game.installed ? game.addonVersion : state.payload?.selectedVersion,
       deployment: game.installed ? 'local' : 'external', loadingMode: 'proxy' } };
-  void controller.open(game.id, 'overview', seed);
+  // Installed games open on 画质增强; new ones on their install settings.
+  void controller.open(game.id, game.installed ? 'nr' : 'overview', seed);
 }
 
 function unwrap(result) {
@@ -497,6 +521,15 @@ function poster(game) {
   return `<div class="poster">${first}</div>`;
 }
 
+// Wide art for the side-by-side game page: the Steam header, else the cover
+// cropped to the same shape, else the EXE icon, else the first letter.
+function gameArt(game) {
+  const url = source => /^(?:file:|data:|https?:)/i.test(source) ? source : `file:///${encodeURI(source.replace(/\\/g, '/').replace(/^\/+/, ''))}`;
+  const [kind, source] = game.banner ? ['banner', game.banner] : game.poster ? ['cover', game.poster] : game.icon ? ['icon', game.icon] : ['initial', null];
+  const content = source ? `<img src="${escapeHtml(url(source))}" alt="">` : escapeHtml((game.name || '?').trim().slice(0, 1).toUpperCase());
+  return `<div class="poster game-art" data-art="${kind}">${content}</div>`;
+}
+
 function visibleGames() {
   const query = $('searchInput').value.trim().toLowerCase();
   const filter = $('gameFilter').value;
@@ -512,11 +545,6 @@ function visibleGames() {
 }
 
 function cardAction(game) {
-  if (typeof window === 'object' && typeof window.manager?.assessGame === 'function') {
-    const current = inlineGameDetails.get(game.id)?.controller.getState().action;
-    const waiting = current?.waiting || game.waiting?.pending;
-    return `<button class="button primary unified-launch-btn" type="button"${waiting || current?.pending || current?.disabled ? ' disabled' : ''}${state.expanded === game.id ? ' hidden' : ''}>${waiting ? '等待游戏退出' : escapeHtml(current?.label || (game.installed ? '启动游戏' : '安装'))}</button><button class="button open-game-page-btn" type="button">${game.installed ? '设置' : game.existingInstallation?.detected === true ? '检查已有安装' : '安装与设置'}</button>`;
-  }
   const installBusy = Boolean(state.installing && state.installing.has(game.id));
   const installButton = `<button class="button primary install-btn${installBusy ? ' is-busy' : ''}" aria-live="polite" aria-busy="${installBusy}"${installBusy ? ' disabled' : ''}>${installBusy ? '<span class="button-spinner" aria-hidden="true"></span><span>正在安装…</span>' : game.existingInstallation?.detected === true ? '预览已有安装' : '一键安装'}</button>`;
   const rename = '<button class="button subtle rename-game-btn" type="button" title="修改游戏名称">改名</button>';
@@ -892,19 +920,31 @@ function bindPreparationActions(host, game) {
 }
 
 
+// "DX11", "Vulkan" or "DX9 · 32 位" for the compact list rows.
+function shortApiLabel(game) {
+  const label = API_LABELS[game.chosen?.apiResolution?.api]?.replace('DirectX ', 'DX') || (game.chosen ? 'API 待确认' : '');
+  return Number(game.chosen?.bitness) === 32 ? `${label} · 32 位` : label;
+}
+
 function renderGames(options = {}) {
-  const previousExpanded = options?.preserveExpanded === true && typeof window.manager.assessGame !== 'function'
+  // With the unified game page the list and the selected game sit side by
+  // side; one game is always selected while any exist.
+  const split = typeof window.manager.assessGame === 'function';
+  $('view-games').classList.toggle('is-split', split);
+  const previousExpanded = options?.preserveExpanded === true && !split
     ? [...document.querySelectorAll('.game-card')].find(card => card.dataset.id === state.expanded) : null;
   const rows = visibleGames();
   updateGameListMeta(rows);
+  if (split && !state.games.some(game => game.id === state.expanded && !game.hoyoManaged && !state.hoyoGameIds.has(game.id))) state.expanded = rows[0]?.id || null;
   $('gameList').innerHTML = rows.map(game => `<article class="game-card${state.expanded === game.id ? ' expanded' : ''}" data-id="${game.id}">
-    <div class="game-card-head">
-      ${poster(game)}
-      <div class="game-meta"><div class="game-title"><h3>${escapeHtml(game.name)}</h3>${supportBadge(game)}</div><p>${escapeHtml(game.launcher)} · ${escapeHtml(game.chosen ? `${gameApiLabel(game.chosen)} / ${game.chosen.bitness} 位` : game.supportText)}</p>${game.chosen?.path ? `<p class="game-exe-path" title="${escapeHtml(game.chosen.path)}">${escapeHtml(game.chosen.path)}</p>` : ''}</div>
-      <div class="card-action">${cardAction(game)}<button class="expand-arrow" type="button" aria-label="展开或收起游戏详情" aria-expanded="${state.expanded === game.id}"></button></div>
+    <div class="game-card-head"${split ? ` role="button" tabindex="0" aria-current="${state.expanded === game.id}"` : ''}>
+      ${split ? gameArt(game) : poster(game)}
+      <div class="game-meta"><div class="game-title"><h3>${escapeHtml(game.name)}</h3>${supportBadge(game)}</div><p>${escapeHtml(game.launcher)} · ${escapeHtml(game.chosen ? `${gameApiLabel(game.chosen)} / ${game.chosen.bitness} 位` : game.supportText)}</p>${game.chosen?.path ? `<p class="game-exe-path" title="${escapeHtml(game.chosen.path)}">${escapeHtml(game.chosen.path)}</p>` : ''}${split ? `<small class="game-row-api">${escapeHtml(shortApiLabel(game))}</small>` : ''}</div>
+      ${split ? '' : `<div class="card-action">${cardAction(game)}<button class="expand-arrow" type="button" aria-label="展开或收起游戏详情" aria-expanded="${state.expanded === game.id}"></button></div>`}
     </div>
-    ${state.expanded === game.id ? gameDetail(game) : ''}
+    ${state.expanded === game.id && !split ? gameDetail(game) : ''}
   </article>`).join('');
+  if (split) renderDetailPane();
   let reusedExpanded = false;
   if (previousExpanded) {
     const replacement = [...document.querySelectorAll('.game-card')].find(card => card.dataset.id === previousExpanded.dataset.id);
@@ -965,6 +1005,7 @@ function mergeGameVisuals(previous, next) {
     return {
       ...game,
       poster: game.poster || (old && old.poster) || null,
+      banner: game.banner || old?.banner || null,
       icon: old?.iconCheckedFor === (game.chosen?.path || game.id) ? old.icon : game.icon || old?.icon || null,
       iconCheckedFor: old?.iconCheckedFor === (game.chosen?.path || game.id) ? old.iconCheckedFor : null
     };
@@ -973,8 +1014,8 @@ function mergeGameVisuals(previous, next) {
 
 function updateGameListMeta(rows = visibleGames()) {
   const ordinary = state.games.filter(game => !game.hoyoManaged && !state.hoyoGameIds.has(game.id));
-  $('gameSummary').textContent = `已找到 ${ordinary.length} 个游戏 · 支持 ${ordinary.filter(routeSupported).length} 个`;
   const hasFilter = $('searchInput').value.trim() || $('gameFilter').value !== 'all';
+  $('gameSummary').textContent = hasFilter ? `显示 ${rows.length} / ${ordinary.length}` : `全部游戏 (${ordinary.length})`;
   $('emptyState').querySelector('h3').textContent = hasFilter ? '没有匹配的游戏' : '还没有找到游戏';
   $('emptyState').querySelector('p').textContent = hasFilter ? '换个关键词或筛选条件试试。' : '先自动扫描 Steam、Epic、GOG；也可以选择游戏文件夹或实际运行 EXE。';
   $('emptyAddBtn').classList.toggle('hidden', Boolean(hasFilter));
@@ -993,17 +1034,18 @@ function bindGameCards() {
       host.querySelector('select, button')?.focus({ preventScroll: true });
     };
   });
+  if (typeof window.manager.assessGame === 'function') mountInlineDetail($('gameDetailPane'), state.games.find(row => row.id === state.expanded));
   document.querySelectorAll('#gameList .game-card').forEach(card => {
     const id = card.dataset.id;
     const game = state.games.find(row => row.id === id);
     if (typeof window.manager.assessGame === 'function') {
-      mountInlineDetail(card, game);
-      card.querySelector('.game-card-head').onclick = event => {
-        if (event.target.closest('.unified-launch-btn')) return;
-        if (state.expanded === id) { state.expanded = null; renderGames(); } else openGamePage(id);
+      // A row selects its game; the selected game stays selected.
+      const head = card.querySelector('.game-card-head');
+      head.onclick = () => { if (state.expanded !== id) openGamePage(id); };
+      head.onkeydown = event => {
+        if (event.target !== head || !['Enter', ' '].includes(event.key)) return;
+        event.preventDefault(); head.click();
       };
-      const launch = card.querySelector('.unified-launch-btn');
-      if (launch) launch.onclick = event => { event.stopPropagation(); void openGamePage(id)?.runPrimary(); };
       return;
     }
     const detail = card.querySelector('.game-detail');
@@ -1540,7 +1582,8 @@ async function dismissGameFromList(id) {
     state.games = next;
     if (state.expanded === id) state.expanded = null;
     const card = [...document.querySelectorAll('.game-card')].find(row => row.dataset.id === id);
-    if (card) card.remove();
+    if (typeof window.manager.assessGame === 'function') renderGames();
+    else if (card) card.remove();
     updateGameListMeta();
     renderRepairSelect();
     toast('已从列表移除');
@@ -1611,7 +1654,7 @@ function switchView(view) {
   document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === `view-${view}`));
   document.querySelectorAll('.nav').forEach(el => el.classList.toggle('active', el.dataset.view === view));
   const titles = {
-    games: ['我的游戏', '选择游戏，确认兼容性后安装'],
+    games: ['游戏', ''],
     hoyo: ['米哈游', '选择游戏，确认启动器后安装与设置'],
     repair: ['问题修复', '检查组件完整性，并安全恢复缺失文件'],
     settings: ['设置', '只保留真正会影响使用的选项'],
@@ -1699,12 +1742,14 @@ async function enrichMissingArtwork() {
 
 function updateGameCardArtwork(game) {
   const card = [...document.querySelectorAll('.game-card')].find(row => row.dataset.id === game.id);
-  const current = card && card.querySelector('.poster');
-  if (!current) return;
-  const wrapper = document.createElement('div');
-  wrapper.innerHTML = poster(game);
-  const next = wrapper.firstElementChild;
-  if (next) current.replaceWith(next);
+  const pane = $('gameDetailPane');
+  const heads = [card, pane?.dataset.gameId === game.id ? pane.querySelector('.gp-hero-art') : null];
+  for (const current of heads.map(head => head?.querySelector('.poster')).filter(Boolean)) {
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = current.classList.contains('game-art') ? gameArt(game) : poster(game);
+    const next = wrapper.firstElementChild;
+    if (next) current.replaceWith(next);
+  }
 }
 
 function scheduleArtworkEnrichment() {
@@ -1803,6 +1848,10 @@ async function confirmGameSelection() {
       icon: selection.icon || null
     }));
     closeGameSelection();
+    // Show the game that was just added.
+    const added = state.games.find(game => String(game.chosen?.path || '').toLowerCase() === String(candidate.path).toLowerCase());
+    if (added && typeof window.manager.assessGame === 'function') state.expanded = added.id;
+    selectGamesPage('library');
     renderGames();
     scheduleArtworkEnrichment();
     toast('游戏已添加');
@@ -1816,7 +1865,7 @@ $('searchInput').oninput = () => {
   renderGames.searchTimer = setTimeout(() => renderGames({ preserveExpanded: true }), 120);
 };
 $('gameFilter').onchange = () => renderGames({ preserveExpanded: true });
-$('refreshBtn').onclick = () => runAction(async () => { const result = await window.manager.refresh(); state.games = unwrap(result); return result; }, '扫描完成', false).then(() => { renderGames(); scheduleArtworkEnrichment(); });
+$('refreshBtn').onclick = () => runAction(async () => { const result = await window.manager.refresh(); state.games = unwrap(result); return result; }, '扫描完成', false).then(() => { selectGamesPage('library'); renderGames(); scheduleArtworkEnrichment(); });
 async function pickAndRefresh(picker, success) {
   if (state.busy) return;
   setBusy(true);
@@ -1830,7 +1879,24 @@ async function pickAndRefresh(picker, success) {
   } catch (error) { toast(error.message, true); }
   finally { setBusy(false); }
 }
-$('addGameBtn').onclick = $('emptyAddBtn').onclick = () => openGameSelection(window.manager.pickGame);
+$('addGameBtn').onclick = $('emptyAddBtn').onclick = $('addGameQuickBtn').onclick = () => openGameSelection(window.manager.pickGame);
+
+// 我的游戏 / 添加与扫描 page tabs.
+function selectGamesPage(page, focus = false) {
+  for (const tab of document.querySelectorAll('.games-tab')) {
+    const selected = tab.dataset.gamesPage === page;
+    tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;
+    $(tab.getAttribute('aria-controls')).hidden = !selected;
+    if (selected && focus) tab.focus();
+  }
+}
+for (const tab of document.querySelectorAll('.games-tab')) {
+  tab.onclick = () => selectGamesPage(tab.dataset.gamesPage);
+  tab.onkeydown = event => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault(); selectGamesPage(tab.dataset.gamesPage === 'library' ? 'add' : 'library', true);
+  };
+}
 $('addExeBtn').onclick = () => openGameSelection(window.manager.pickExecutable);
 $('gameNameInput').oninput = () => { if (state.gameSelection) state.gameSelection.nameTouched = true; };
 $('gamePickerCancel').onclick = closeGameSelection;

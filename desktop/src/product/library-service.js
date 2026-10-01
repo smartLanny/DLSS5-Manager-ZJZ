@@ -52,6 +52,8 @@ function steamArtworkFor(game, directoryCache = new Map()) {
   return {
     ...game,
     poster: poster ? { file: poster.file || poster, tall: /library_600x900/i.test(poster.name || poster.file || '') } : null,
+    // Wide art Steam already cached (header, else hero) for the game list and game page.
+    banner: header || hero ? { file: (header || hero).file } : game.banner || null,
     steamIcon: logo ? pathToFileURL(logo.file).href : game.steamIcon || null
   };
 }
@@ -484,6 +486,7 @@ function createLibraryService(overrides = {}) {
           launcher: game.launcher || '本地游戏',
           dir: game.dir,
           poster: posterUrl(game.poster),
+          banner: posterUrl(game.banner),
           chosen: null,
           supported: false,
           supportCode: 'ERR_INTERNAL',
@@ -553,6 +556,7 @@ function createLibraryService(overrides = {}) {
         dir: game.dir,
         rootAliases: [...new Set([sourceRoot, game.dir])],
         poster: posterUrl(game.poster),
+        banner: posterUrl(game.banner),
         icon: override && override.icon ? override.icon : (game.steamIcon || null),
         chosen: scan.chosen ? {
           path: scan.chosen.path,
