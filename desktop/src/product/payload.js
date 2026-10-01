@@ -160,11 +160,18 @@ function inspectVersion(dir, entry, digest = sha256, safetyRoot = dir) {
   };
 }
 
+// Cores with paired DLSS5 models (0.5.2 Beta 13) prefer the model for this GPU
+// series once it is imported into their version directory; otherwise they run
+// on the shared runtime like every older Core.
+function runtimeChoice(root, id, series) {
+  if (!coreCatalog.hasPairedRuntime(id)) return { source: 'shared', paired: null, file: null };
+  const paired = coreCatalog.pairedRuntime(id, series), file = path.join(root, 'versions', id, PAYLOAD_FILES.runtime);
+  return paired && fs.existsSync(file) ? { source: 'paired', paired, file } : { source: 'shared', paired, file: null };
+}
+
 function inspectCompactVersion(root, id, entry, fixed, digest = sha256, families = FAMILIES, series = null) {
   const variants = {};
-  // A Core registered with paired DLSS5 models never uses the shared runtime: it
-  // needs the model paired for this GPU series in its own version directory.
-  const paired = coreCatalog.requiresPairedRuntime(id) ? coreCatalog.pairedRuntime(id, series) : null;
+  const runtime = runtimeChoice(root, id, series), usePaired = runtime.source === 'paired';
   for (const family of families) {
     const fixedEntry = fixed && fixed[family];
     const versionDir = path.join(root, 'versions', id);
@@ -172,15 +179,13 @@ function inspectCompactVersion(root, id, entry, fixed, digest = sha256, families
     const fixedExpected = fixedEntry && fixedEntry.files ? fixedEntry.files : {};
     const versionExpected = entry && entry.files ? entry.files : {};
     const expected = { ...fixedExpected, ...versionExpected };
-    if (coreCatalog.requiresPairedRuntime(id)) {
-      if (paired) expected[PAYLOAD_FILES.runtime] = paired.sha256; else delete expected[PAYLOAD_FILES.runtime];
-    }
+    if (usePaired) expected[PAYLOAD_FILES.runtime] = runtime.paired.sha256;
     const files = inspectFilesAt('', expected, {
       reshade: path.join(fixedDir, PAYLOAD_FILES.reshade),
       bridge: entry && entry.files && entry.files[PAYLOAD_FILES.bridge]
         ? path.join(versionDir, PAYLOAD_FILES.bridge)
         : path.join(fixedDir, PAYLOAD_FILES.bridge),
-      runtime: coreCatalog.requiresPairedRuntime(id) ? path.join(versionDir, PAYLOAD_FILES.runtime)
+      runtime: usePaired ? runtime.file
         : fixedEntry?.paths?.runtime ? path.join(root, fixedEntry.paths.runtime) : path.join(fixedDir, PAYLOAD_FILES.runtime),
       addon: path.join(versionDir, PAYLOAD_FILES.addon),
       config: path.join(versionDir, PAYLOAD_FILES.config)
@@ -221,7 +226,7 @@ function inspectCompactVersion(root, id, entry, fixed, digest = sha256, families
     trustedUpgradeFrom: Array.isArray(entry?.trustedUpgradeFrom) ? entry.trustedUpgradeFrom.filter(value => /^[a-f0-9]{64}$/i.test(value)).slice(0, 16) : [],
     ota: Boolean(entry && entry.ota),
     variants,
-    ...(paired ? { pairedRuntime: paired } : coreCatalog.requiresPairedRuntime(id) ? { pairedRuntime: null, pairedRuntimeRequired: true } : {}),
+    ...(coreCatalog.hasPairedRuntime(id) ? { pairedRuntime: runtime.paired, runtimeSource: runtime.source } : {}),
     ready: families.every(family => variants[family].ready)
   };
 }
@@ -402,6 +407,6 @@ function createCompactBundle(dir, entries, defaultVersion) {
 }
 
 module.exports = {
-  sha256, payloadRoot, readBundle, safePayloadPath, inspectPayload, requirePayload,
+  sha256, payloadRoot, readBundle, safePayloadPath, inspectPayload, requirePayload, runtimeChoice,
   createBundle, createVariantsBundle, createVersionedBundle, createCompactBundle, OPTIONAL_PAYLOAD_FILES
 };

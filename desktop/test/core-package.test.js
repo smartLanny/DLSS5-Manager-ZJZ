@@ -21,7 +21,7 @@ function temp(t, prefix) {
   return dir;
 }
 
-// A v4 payload with the shared runtime, 0.4.7 and a Beta 13 slot (Core, chain, INI, faces; no model).
+// A v4 payload with the shared runtime, 0.4.7 and a Beta 13 slot (Core, chain, INI, faces; no paired model).
 function payload(root) {
   const write = (rel, data) => { const file = path.join(root, rel); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); return sha(data); };
   const fixed = {};
@@ -37,22 +37,33 @@ function payload(root) {
   return root;
 }
 
-test('Beta 13 needs the model paired for this GPU series in its own slot; older Cores keep the shared runtime', t => {
+test('Beta 13 runs on the shared runtime and prefers the imported model paired for this GPU series', t => {
   const dir = payload(temp(t, 'paired-payload-'));
   const runtime = result => result.files.find(row => row.kind === 'runtime');
+  const inspect = (series, version = BETA13.id) =>
+    inspectPayload(dir, { hardwareFamily: series === 'RTX50' ? 'RTX50' : 'RTX40', hardwareSeries: series, version, selectedOnly: true });
   for (const [series, variant] of [['RTX50', 'RTX40-50'], ['RTX40', 'RTX40-50'], ['RTX30', 'RTX20-30'], ['RTX20', 'RTX20-30']]) {
-    const family = series === 'RTX50' ? 'RTX50' : 'RTX40';
-    const result = inspectPayload(dir, { hardwareFamily: family, hardwareSeries: series, version: BETA13.id, selectedOnly: true });
-    assert.equal(result.versions[BETA13.id].pairedRuntime.variant, variant, series);
-    assert.equal(runtime(result).expected, BETA13.packages[variant].runtime, 'the shared runtime never stands in');
-    assert.equal(path.relative(dir, runtime(result).file), path.join('versions', BETA13.id, 'nvngx_dlssnr.dll'));
-    assert.deepEqual(result.missing, ['nvngx_dlssnr.dll'], 'only the paired model is missing, so the player is asked to import it');
-    assert.equal(result.ready, false);
+    const family = series === 'RTX50' ? 'RTX50' : 'RTX40', result = inspect(series);
+    assert.equal(result.ready, true, `${series}: no paired model imported, the shared runtime is used`);
+    assert.equal(result.versions[BETA13.id].runtimeSource, 'shared');
+    assert.equal(result.versions[BETA13.id].pairedRuntime.variant, variant, 'the optional upgrade is still named');
+    assert.equal(runtime(result).actual, sha(`shared runtime ${family}`));
+    assert.equal(path.relative(dir, runtime(result).file), path.join('fixed', family, 'nvngx_dlssnr.dll'));
   }
-  const unknown = inspectPayload(dir, { hardwareFamily: 'RTX40', hardwareSeries: null, version: BETA13.id, selectedOnly: true });
-  assert.equal(unknown.versions[BETA13.id].pairedRuntimeRequired, true); assert.equal(unknown.ready, false);
-  const old = inspectPayload(dir, { hardwareFamily: 'RTX40', hardwareSeries: 'RTX30', version: '0.4.7beta', selectedOnly: true });
-  assert.equal(old.ready, true); assert.equal(path.relative(dir, runtime(old).file), path.join('fixed', 'RTX40', 'nvngx_dlssnr.dll'));
+  const unknown = inspect(null);
+  assert.equal(unknown.ready, true); assert.equal(unknown.versions[BETA13.id].pairedRuntime, null);
+  assert.equal(inspect('RTX30', '0.4.7beta').versions['0.4.7beta'].runtimeSource, undefined, 'older Cores have no paired model');
+});
+
+test('an imported paired model is used only when its digest matches this GPU series', t => {
+  const dir = payload(temp(t, 'paired-present-'));
+  const model = path.join(dir, 'versions', BETA13.id, 'nvngx_dlssnr.dll'); fs.writeFileSync(model, 'not the cataloged model');
+  const result = inspectPayload(dir, { hardwareFamily: 'RTX40', hardwareSeries: 'RTX40', version: BETA13.id, selectedOnly: true });
+  const runtime = result.files.find(row => row.kind === 'runtime');
+  assert.equal(result.versions[BETA13.id].runtimeSource, 'paired');
+  assert.equal(path.relative(dir, runtime.file), path.join('versions', BETA13.id, 'nvngx_dlssnr.dll'));
+  assert.equal(runtime.expected, BETA13.packages['RTX40-50'].runtime, 'a tampered paired model is reported, never deployed');
+  assert.equal(result.ready, false); assert.deepEqual(result.invalid, ['nvngx_dlssnr.dll']);
 });
 
 test('a ZIP with the package layout but an unregistered digest is refused', async t => {
@@ -97,5 +108,6 @@ test('importing a Beta 13 package pairs its model with Beta 13 only', { skip }, 
   assert.equal(inspect('0.4.7beta', 'RTX30').files.find(row => row.kind === 'runtime').actual, sha('shared runtime RTX40'));
   series = 'RTX40';
   await library.activateRuntime('nr-runtime-beta13-rtx20-30', bundled);
-  assert.deepEqual(inspect(BETA13.id, 'RTX40').missing, ['nvngx_dlssnr.dll'], 'an RTX 40 card never receives the RTX 20/30 model');
+  const rtx40 = inspect(BETA13.id, 'RTX40');
+  assert.equal(rtx40.ready, true); assert.equal(rtx40.versions[BETA13.id].runtimeSource, 'shared', 'an RTX 40 card never receives the RTX 20/30 model');
 });

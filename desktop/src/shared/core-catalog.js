@@ -90,14 +90,15 @@
     for (const row of CORES) for (const [language, digest] of Object.entries(row.ota)) if (digest === hash) return { core: row, language };
     return null;
   };
-  // A Core with packages only runs with the DLSS5 model paired for the GPU series.
-  // Older Cores (no packages) keep the shared runtime; unknown series get null.
+  // A Core with packages ships a DLSS5 model paired with each GPU series. It is
+  // preferred once imported; every Core still runs on the shared runtime, so a
+  // missing model or an unknown series (null here) falls back to that.
   const pairedRuntime = (id, series) => {
     const row = byId(id); if (!row) return null;
     for (const [variant, item] of Object.entries(row.packages)) if (item.series.includes(series)) return { variant, sha256: item.runtime, series: item.series };
     return null;
   };
-  const requiresPairedRuntime = id => Object.keys(byId(id)?.packages || {}).length > 0;
+  const hasPairedRuntime = id => Object.keys(byId(id)?.packages || {}).length > 0;
   const isPairedRuntime = hash => CORES.some(row => Object.values(row.packages).some(item => item.runtime === hash));
   // A handoff package (install/ layout) of a cataloged Core, by archive digest.
   const coreForPackage = hash => {
@@ -115,5 +116,5 @@
   if (!valid) throw new Error('Core catalog is invalid.');
 
   return Object.freeze({ CORES, RECOMMENDED, STABLE, MAIN_MENU, byId, isProviderCoreId, isProviderCore,
-    coreForAddonHash, coreForArchive, coreForPackage, pairedRuntime, requiresPairedRuntime, isPairedRuntime, sourceCommits, faceCompanionIds });
+    coreForAddonHash, coreForArchive, coreForPackage, pairedRuntime, hasPairedRuntime, isPairedRuntime, sourceCommits, faceCompanionIds });
 });

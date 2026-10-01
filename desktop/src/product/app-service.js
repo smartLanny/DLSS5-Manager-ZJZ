@@ -353,13 +353,12 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       assertSourceIdentity();
       const inspected = payloadInspection.inspect(payloadDir, options);
       const seriesProblem = inspected.bundle ? activeRuntimeSeriesProblem(inspected.bundle, options.hardwareFamily || hardware.family) : null;
-      // A Core with paired DLSS5 models (0.5.2 Beta 13) needs the model for this GPU series.
+      // A Core with paired DLSS5 models (0.5.2 Beta 13) runs on the shared model too;
+      // until the model for this GPU series is imported, offer it as an optional upgrade.
       const selectedEntry = inspected.versions?.[inspected.selectedVersion], selectedCore = coreCatalog.byId(inspected.selectedVersion);
-      const pairedMissing = selectedEntry && (selectedEntry.pairedRuntimeRequired === true ||
-        selectedEntry.pairedRuntime && inspected.missing.some(file => String(file).split(/[\\/]/).pop().toLowerCase() === 'nvngx_dlssnr.dll'));
-      const pairedRuntime = pairedMissing ? { core: selectedCore?.label || inspected.selectedVersion, unknownSeries: !selectedEntry.pairedRuntime,
-        variant: selectedEntry.pairedRuntime?.variant || null,
-        package: selectedEntry.pairedRuntime ? `DLSS5-${selectedCore?.displayVersion || inspected.selectedVersion}-${selectedEntry.pairedRuntime.variant}.zip` : null } : null;
+      const pairedRuntime = selectedEntry?.runtimeSource === 'shared' && selectedEntry.pairedRuntime
+        ? { core: selectedCore?.label || inspected.selectedVersion, optional: true, variant: selectedEntry.pairedRuntime.variant,
+          package: `DLSS5-${selectedCore?.displayVersion || inspected.selectedVersion}-${selectedEntry.pairedRuntime.variant}.zip` } : null;
       const runtimeDlcRequired = Boolean(seriesProblem) || Boolean(inspected.bundle) && inspected.missing.length > 0 && inspected.invalid.length === 0 &&
         inspected.missing.every(file => String(file).split(/[\\/]/).pop().toLowerCase() === 'nvngx_dlssnr.dll');
       const sourceError = !inspected.ready && mode !== 'unconfigured' && !runtimeDlcRequired
@@ -455,15 +454,13 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       const interfaces = Array.isArray(entry?.inputInterfaces) ? entry.inputInterfaces : [];
       const v1 = interfaces.some(value => value === 'NRExternalProviderV1' || value?.name === 'NRExternalProviderV1' && value.version === 1);
       const coreHash = entry?.files?.['nr-before-sr.zh-CN.addon64'];
-      const pairedModel = coreCatalog.requiresPairedRuntime(version) ? coreCatalog.pairedRuntime(version, singleSeries()) : null;
-      const runtimeHash = coreCatalog.requiresPairedRuntime(version) ? pairedModel?.sha256 : bundle.fixed?.[family]?.files?.['nvngx_dlssnr.dll'];
+      const runtime = require('./payload').runtimeChoice(payloadDir, version, singleSeries());
+      const runtimeHash = runtime.source === 'paired' ? runtime.paired.sha256 : bundle.fixed?.[family]?.files?.['nvngx_dlssnr.dll'];
       const chainHash = entry?.files?.['nrchain_nvngx.dll'] || bundle.fixed?.[family]?.files?.['nrchain_nvngx.dll'];
       const configHash = entry?.files?.['nr_before_sr.ini'];
       if (!v1 || !/^[a-f0-9]{64}$/.test(coreHash || '') || !/^[a-f0-9]{64}$/.test(runtimeHash || '') ||
           !/^[a-f0-9]{64}$/.test(chainHash || '') || !/^[a-f0-9]{64}$/.test(configHash || '') || !['RTX40', 'RTX50'].includes(family))
         return { registered: false, selectedId: null, reason: '当前 payload 没有完整 V1 Core、同源 chain、配置与运行库。' };
-      if (pairedModel && !fs.existsSync(path.join(payloadDir, 'versions', version, 'nvngx_dlssnr.dll')))
-        return { registered: false, selectedId: null, reason: '还没导入这个 Core 配套的 DLSS5 模型。' };
       const identity = [path.resolve(payloadDir).toLowerCase(), version, family, coreHash, chainHash, configHash, runtimeHash, JSON.stringify(entry.companions || {})].join('|');
       if (force || registeredProviderContext !== identity) {
         await componentLibrary.registerPayloadContext(payloadDir, version, family);
