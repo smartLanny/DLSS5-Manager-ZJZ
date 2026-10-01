@@ -174,7 +174,9 @@ test('real helper performs a read-only inspection of the current interactive she
   }
 });
 
-test('real ordinary helper launches a CPU-only fixture with verified token, quoted args and a scoped environment', { timeout: HELPER_TIMEOUT_MS * 4 + 10000 }, async t => {
+// Six helper calls run one after another: inspect, then launch (which inspects
+// again before it launches) here, and the same three inside the relay.
+test('real ordinary helper launches a CPU-only fixture with verified token, quoted args and a scoped environment', { timeout: HELPER_TIMEOUT_MS * 6 + 20000 }, async t => {
   if (process.platform !== 'win32') return t.skip('Windows-only process creation');
   const powershell = findPowerShell(); if (!powershell) return t.skip('PowerShell unavailable');
   const broker = createGameLaunchBroker({ powershell: path.resolve(powershell), scriptPath, timeoutMs: HELPER_TIMEOUT_MS });
@@ -204,8 +206,9 @@ const {createGameLaunchBroker}=require(${JSON.stringify(require.resolve('../src/
   // Even when the test host is elevated, this first hop creates the ordinary
   // relay. Its second hop must exercise CreateProcessW, never a game or GPU load.
   await broker.launch({ exe: process.execPath, args: [relay], cwd: root });
-  // The relay makes two helper calls of its own (inspect, then launch).
-  const deadline = Date.now() + HELPER_TIMEOUT_MS * 2;
+  // The relay makes three helper calls of its own (inspect, then launch with
+  // its own inspection), plus the time to start Node.
+  const deadline = Date.now() + HELPER_TIMEOUT_MS * 3 + 10000;
   while (Date.now() < deadline && (!fs.existsSync(report) || !fs.existsSync(output))) {
     if (fs.existsSync(report) && JSON.parse(fs.readFileSync(report, 'utf8')).ok === false) break;
     await new Promise(resolve => setTimeout(resolve, 50));
