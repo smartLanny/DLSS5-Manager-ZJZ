@@ -122,13 +122,18 @@ test('native helper uses a suspended process and verifies its token before resum
   assert.doesNotMatch(source, /runas|Start-Process|taskkill|TerminateProcess\(shell/iu);
 });
 
+// Real PowerShell runs compile C# with Add-Type, which can take well over 15 s
+// on a busy CI runner. These budgets only bound a hang; the helper's own
+// timeout is capped at 30 s by the broker.
+const POWERSHELL_COMPILE_MS = 60000, HELPER_TIMEOUT_MS = 30000;
+
 function findPowerShell() {
   const system = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   if (fs.existsSync(system)) return system;
   try { return execFileSync('where.exe', ['pwsh.exe'], { encoding: 'utf8', windowsHide: true }).split(/\r?\n/).find(Boolean); } catch { return null; }
 }
 
-test('native STARTUPINFOW marshals the desktop name as UTF-16', t => {
+test('native STARTUPINFOW marshals the desktop name as UTF-16', { timeout: POWERSHELL_COMPILE_MS + 10000 }, t => {
   if (process.platform !== 'win32') return t.skip('Windows native marshaling');
   const powershell = findPowerShell(); if (!powershell) return t.skip('PowerShell unavailable');
   const file = path.join(os.tmpdir(), `xiaofeng-startupinfo-${process.pid}.ps1`);
@@ -152,13 +157,13 @@ try {
   fs.writeFileSync(file, script);
   t.after(() => fs.rmSync(file, { force: true }));
   assert.match(execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file],
-    { encoding: 'utf8', windowsHide: true, timeout: 15000 }), /UTF16_DESKTOP_OK/);
+    { encoding: 'utf8', windowsHide: true, timeout: POWERSHELL_COMPILE_MS }), /UTF16_DESKTOP_OK/);
 });
 
-test('real helper performs a read-only inspection of the current interactive shell token', async t => {
+test('real helper performs a read-only inspection of the current interactive shell token', { timeout: HELPER_TIMEOUT_MS + 10000 }, async t => {
   if (process.platform !== 'win32') return t.skip('Windows-only token inspection');
   const powershell = findPowerShell(); if (!powershell) return t.skip('PowerShell unavailable');
-  const broker = createGameLaunchBroker({ powershell: path.resolve(powershell), scriptPath });
+  const broker = createGameLaunchBroker({ powershell: path.resolve(powershell), scriptPath, timeoutMs: HELPER_TIMEOUT_MS });
   try {
     const result = await broker.inspect({ exe: process.execPath });
     assert.equal(result.elevated, false); assert.equal(result.launchable, true); assert.match(result.userSid, /^S-1-/); assert.ok(result.sessionId >= 0); assert.ok(result.shellPid > 0);
@@ -169,10 +174,10 @@ test('real helper performs a read-only inspection of the current interactive she
   }
 });
 
-test('real ordinary helper launches a CPU-only fixture with verified token, quoted args and a scoped environment', { timeout: 30000 }, async t => {
+test('real ordinary helper launches a CPU-only fixture with verified token, quoted args and a scoped environment', { timeout: HELPER_TIMEOUT_MS * 4 + 10000 }, async t => {
   if (process.platform !== 'win32') return t.skip('Windows-only process creation');
   const powershell = findPowerShell(); if (!powershell) return t.skip('PowerShell unavailable');
-  const broker = createGameLaunchBroker({ powershell: path.resolve(powershell), scriptPath, timeoutMs: 15000 });
+  const broker = createGameLaunchBroker({ powershell: path.resolve(powershell), scriptPath, timeoutMs: HELPER_TIMEOUT_MS });
   try { await broker.inspect({ exe: process.execPath }); }
   catch (error) {
     if (['GAME_LAUNCH_SHELL_MISSING', 'GAME_LAUNCH_SHELL_TOKEN', 'GAME_LAUNCH_SESSION_MISMATCH', 'GAME_LAUNCH_SHELL_ELEVATED'].includes(error.code)) return t.skip(`interactive token unavailable: ${error.code}`);
@@ -188,7 +193,7 @@ test('real ordinary helper launches a CPU-only fixture with verified token, quot
 const fs=require('node:fs');
 const {createGameLaunchBroker}=require(${JSON.stringify(require.resolve('../src/product/game-launch-broker'))});
 (async()=>{
-  const broker=createGameLaunchBroker({powershell:${JSON.stringify(path.resolve(powershell))},scriptPath:${JSON.stringify(scriptPath)},timeoutMs:15000});
+  const broker=createGameLaunchBroker({powershell:${JSON.stringify(path.resolve(powershell))},scriptPath:${JSON.stringify(scriptPath)},timeoutMs:${HELPER_TIMEOUT_MS}});
   const inspection=await broker.inspect({exe:process.execPath});
   if(inspection.launchMethod!=='current-token') throw new Error('ordinary relay is not using the ordinary process path');
   process.env.XIAOFENG_BROKER_FIXTURE_SECRET='parent-only';
@@ -199,7 +204,8 @@ const {createGameLaunchBroker}=require(${JSON.stringify(require.resolve('../src/
   // Even when the test host is elevated, this first hop creates the ordinary
   // relay. Its second hop must exercise CreateProcessW, never a game or GPU load.
   await broker.launch({ exe: process.execPath, args: [relay], cwd: root });
-  const deadline = Date.now() + 15000;
+  // The relay makes two helper calls of its own (inspect, then launch).
+  const deadline = Date.now() + HELPER_TIMEOUT_MS * 2;
   while (Date.now() < deadline && (!fs.existsSync(report) || !fs.existsSync(output))) {
     if (fs.existsSync(report) && JSON.parse(fs.readFileSync(report, 'utf8')).ok === false) break;
     await new Promise(resolve => setTimeout(resolve, 50));
