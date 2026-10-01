@@ -23,6 +23,10 @@ const CORE_FILES = new Set([
 const REQUIRED_CORE_FILES = ['nr-before-sr.zh-CN.addon64', 'nr_before_sr.ini'];
 const SMALL_COMPONENT_KINDS = new Set(['bridge', 'feeder', 'host', 'vulkan']);
 const COMPONENT_ID = /^[a-z0-9][a-z0-9._+-]{0,127}$/i;
+// A staging manifest names the Manager it was prepared for: the version being
+// built (package.json) or an earlier 0.5.0 beta whose manifest still applies.
+const PACKAGE_VERSION = require('../package.json').version;
+const supportedPackageVersion = value => value === PACKAGE_VERSION || /^0\.5\.0-beta\.(?:[2-9]|10)$/i.test(String(value || ''));
 const COMPONENT_MAX_FILE = 128 * 1024 * 1024;
 const COMPONENT_MAX_TOTAL = 512 * 1024 * 1024;
 const BUNDLED_RESOURCE_TARGETS = new Set([
@@ -537,7 +541,7 @@ function buildBridgeReservation({ stageRoot, manifest, components = null }) {
 async function inspectManifest(manifestFile, flavor = 'base') {
   const manifest = readJson(manifestFile);
   if (manifest.schemaVersion !== 1) fail('staging 清单 schemaVersion 必须为 1。');
-  if (!manifest.packageVersion || !/^0\.5\.0-beta\.(?:[23456789]|10)$/i.test(String(manifest.packageVersion))) fail('staging 清单 packageVersion 必须为已支持的 0.5.0-beta.2–10。');
+  if (!supportedPackageVersion(manifest.packageVersion)) fail(`staging 清单 packageVersion 必须为当前版本 ${PACKAGE_VERSION} 或已支持的 0.5.0-beta.2–10。`);
   if (!['base', 'offline'].includes(flavor)) fail(`未知打包 flavor：${flavor}`);
   const payloadRoot = resolveInput(manifestFile, manifest.core?.payloadRoot, 'core.payloadRoot');
   const selectedCoreIds = [manifest.core?.version, ...(Array.isArray(manifest.core?.versions) ? manifest.core.versions : [])];
