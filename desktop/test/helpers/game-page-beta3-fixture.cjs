@@ -63,7 +63,6 @@ function installMock(features, options = {}) {
     baseline: clone(assessment), secondBaseline: clone(second), features, feederRecommendation, removed: new Set(), delays: options.captureOnly ? {} : { 'fixture:installation': 5000 }, pending: 0,
     failApply: false, listeners: new Set(), mounts: new Map(), plan: null, policyEnabled: false, policyApplied: 0,
     settings: { animationsEnabled: true, theme: process.env.GAME_UI_THEME || 'system', scanDrives: false, addonVersion: null },
-    selectedLauncher: 'C:\\UI-fixture\\HoYoPlay\\launcher.exe',
     resetPolicy: () => ipcRenderer.invoke('game-page-fixture-native-policy', 'reset'),
     mutatePolicy: kind => ipcRenderer.invoke('game-page-fixture-native-policy', 'mutate', { kind }) };
   Object.defineProperty(mock, 'assessment', { get: () => mock.assessments.fixture, set: value => { mock.assessments.fixture = value; } });
@@ -89,7 +88,9 @@ function installMock(features, options = {}) {
     ready: !runtimeRequired, files: [], missing: runtimeRequired ? ['D:\\CodexTemp\\internal-build\\fixed\\RTX40\\nvngx_dlssnr.dll'] : [], invalid: [] } } } },
     missing: runtimeRequired ? ['D:\\CodexTemp\\internal-build\\fixed\\RTX40\\nvngx_dlssnr.dll'] : [], invalid: [],
     source: { mode: 'bundled', path: 'D:\\CodexTemp\\internal-build', ready: !runtimeRequired, runtimeDlcRequired: runtimeRequired, requiredHardwareFamily: runtimeRequired ? 'RTX40' : null, error: null } };
-  const games = () => Object.values(mock.assessments).filter(row => !mock.removed.has(row.gameId)).map(row => row.game);
+  // Like the service, a HoYo client is listed as HoYo-managed and handled only on the HoYo page.
+  const games = () => Object.values(mock.assessments).filter(row => !mock.removed.has(row.gameId))
+    .map(row => row.game.hoyo?.profileOptions?.length ? { ...row.game, hoyoManaged: true } : row.game);
   const componentCatalog = [
     ['mfg', '0.9'], ['bridge', '1.4.13-pre7'], ['bridge', '1.4.13-pre8'], ['bridge', '1.4.13-pre6'],
     ['feeder', '1.16.0-beta.1'], ['feeder', '0.15.1'], ['feeder', '0.15.0']
@@ -190,7 +191,6 @@ function installMock(features, options = {}) {
     applyEnvironmentCleanup: async (id, planId, names) => { mock.calls.push(['cleanup-apply', id, planId, clone(names)]);
       mock.assessments[id].maintenance.isolated = true; mock.assessments[id].maintenance.canRestore = true; return ok({ isolated: true }); },
     confirmGameFeature: forbidden('direct-retired-feature-confirmation'),
-    pickHoYoLauncher: async () => { mock.calls.push(['pick-hoyo-launcher']); return ok(mock.selectedLauncher); },
     recoverOperation: async id => { mock.calls.push(['recover', id]); mock.assessments[id].operation = { pending: false }; return ok({ recovered: true }); },
     recoverFgComponents: async id => { mock.calls.push(['recover-fg-components', id]); const value = mock.assessments[id], fg = value.enhancements.fgComponents; fg.fileRecoveryPending = false; fg.fileOperationActive = false; fg.migrationPending = false; value.launch.readiness = { state: 'ready', known: true, source: 'metadata', blockers: [], pending: [], requests: {} }; return ok({ recovered: true }); },
     recordVisualComparison: async (id, input) => { mock.calls.push(['visual-record', id, clone(input)]);
@@ -657,33 +657,8 @@ async function smoke() {
   await tab('maintenance'); set('input-route', 'route', 'native'); await preview();
   assert(mock.plan.request.route === 'native' && mock.plan.request.version === '0.4.7beta', 'explicit native input binds the displayed Core for production eligibility to validate'); click('modal-cancel'); discard();
 
-  mock.assessments['fixture-hoyo'].enhancements.featureStates.sr = structuredClone(mock.features.notObservedSr);
-  mock.assessments['fixture-hoyo'].componentChoices.stack = structuredClone(mock.feederRecommendation);
-  await open('fixture-hoyo'); await until(() => state().loaded.includes('installation'), 'HoYo client assessment');
-  assert([...field('route', 'version').options].map(row => row.value).join('|') === '0.4.7beta|0.5.2-beta13' && !host().querySelector('[data-gp-detail="rollback"]'), 'HoYo keeps only the current 0.4.7 and latest 0.5 Core choices even in ordinary loading mode');
-  assert(field('route', 'version').querySelector('[value="0.4.7beta"]').disabled && field('route', 'version').value === '0.5.2-beta13', 'the backend Feeder recommendation disables incompatible 0.4.7 and chooses the latest ready Core before first Apply');
-  assert(field('route', 'loadingBackend').value === 'local' && !field('hoyo', 'channel'), 'HoYo clients retain ordinary loading as the initial visible choice');
-  set('route', 'loadingBackend', 'hoyoshade');
-  assert(field('hoyo', 'channel').options.length === 3 && [...field('hoyo', 'channel').options].every(row => ['cn', 'bilibili', 'global'].includes(row.value)), 'formal channels come from production HoYo profile options');
-  set('hoyo', 'channel', 'bilibili'); click('pick-hoyo-launcher'); await until(() => state().draft.hoyo?.launcher.path, 'HoYoPlay path binding');
-  assert(state().draft.hoyo.launcher.kind === 'hoyoplay' && state().draft.hoyo.launcher.path === mock.selectedLauncher, 'picker binds the selected launcher program');
-  set('hoyo', 'kind', 'starward'); assert(!state().draft.hoyo.launcher.path, 'changing launcher type clears the previous program identity');
-  mock.selectedLauncher = 'C:\\UI-fixture\\Starward\\Starward.exe'; click('pick-hoyo-launcher'); await until(() => state().draft.hoyo?.launcher.path === mock.selectedLauncher, 'Starward path binding');
-  await tab('maintenance');
-  assert(field('route', 'deployment').disabled && field('route', 'deployment').value === 'external' && field('route', 'deployment').options.length === 1 && field('route', 'loadingMode').disabled && field('route', 'loadingMode').value === 'helper' && field('route', 'loadingMode').options.length === 1 && !button('switch-proxy'), 'an automatic HoYo input route keeps its owner-bound external/helper controls fixed and exposes no local proxy switch');
-  await preview();
-  assert(mock.plan.request.loadingBackend === 'hoyoshade' && mock.plan.request.deployment === 'external' && mock.plan.request.loadingMode === 'helper' && !Object.hasOwn(mock.plan.request, 'route') && mock.plan.request.version === '0.5.2-beta13' && JSON.stringify(mock.plan.request.hoyo) === JSON.stringify({ family: 'starrail', channel: 'bilibili', launcher: { kind: 'starward', path: mock.selectedLauncher } }), 'HoYo preview preserves the displayed current Core and launcher identity while leaving automatic input selection to backend evidence');
-  click('modal-cancel');
-  set('input-route', 'route', 'native');
-  assert(field('route', 'deployment').disabled && field('route', 'deployment').value === 'external' && field('route', 'loadingMode').disabled && field('route', 'loadingMode').value === 'helper', 'an explicit native input route cannot unlock HoYo installation or loading ownership');
-  await preview(); assert(mock.plan.request.route === 'native' && mock.plan.request.deployment === 'external' && mock.plan.request.loadingMode === 'helper' && mock.plan.request.loadingBackend === 'hoyoshade' && !mock.plan.request.proxyEntry, 'explicit native HoYo preview retains the same owner-bound loading request');
-  click('modal-cancel');
-  set('route', 'loadingBackend', 'local');
-  assert(!field('route', 'deployment').disabled && field('route', 'loadingBackend').value === 'local' && !field('hoyo', 'kind'), 'switching the independent loading backend back to local restores ordinary installation choices');
-  set('route', 'deployment', 'local'); await preview();
-  assert(mock.plan.request.loadingBackend === 'local' && mock.plan.request.deployment === 'local' && !mock.plan.request.loadingMode && !mock.plan.request.hoyo, 'the explicit local switch does not retain HoYo helper or launcher parameters');
-  click('modal-cancel'); discard(); await tab('overview');
-  assert(field('route', 'loadingBackend').value === 'local' && !field('hoyo', 'kind'), 'discard restores the ordinary HoYo loading choice');
+  // HoYo clients need HoYoShade and are set up only on the HoYo page.
+  assert(!card('fixture-hoyo') && !document.querySelector('#gameList [data-id="fixture-hoyo"]'), 'HoYo clients are not offered in the ordinary game list');
   await open('fixture');
 
   await scenario('未知插件先预览后保留', value => { value.game.installed = false; }); await tab('overview');

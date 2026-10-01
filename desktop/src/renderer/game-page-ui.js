@@ -421,7 +421,7 @@
         ${(data.failures || []).filter(row => ['operation', 'layout', 'defaults'].includes(row.section)).map(row => `<p class="gp-message error">检查未完成：${esc(errorText(row))}。处理后点击“重新检查”。</p>`).join('')}
         ${pending || readinessNotice || !apiReady() || data.layout?.needsInputPreparation || !version ? `<div class="gp-compatibility needs-attention" role="status"><span>${esc(status)}</span>${pending ? act('recover-operation', '恢复操作', busy, 'subtle') : attention && readinessActionName() !== 'resolve-readiness' ? act(readinessActionName(), readinessActionLabel(), busy, 'subtle') : ''}</div>` : ''}
         ${existing ? `<div class="gp-message"><strong>发现已有插件</strong><p>选择 Core 后应用，确认备份再替换。</p><details><summary>查看已有文件</summary><p>${esc(existingNames.join('、') || '已有插件文件')}。原件保留在 _DLSS5_Backup，未知文件会单独确认。</p></details></div>` : ''}
-        ${hasVersionUpdate() ? `<p class="gp-caption">已安装 ${esc(data.deployment?.version || game.addonVersion)}，应用后更新。</p>` : ''}${proxyEntryControl()}</section>${hoyoControls()}${options.hero ? placementSection() : `<details class="gp-section" data-gp-detail="startup"><summary>启动与快捷键</summary>${startupFields()}${hotkeySection()}</details>`}${rollbackVersions()}<details class="gp-section" data-gp-detail="technical"><summary>高级设置</summary>${componentStackOverview()}${advanced()}</details>${maintenancePanel()}`;
+        ${hasVersionUpdate() ? `<p class="gp-caption">已安装 ${esc(data.deployment?.version || game.addonVersion)}，应用后更新。</p>` : ''}${proxyEntryControl()}</section>${options.hero ? placementSection() : `<details class="gp-section" data-gp-detail="startup"><summary>启动与快捷键</summary>${startupFields()}${hotkeySection()}</details>`}${rollbackVersions()}<details class="gp-section" data-gp-detail="technical"><summary>高级设置</summary>${componentStackOverview()}${advanced()}</details>${maintenancePanel()}`;
     }
     function runtimeImportControl() {
       return manager.pickRuntimeDlc && (options.runtimeRequired?.(currentVersion()) || resumeAfterImport && error && /运行库|DLSS5 模型|DLC|nvngx_dlssnr/i.test(message))
@@ -470,18 +470,6 @@
       const facts = scope.launchSettingsUi.hardwareFacts(currentHardware());
       const fg = data.enhancements?.fgComponents || {}, current = draft.components?.mfgUnlock || fg.installedProvider || fg.defaultProvider;
       return `<div class="gp-hardware"><strong>${esc(facts.label)}</strong>${loaded.has('enhancements') ? '' : '<span role="status">正在读取超分补帧条件…</span>'}</div><div class="launch-grid">${featurePanel('sr')}${featurePanel('fg')}</div>${fg.catalog?.length && fields.fg?.backend === 'mfgunlock' ? `<section class="gp-section">${selectField('component', 'mfgUnlock', '独立补帧插件', fg.catalog.map(row => option(row.id, row.label || row.id, current)).join(''), busy, '插件独立于 NR；切换后重启游戏，游戏内面板修改会在重新检查后读回。')}</section>` : ''}`;
-    }
-    function hoyoControls() {
-      const rows = data.game.hoyo?.profileOptions || [];
-      if (!rows.length) return '';
-      const backend = selected('loadingBackend', data.layout?.loadingBackend || 'local'), selection = draft.hoyo || data.layout?.hoyo || data.game.hoyo?.selected;
-      const channel = selection?.channel || rows[0].channel, kind = selection?.launcher?.kind || 'hoyoplay';
-      return `<section class="gp-section"><h3>米哈游兼容</h3><div class="gp-controls">${selectField('route', 'loadingBackend', '加载模式', option('local', '常规加载', backend) + option('hoyoshade', 'HoYoShade · 实验', backend), busy)}${backend === 'hoyoshade' ? selectField('hoyo', 'channel', '正式客户端', rows.map(row => option(row.channel, `${row.familyLabel} · ${row.channelLabel}`, channel)).join(''), busy) + selectField('hoyo', 'kind', '绑定启动器', option('hoyoplay', 'HoYoPlay · 就绪后点击启动', kind) + option('starward', 'Starward · 已注册协议', kind), busy) : ''}</div>${backend === 'hoyoshade' ? `<p class="gp-caption">${esc(selection?.launcher?.path || '尚未选择启动器程序')}</p>${act('pick-hoyo-launcher', '选择启动器程序', busy)}<p class="gp-caption">每游戏独立外置目录；助手就绪后等待所选正式客户端，加载与 NR 结果分别核验。</p>` : ''}</section>`;
-    }
-    function hoyoDraft() {
-      const rows = data.game.hoyo?.profileOptions || [], current = draft.hoyo || data.layout?.hoyo || data.game.hoyo?.selected || {};
-      return { family: current.family || rows[0]?.family, channel: current.channel || rows[0]?.channel,
-        launcher: { kind: current.launcher?.kind || 'hoyoplay', path: current.launcher?.path || '' } };
     }
     function advanced() {
       const special = specialRoute();
@@ -922,10 +910,6 @@
         render(); return;
       } else if (group === 'component') {
         draft.components = { ...(draft.components || {}), [key]: value };
-      } else if (group === 'hoyo') {
-        draft.hoyo = hoyoDraft();
-        if (key === 'channel') draft.hoyo.channel = value;
-        if (key === 'kind') { draft.hoyo.launcher.kind = value; draft.hoyo.launcher.path = ''; }
       } else if (group === 'input-route') {
         const version = currentVersion();
         if (value === 'auto') delete draft.route; else draft.route = value;
@@ -933,10 +917,6 @@
       } else if (group === 'route') {
         draft[key] = value;
         if (key === 'deployment' && value === 'local') delete draft.loadingMode;
-        if (key === 'loadingBackend') {
-          if (value === 'hoyoshade') { draft.hoyo = hoyoDraft(); draft.deployment = 'external'; draft.loadingMode = 'helper'; delete draft.proxyEntry; }
-          else { delete draft.hoyo; delete draft.loadingMode; }
-        }
         if (key === 'api') {
           if (manager.setGameApiPreference) {
             const gameId = id, epoch = generation;
@@ -1025,10 +1005,6 @@
         }
         else if (action === 'prepare') await prepare();
         else if (action === 'resolve-readiness') await resolveReadiness();
-        else if (action === 'pick-hoyo-launcher') {
-          const file = unwrap(await manager.pickHoYoLauncher());
-          if (file) { draft.hoyo = hoyoDraft(); draft.hoyo.launcher.path = file; render(); }
-        }
         else if (action === 'repreview-addons') {
           const request = structuredClone(modal.plan.request);
           request.addonKeep = [...host.querySelectorAll('[data-gp-addon-keep]:checked')].map(input => modal.addonChoices[Number(input.dataset.gpAddonKeep)])

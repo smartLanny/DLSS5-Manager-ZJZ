@@ -624,10 +624,6 @@ function registerIpc() {
     if (result.canceled || !result.filePaths[0]) return null;
     return service.prepareGameSelection(result.filePaths[0], result.filePaths[0]);
   });
-  call('pick-hoyo-launcher', async () => {
-    const result = await dialog.showOpenDialog(win, { properties: ['openFile'], title: '选择 HoYoPlay 或 Starward 启动器', filters: [{ name: 'Windows 启动器', extensions: ['exe'] }] });
-    return result.canceled ? null : result.filePaths[0] || null;
-  });
   call('game-confirm', selection => launchCoordinator.confirmSelection(selection));
   call('pick-game-icon', async () => {
     const result = await dialog.showOpenDialog(win, {
