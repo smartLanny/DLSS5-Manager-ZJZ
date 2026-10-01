@@ -1,14 +1,16 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "0.5.0-beta.2",
+  "packageVersion": "0.5.2-beta.13",
   "core": {
     "payloadRoot": "C:/path/to/active-core/payload/nr-before-sr",
-    "version": "0.4.7beta",
+    "version": "0.5.2-beta13",
     "versions": [
       "0.2.0-beta.2",
+      "0.3.3-dev-r4",
       "0.4.2",
       "0.4.7beta",
-      "0.5-dline21"
+      "0.5-dline21",
+      "0.5.2-beta13"
     ]
   },
   "runtime": {

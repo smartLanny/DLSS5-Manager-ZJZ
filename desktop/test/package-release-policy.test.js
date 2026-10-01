@@ -142,6 +142,25 @@ test('dynamic staging permits the exact D13 identity only as an additional histo
   }
 });
 
+test('staging accepts the Manager version being built and earlier 0.5.0 beta manifests only', async t => {
+  const root = temporary(t), file = path.join(root, 'version.json');
+  const write = packageVersion => fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, packageVersion, core: { version: '0.4.7beta', payloadRoot: '.' } }));
+  for (const version of [packageVersion, '0.5.0-beta.2', '0.5.0-beta.10']) {
+    write(version); assert.equal((await inspectManifest(file, 'base')).manifest.packageVersion, version);
+  }
+  for (const version of [undefined, '', '0.5.0-beta.1', '0.5.0-beta.11', '0.5.1-beta.1', '0.6.0']) {
+    write(version); await assert.rejects(inspectManifest(file, 'base'), /packageVersion/);
+  }
+});
+
+test('the documented staging example matches the version being built and the release gate', () => {
+  const example = require('../../docs/MANAGER-DISTRIBUTION-STAGING.example.json');
+  const { REQUIRED_CORE_IDS } = require('../scripts/release-gate.cjs');
+  assert.equal(example.packageVersion, packageVersion);
+  assert.equal(example.core.version, require('../src/shared/core-catalog').RECOMMENDED);
+  assert.deepEqual(REQUIRED_CORE_IDS.filter(id => !example.core.versions.includes(id)), []);
+});
+
 test('distribution staging retains every requested Core as an atomic Core plus chain while keeping 0.4.7 default', async t => {
   assert.equal(typeof buildPayload, 'function');
   const root = temporary(t), payloadRoot = path.join(root, 'payload'), stageRoot = path.join(root, 'stage');
