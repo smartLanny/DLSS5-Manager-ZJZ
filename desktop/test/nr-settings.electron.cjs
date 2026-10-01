@@ -72,6 +72,13 @@ function interact(flags) {
     await controller.open('nr-fixture', 'nr');
     check(input('Intensity')?.value === '1.23456789', 'precise saved intensity appears without rounding');
     check(input('Layer2Intensity')?.value === '0.87654321', 'layer 2 keeps its independent value');
+    // Each number box has a pointer-only slider beside it; both stay in step.
+    const slider = key => input(key).parentElement.querySelector('[data-gp-slider]');
+    check(Number(slider('Intensity')?.value) === 1.23 && slider('Intensity').getAttribute('aria-hidden') === 'true' && slider('Intensity').tabIndex === -1, 'intensity slider starts at the saved value');
+    slider('Intensity').value = '1.5'; slider('Intensity').dispatchEvent(new Event('input', { bubbles: true }));
+    check(input('Intensity').value === '1.5' && controller.getState().draft.nr?.Intensity === 1.5, 'moving the slider edits the number box and the draft');
+    change('Intensity', 1.23456789);
+    check(Number(slider('Intensity').value) === 1.23 && controller.getState().draft.nr?.Intensity === undefined, 'typing the saved number moves the slider back and clears the draft');
     check(input('SkinStructureStrength')?.value === '0.4', 'new default skin strength is .4');
     check(input('UICorrection')?.checked && input('AutoMask')?.checked, 'new model protection defaults are enabled');
     check(document.body.textContent.includes('文件未写入'), 'default values are labelled');
@@ -128,7 +135,74 @@ function interact(flags) {
     check(controller.getState().draft.nr.Intensity === 1.78912345, 'unrelated draft survives external change');
     click('discard');
     check(document.documentElement.scrollWidth <= document.documentElement.clientWidth, 'no horizontal layout overflow');
-    controller.dispose(); return { assertions: 34, sandbox: true };
+    controller.dispose(); return { assertions: 37, sandbox: true };
+  })();
+}
+
+// The games page lays the same settings out like the Core's in-game panel.
+function interactHero(flags) {
+  const check = (condition, message) => { if (!condition) throw Error(message); };
+  const until = async (predicate, label) => {
+    const end = Date.now() + 5000;
+    while (!predicate()) { if (Date.now() > end) throw Error('Timed out: ' + label); await new Promise(resolve => setTimeout(resolve, 15)); }
+  };
+  const host = document.getElementById('fixture');
+  const input = key => host.querySelector(`[data-gp-group="nr"][data-gp-field="${key}"]:not([type="radio"])`);
+  const radio = (group, key, value) => host.querySelector(`[data-gp-group="${group}"][data-gp-field="${key}"][value="${value}"]`);
+  const pick = (group, key, value) => { const element = radio(group, key, value); check(element && !element.disabled, `${group}/${key}=${value} is selectable`); element.click(); };
+  const change = (key, value) => {
+    const element = input(key); check(element && !element.disabled, key + ' is editable');
+    if (element.type === 'checkbox') element.checked = Boolean(value); else element.value = String(value);
+    element.dispatchEvent(new Event(element.type === 'number' ? 'input' : 'change', { bubbles: true }));
+  };
+  const click = action => { const button = host.querySelector(`[data-gp-action="${action}"]`); check(button && !button.disabled, action + ' is available'); button.click(); };
+  return (async () => {
+    host.innerHTML = '';
+    const controller = GamePageUi.mount(host, nrFixture, { hero: () => ({ art: '', launcher: 'Steam' }) }); window.nrController = controller;
+    await controller.open('nr-fixture', 'nr'); let assertions = 0; const ok = (condition, message) => { check(condition, message); assertions++; };
+    ok(host.querySelector('[data-gp-tab="nr"]').textContent === 'DLSS5', 'the first tab is named DLSS5');
+    ok(host.querySelector('.gp-cards > .gp-card-main [data-gp-field="Enabled"]')?.checked, 'the DLSS5 switch leads the page and reflects the INI');
+    const titles = [...host.querySelectorAll('.gp-cards > .gp-card > header h3, .gp-cards > details.gp-card > summary > span')].map(node => node.firstChild.textContent.trim());
+    ok(titles.slice(0, 3).join('|') === '处理位置|模型与层数|最终合成' && titles.includes('光影微调') && titles.includes('画质保护（高级）'), 'groups follow the Core panel: ' + titles.join('|'));
+    ok(radio('nr', 'ProcessingStart', 'Before').checked && input('WorkMode') && !input('PostWorkPercent'), 'the position shows its own working scale');
+    pick('nr', 'ProcessingStart', 'After');
+    ok(input('PostWorkPercent') && !input('WorkMode') && controller.getState().draft.nr.ProcessingStart === 'After', 'after-upscale position switches to its own scale');
+    click('discard');
+    ok(radio('nr-layers', 'count', '5').checked, 'the layer count reads the five contiguous enabled layers');
+    ok(input('Intensity') && !input('Layer2Intensity'), 'only the layer being edited is shown');
+    pick('nr-edit-layer', 'layer', 2);
+    ok(input('Layer2Intensity') && !input('Intensity'), 'the layer picker switches to layer 2');
+    pick('nr', 'Layer2Style', 2);
+    ok(controller.getState().draft.nr.Layer2Style === 2 && radio('nr', 'Layer2Style', '2').checked, 'style is a segmented choice written per layer');
+    change('Layer2AutoMask', 0);
+    ok(input('Layer2SkinStructureStrength').disabled, 'skin structure follows its skin protection switch');
+    click('discard');
+    pick('nr-layers', 'count', 2);
+    const draft = controller.getState().draft.nr;
+    ok(draft.Layer3Enabled === 0 && draft.Layer4Enabled === 0 && draft.Layer5Enabled === 0 && !('Layer2Enabled' in draft), 'two layers keep layer 2 and switch 3 to 5 off');
+    ok(!radio('nr-edit-layer', 'layer', '3'), 'the picker only offers active layers');
+    click('preview'); await until(() => !controller.getState().busy && !controller.hasDraft(), 'two-layer save');
+    ok(controller.getState().data.nr.Layer2Enabled === 1 && controller.getState().data.nr.Layer3Enabled === 0, 'layer count round-trips through the real INI');
+    pick('nr-layers', 'count', 3);
+    ok(controller.getState().draft.nr.Layer3Enabled === 1 && controller.getState().draft.nr.Layer3Configured === 1 && !('Layer4Enabled' in controller.getState().draft.nr), 'raising the count enables exactly the next layer');
+    click('discard');
+    if (flags.reconstruction) {
+      pick('nr', 'ReconstructionMode', 1);
+      ok(controller.getState().draft.nr.ReconstructionMode === 1, '0.5.1 detail enhancement is a segmented choice');
+      click('discard');
+    }
+    pick('nr-edit-layer', 'layer', 1);
+    change('Intensity', 1.9);
+    click('nr-recommended');
+    const restored = controller.getState().draft.nr;
+    ok(restored.Intensity === 1.5 && restored.Layer2Enabled === 0 && !('Enabled' in restored), 'restore fills recommended values, turns extra layers off and keeps the switch');
+    click('preview'); await until(() => !controller.getState().busy && !controller.hasDraft(), 'recommended picture saved');
+    ok(controller.getState().data.nr.Intensity === 1.5 && controller.getState().data.nr.Layer2Enabled === 0 && controller.getState().data.nr.Enabled === 1, 'recommended picture round-trips through the real INI');
+    ok(radio('nr-layers', 'count', '1').checked && host.textContent.includes('第 1 层'), 'one layer is shown after the restore');
+    change('Enabled', 0);
+    ok(controller.getState().draft.nr.Enabled === 0, 'the DLSS5 switch edits the draft like any other setting');
+    click('discard');
+    controller.dispose(); return { heroAssertions: assertions };
   })();
 }
 app.whenReady().then(async () => {
@@ -141,7 +215,11 @@ app.whenReady().then(async () => {
     assert.match(fs.readFileSync(file, 'utf8'), /ExperimentalPrivatePreference=keep-exact\r\n/);
     assert.equal(writes, 5 + flags.colour + flags.reconstruction); assert.deepEqual(lastRequest.nr, { Intensity: 1.67891234 });
     if (flags.reconstruction) for (const line of [/^ReconstructionMode=2\r$/m, /^NearBlackChromaGuard=1\r$/m]) assert.match(fs.readFileSync(file, 'utf8'), line);
-    console.log(JSON.stringify({ ok: true, scope: 'production NR GamePage interaction with synthetic INI', mode, ...result, writes, actualGameValidation: false }));
+    const hero = await win.webContents.executeJavaScript(`(${interactHero.toString()})(${JSON.stringify(flags)})`);
+    const restored = nr.readConfig(file, contract);
+    assert.equal(restored.Intensity, 1.5); assert.equal(restored.Layer2Enabled, 0); assert.equal(restored.Enabled, 1);
+    assert.match(fs.readFileSync(file, 'utf8'), /ExperimentalPrivatePreference=keep-exact\r\n/);
+    console.log(JSON.stringify({ ok: true, scope: 'production NR GamePage interaction with synthetic INI', mode, ...result, ...hero, writes, actualGameValidation: false }));
     win.destroy(); app.exit(0);
   } catch (error) { console.error(error.stack || error); win.destroy(); app.exit(1); }
 });

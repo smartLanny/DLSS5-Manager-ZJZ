@@ -262,15 +262,17 @@ async function smoke() {
   assert(performance.now() - openAt < 500, 'five-second installation check must not delay inline expansion');
   assert(document.getElementById('view-games').classList.contains('active'), 'library remains active');
   assert(!document.getElementById('view-game-detail').classList.contains('active'), 'independent detail view is never activated');
-  assert([...host().querySelectorAll('[data-gp-tab]')].map(row => row.textContent).join('|') === '画质增强|超分与补帧|启动与快捷键|高级', 'four task tabs appear from the seed');
-  assert(state().tab === 'nr', 'an installed game opens on 画质增强');
+  assert([...host().querySelectorAll('[data-gp-tab]')].map(row => row.textContent).join('|') === 'DLSS5|超分与补帧|启动与快捷键|高级', 'four task tabs appear from the seed');
+  assert(state().tab === 'nr', 'an installed game opens on DLSS5');
   assert(['enhance', 'graphics', 'advanced', 'startup'].every(key => host().querySelector(`[data-detail-tab="${key}"]`)), 'accessible tab identities are reused');
   assert(!state().loaded.includes('installation'), 'seed appears while installation is unresolved');
   await until(() => state().loaded.includes('installation'), 'five-second installation response'); mock.delays['fixture:installation'] = 0;
   assert(!mock.calls.some(row => row[0] === 'assess' && row[2] !== 'installation'), 'first tab does not start expensive enhancement or diagnostic work');
   await tab('overview'); assert(!field('nr', 'Intensity'), 'installation page keeps NR controls on their own page'); await tab('nr');
   assert(['Intensity', 'LocalToneStrength', 'LocalStructureStrength'].every(key => field('nr', key)?.getClientRects().length > 0), 'three primary NR controls are visible on the NR page');
-  assert(host().querySelectorAll('.gp-nr-primary input[type="number"]').length === 3 && !host().querySelector('.gp-nr-details').open && field('nr', 'WorkMode').closest('details') === host().querySelector('.gp-nr-details'), 'advanced NR starts collapsed below three precise numeric controls');
+  // The DLSS5 page follows the Core's in-game panel: the switch, then 处理方式 and 模型细节 as cards.
+  assert(host().querySelector('.gp-cards > .gp-card-main [data-gp-field="Enabled"]') && host().querySelectorAll('[data-gp-card="model"] input[type="number"]').length === 3 &&
+    field('nr', 'WorkMode').closest('.gp-card')?.querySelector('header h3')?.textContent === '处理方式', 'DLSS5 leads with its switch, three precise model controls and the 0.4.7 processing group');
   await tab('overview'); assert(![...field('route', 'version').options].some(row => row.value.includes('bridge1411')), 'bridge comparison is absent from basic Core choices');
   for (const id of ['0.5-dline13', '0.4.7beta-corefix.8']) {
     const candidate = host().querySelector('[data-gp-field="version"] option[value="' + id + '"]');
@@ -475,8 +477,11 @@ async function smoke() {
   assert(runtimeCards[2].querySelector('.badge').textContent === '已确认' && runtimeCards[3].querySelector('.badge').textContent === '已确认' && runtimeCards[3].textContent.includes('完成并回填计数持续增长'), 'host Core and successful NR readback display separately');
   assert(runtimeCards[4].querySelector('.badge').textContent === '待确认', 'actual NR success still requires separate visual observation');
   await scenario('快捷键暂存 · UI fixture'); await tab('launch');
+  const keycap = () => host().querySelector('.gp-hotkeys .gp-key')?.textContent;
+  assert(keycap() === 'Home' && host().querySelectorAll('.gp-hotkeys .gp-key')[1]?.textContent === 'F6 开关', 'hotkey rows show the ReShade and NR keys as keycaps');
   const beforeHotkeyApply = count('apply'); click('capture-hotkey');
   document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Insert', code: 'Insert', keyCode: 45, bubbles: true, cancelable: true })); await delay(100);
+  assert(keycap() === 'Insert', 'the keycap shows the captured draft key');
   assert(mock.assessment.hotkeys.reshade.key === 36 && count('direct-hotkey-write') === 0 && count('apply') === beforeHotkeyApply, 'shortcut only changes the draft');
   await preview(); assert(JSON.stringify(mock.plan.request) === JSON.stringify({ hotkeys: { reshade: { key: 45, ctrl: false, shift: false, alt: false } } }), 'Insert binding travels through unified preview');
   click('modal-cancel'); assert(mock.assessment.hotkeys.reshade.key === 36, 'cancel retains Home'); await preview(); click('modal-apply'); await settled();

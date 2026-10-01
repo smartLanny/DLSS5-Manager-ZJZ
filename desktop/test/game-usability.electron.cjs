@@ -60,8 +60,8 @@ async function smoke() {
   const change = (root, group, key, value) => { const input = root.querySelector(`[data-gp-group="${group}"][data-gp-field="${key}"]`); check(input && !input.disabled, key + ' editable'); input.value = value; input.dispatchEvent(new Event(input.type === 'range' || input.type === 'number' ? 'input' : 'change', { bubbles: true })); };
   await until(() => card('fixture'), 'library'); card('fixture').querySelector('.game-card-head').click();
   await until(() => ctrl('fixture')?.getState().loaded.includes('installation'), 'installed page');
-  check([...host('fixture').querySelectorAll('[data-gp-tab]')].map(n => n.textContent).join('|') === '画质增强|超分与补帧|启动与快捷键|高级', 'exactly four task pages');
-  check(ctrl('fixture').getState().tab === 'nr', 'an installed game opens on 画质增强');
+  check([...host('fixture').querySelectorAll('[data-gp-tab]')].map(n => n.textContent).join('|') === 'DLSS5|超分与补帧|启动与快捷键|高级', 'exactly four task pages');
+  check(ctrl('fixture').getState().tab === 'nr', 'an installed game opens on DLSS5');
   host('fixture').querySelector('[data-gp-tab="overview"]').click();
   check(!host('fixture').querySelector('[data-gp-field="Intensity"]'), 'installation page does not mix NR controls');
   check([...host('fixture').querySelector('.gp-install-section [data-gp-field="version"]').options].map(n => n.value).join('|') === '0.4.7beta|0.5.2-beta13', 'main Core selector has the two supported choices');
