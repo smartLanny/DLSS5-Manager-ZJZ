@@ -1,0 +1,306 @@
+/* NVIDIA App style layer, loaded last.
+   Shape, type scale, density and the collapsible rail apply to both themes;
+   the colour palette below is the dark (default) theme.
+
+   Type scale  22/600 page title · 20/600 game title · 14/450 nav, tabs (600 selected)
+               13.5/450 row label, list name · 12.5/400 meta · 12/600 section · 12/400 hint
+               11.5/400 status, footer · 13/600 buttons · tabular numbers everywhere */
+
+:root {
+  --font-ui: "Inter Variable", "Noto Sans SC Variable", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+  --rail: 60px;
+  --rail-open: 212px;
+  --header-height: 72px;
+  --radius: 4px;
+  --radius-sm: 3px;
+  --accent: #76b900;
+  --accent-hover: #85cc0a;
+  --accent-ink: #0a0a0a;
+  --accent-soft: rgba(118, 185, 0, .14);
+}
+
+html, body, button, input, select, textarea {
+  font-family: var(--font-ui);
+  font-feature-settings: "tnum" 1;
+}
+body { font-size: 13px; font-weight: 400; -webkit-font-smoothing: antialiased; }
+
+/* ---- Collapsible rail: icons only, expands over the content on hover or focus ---- */
+.app-shell { grid-template-columns: var(--rail) minmax(0, 1fr); position: relative; }
+.app-shell > main { grid-column: 2; }
+.sidebar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 60;
+  width: var(--rail);
+  padding: 12px 6px 10px;
+  overflow: hidden auto;
+  transition: width var(--motion-normal) var(--ease-standard), box-shadow var(--motion-normal) var(--ease-standard);
+}
+.sidebar:hover, .sidebar:focus-within { width: var(--rail-open); box-shadow: 10px 0 28px rgba(0, 0, 0, .38); }
+html[data-motion="off"] .sidebar { transition: none; }
+.brand { gap: 12px; min-height: 40px; padding: 0 10px 14px; white-space: nowrap; }
+.brand-mark { width: 28px; height: 28px; flex: 0 0 28px; }
+.brand h1 { font-size: 15px; font-weight: 600; letter-spacing: 0; }
+.brand-badge { min-width: 0; height: 18px; padding: 0 5px; border-radius: 2px; font-size: 11px; font-weight: 600; }
+.brand p { margin-top: 2px; font-size: 11.5px; }
+nav { gap: 2px; }
+.nav {
+  position: relative;
+  gap: 16px;
+  min-height: 42px;
+  padding: 0 14px;
+  overflow: hidden;
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 450;
+}
+.nav .nav-icon { width: 20px; height: 20px; flex: 0 0 20px; }
+.nav.active { font-weight: 600; }
+.nav.active::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 2px 2px 0; background: var(--accent); }
+.nav.active .nav-icon { color: var(--accent); }
+.brand-copy, .sidebar-foot { opacity: 0; transition: opacity var(--motion-fast) var(--ease-standard); }
+.sidebar:hover :is(.brand-copy, .sidebar-foot), .sidebar:focus-within :is(.brand-copy, .sidebar-foot) { opacity: 1; }
+.sidebar-foot { margin: auto 8px 0; padding: 12px 6px 0; white-space: nowrap; }
+.sidebar-foot p { margin-bottom: 4px; font-size: 11.5px; }
+.text-link { padding: 4px 0; font-size: 12px; }
+.sidebar-foot small { margin-top: 6px; font-size: 11px; }
+
+/* ---- Title bar and page rhythm ---- */
+.titlebar { padding: 16px 24px 12px; }
+.page-title h2 { font-size: 22px; font-weight: 600; letter-spacing: 0; line-height: 1.3; }
+.page-title p { margin-top: 3px; font-size: 12.5px; font-weight: 400; }
+.product-wordmark { display: none; }
+.title-actions { top: 0; right: 0; gap: 0; }
+.window-button { width: 44px; height: 32px; border-radius: 0; }
+.window-button .ui-icon { width: 13px; height: 13px; }
+.view { padding: 16px 24px 28px; }
+
+/* ---- Controls: flat, small radius, compact ---- */
+.button, .cx-button {
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+}
+.button:active, .cx-button:active { transform: none; }
+.button.primary, .cx-button.cx-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.button.primary:hover, .cx-button.cx-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-ink); }
+.library-actions .button { min-height: 32px; padding-inline: 14px; font-size: 13px; }
+.library-header { margin-bottom: 12px; }
+.library-header .summary { font-size: 12.5px; }
+.toolbar-row { gap: 8px; margin-bottom: 12px; }
+.search { min-height: 32px; gap: 8px; padding: 0 10px; border-radius: var(--radius-sm); }
+.search .ui-icon { width: 15px; height: 15px; }
+.search input { height: 30px; font-size: 13px; }
+select, .gp-field select, .gp-field > input, .gp-field textarea, .cx-note, .game-picker-form input, .modal-input-line input {
+  min-height: 32px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+select { padding-right: 30px; background-position: right 10px center; background-size: 12px 12px; }
+.toolbar-row > select { min-width: 150px; height: 32px; padding: 0 30px 0 10px; font-size: 13px; }
+@supports (appearance: base-select) {
+  .toolbar-row > select { padding-right: 10px; }
+  select::picker-icon { width: 12px; height: 12px; flex-basis: 12px; }
+  ::picker(select) { padding: 4px; border-radius: var(--radius); }
+  option { min-height: 30px; padding: 6px 10px; border-radius: 2px; font-size: 13px; }
+  option:checked { background: var(--accent); color: var(--accent-ink); }
+}
+input[type="checkbox"] { width: 16px; height: 16px; border-radius: 2px; }
+input[type="checkbox"]:checked { border-color: var(--accent); background: var(--accent); }
+input[type="checkbox"]:checked::after { background: var(--accent-ink); }
+input[type="range"] { accent-color: var(--accent); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline-color: var(--accent); }
+
+/* ---- Surfaces ---- */
+.panel, .config-block, .gp-section, .gp-inline .gp-section { border-radius: var(--radius); box-shadow: none; }
+.panel h3 { font-size: 15px; font-weight: 600; }
+.panel p, .config-note, .gp-caption, .muted { font-size: 12px; }
+.badge { padding: 2px 8px; border-radius: 2px; font-size: 11.5px; font-weight: 500; }
+.notice, .startup-mode-note, .payload-guidance, .component-runtime-guide { border-radius: var(--radius); }
+.game-card { border-radius: var(--radius); }
+.poster, .hoyo-poster { border-radius: 2px; }
+.game-title h3 { font-size: 14px; font-weight: 600; }
+.game-meta p { font-size: 12px; }
+.icon-button, .expand-arrow { border-radius: var(--radius-sm); }
+.detail-tabs button, .gp-tabs button { font-size: 14px; font-weight: 450; }
+.detail-tabs button[aria-selected="true"], .gp-tabs button[aria-selected="true"] { font-weight: 600; border-bottom-color: var(--accent); }
+.modal-card, .gp-modal-card, .cx-dialog { border-radius: var(--radius); }
+
+/* ---- Headings, setting rows and cards inside pages ---- */
+.workspace-intro h3 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
+.workspace-intro p { font-size: 12.5px; }
+.setting-row strong, .setting-row > div > b, .settings-panel h4 { font-size: 13.5px; font-weight: 500; }
+.setting-row p { font-size: 12px; }
+.setting-row > b { font-size: 12.5px; font-weight: 500; }
+.card-action { gap: 8px; }
+.card-action .button { min-width: 96px; }
+.card-action .button, .card-action .icon-button { min-height: 34px; }
+.maintenance-mode, .maintenance-file, .gp-uninstall > div { border-radius: var(--radius); }
+
+/* ---- Components page ---- */
+#componentLibraryPanel { border-radius: var(--radius); }
+/* The page title already names this view; an empty status line is not shown. */
+.component-library-heading h3 { display: none; }
+.component-library-toolbar:has(.component-library-message:empty) { display: none; }
+.component-empty, .component-download-empty { border-radius: var(--radius); }
+.component-library-hero { padding: 16px 18px; border-radius: var(--radius) var(--radius) 0 0; }
+.component-library-heading h3 { font-size: 15px; font-weight: 600; }
+.component-library-heading p { font-size: 12px; }
+.component-primary-actions .button { min-height: 32px; }
+.component-runtime-guide { position: relative; overflow: hidden; padding: 12px 16px 12px 20px; }
+.component-runtime-guide::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--amber, #f2b33d); }
+.component-runtime-guide-icon { display: none; }
+.component-runtime-guide-copy strong { font-size: 13.5px; font-weight: 500; }
+.component-runtime-guide-copy span { font-size: 12px; }
+.component-section-head h4 { font-size: 12px; font-weight: 600; letter-spacing: .3px; }
+.component-package-list, #componentLibraryRows { gap: 1px; }
+#componentLibraryRows { grid-template-columns: minmax(0, 1fr); }
+.component-library-message::before { background: var(--accent); }
+.component-package-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 52px; padding: 9px 14px; border-radius: 0; }
+.component-package-row:not(:has(.component-kind-icon)) { grid-template-columns: minmax(0, 1fr) auto; }
+.component-kind-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--radius-sm); }
+.component-kind-icon .ui-icon { width: 17px; height: 17px; }
+.component-package-copy strong { font-size: 13.5px; font-weight: 500; }
+.component-package-copy span, .component-package-copy small { font-size: 12px; }
+.component-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+.component-status .ui-icon { width: 13px; height: 13px; }
+.icon-check { --icon: url('icons/check.svg'); }
+.icon-sparkle { --icon: url('icons/phosphor/sparkle.svg'); }
+.icon-cube { --icon: url('icons/phosphor/cube.svg'); }
+.icon-sliders { --icon: url('icons/phosphor/sliders-horizontal.svg'); }
+.icon-wrench { --icon: url('icons/phosphor/wrench.svg'); }
+.icon-game { --icon: url('icons/phosphor/game-controller.svg'); }
+.component-repository, .component-advanced { border-radius: var(--radius); }
+
+/* ================= Dark theme palette (default) ================= */
+html[data-theme="dark"] {
+  --bg: #1b1b1b;
+  --side: #121212;
+  --panel: #242424;
+  --panel-2: #2b2b2b;
+  --line: #333333;
+  --line-strong: #474747;
+  --muted: #a3a3a3;
+  --text: #ececec;
+  --green: #76b900;
+  --green-soft: rgba(118, 185, 0, .13);
+  --red: #ff6f61;
+  --red-soft: rgba(255, 111, 97, .13);
+  --amber: #f2b33d;
+  --amber-soft: rgba(242, 179, 61, .13);
+  --focus: #76b900;
+  scrollbar-color: #4a4a4a transparent;
+}
+html[data-theme="dark"] .sidebar { background: var(--side); border-right: 1px solid #0b0b0b; }
+html[data-theme="dark"] .brand-badge { background: #2e2e2e; color: #d9d9d9; }
+html[data-theme="dark"] .brand p, html[data-theme="dark"] .sidebar-foot p, html[data-theme="dark"] .text-link { color: #8f8f8f; }
+html[data-theme="dark"] .text-link:hover { color: #fff; }
+html[data-theme="dark"] .nav { color: #a8a8a8; }
+html[data-theme="dark"] .nav:hover { background: #1f1f1f; color: #fff; }
+html[data-theme="dark"] .nav.active { background: #2a2a2a; color: #fff; }
+html[data-theme="dark"] .sidebar-foot { border-color: #222; }
+html[data-theme="dark"] .sidebar-foot small { color: #6b6b6b; }
+html[data-theme="dark"] .titlebar { border-color: transparent; background: var(--bg); }
+html[data-theme="dark"] .page-title h2 { color: #fff; }
+html[data-theme="dark"] .page-title p { color: #8f8f8f; }
+html[data-theme="dark"] .window-button { color: #bdbdbd; }
+html[data-theme="dark"] .window-button:hover { background: #2c2c2c; }
+html[data-theme="dark"] .library-header .summary { color: #a3a3a3; }
+html[data-theme="dark"] :is(.button, .cx-button) { border-color: #4a4a4a; background: transparent; color: #ececec; }
+html[data-theme="dark"] :is(.button, .cx-button):hover:not(:disabled) { border-color: #5c5c5c; background: #2c2c2c; }
+html[data-theme="dark"] :is(.button.primary, .cx-button.cx-primary) { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+html[data-theme="dark"] :is(.button.primary, .cx-button.cx-primary):hover:not(:disabled) { border-color: var(--accent-hover); background: var(--accent-hover); }
+html[data-theme="dark"] .button.danger { border-color: #6b3a35; background: var(--red-soft); color: var(--red); }
+html[data-theme="dark"] :is(select, .gp-field select, .gp-field > input, .gp-field textarea, .cx-note, .modal-card input) { border-color: #444; background-color: #2a2a2a; }
+html[data-theme="dark"] select:hover:not(:disabled) { border-color: #5a5a5a; background-color: #2f2f2f; }
+html[data-theme="dark"] :is(.searchbar, .search) { border-color: #3a3a3a; background: #2a2a2a; }
+html[data-theme="dark"] :is(.searchbar, .search):focus-within { border-color: #5a5a5a; background: #2d2d2d; }
+html[data-theme="dark"] input[type="checkbox"] { border-color: #6b6b6b; background: #2a2a2a; }
+html[data-theme="dark"] input[type="checkbox"]:checked { border-color: var(--accent); background: var(--accent); }
+html[data-theme="dark"] input[type="checkbox"]:checked::after { background: var(--accent-ink); }
+html[data-theme="dark"] input[type="range"] { accent-color: var(--accent); }
+html[data-theme="dark"] ::selection { color: #0a0a0a; background: var(--accent); }
+@supports (appearance: base-select) {
+  html[data-theme="dark"] ::picker(select) { border-color: #3d3d3d; background: #262626; color: #ececec; box-shadow: 0 14px 36px rgba(0, 0, 0, .5); }
+  html[data-theme="dark"] option { color: #d6d6d6; }
+  html[data-theme="dark"] option:hover, html[data-theme="dark"] option:focus { background: #333; color: #fff; }
+  html[data-theme="dark"] option:checked { background: var(--accent); color: var(--accent-ink); }
+  html[data-theme="dark"] select::picker-icon { background: #a3a3a3; }
+}
+
+html[data-theme="dark"] :is(.panel, .config-block, .gp-section, .gp-inline .gp-section) { border-color: transparent; background: var(--panel); }
+html[data-theme="dark"] :is(.control-row, .setting-row, .info-row, .addon-row, .gp-fact, .gp-module-list > div, .gp-file-choice, .diag-row, .gp-change-list > div) { border-color: #2f2f2f; }
+html[data-theme="dark"] .badge { background: #2e2e2e; color: #cfcfcf; }
+html[data-theme="dark"] .badge.good { background: var(--green-soft); color: var(--green); }
+html[data-theme="dark"] .badge.warn { background: var(--amber-soft); color: var(--amber); }
+html[data-theme="dark"] .badge.bad { background: var(--red-soft); color: var(--red); }
+html[data-theme="dark"] .notice, html[data-theme="dark"] .startup-mode-note { border-color: #5a4a26; background: var(--amber-soft); color: #e9c574; }
+html[data-theme="dark"] .hardware-notice { border-color: #333; background: #242424; color: #a3a3a3; }
+html[data-theme="dark"] .game-card { border-color: transparent; background: var(--panel); }
+html[data-theme="dark"] .game-card-head:hover { background: #2a2a2a; }
+html[data-theme="dark"] .game-card.expanded { border-color: #3a3a3a; }
+html[data-theme="dark"] :is(.poster, .hoyo-poster) { background: #333; color: #d6d6d6; }
+html[data-theme="dark"] .game-meta p { color: #8f8f8f; }
+html[data-theme="dark"] :is(.icon-button, .expand-arrow) { border-color: #444; background: transparent; color: #cfcfcf; }
+html[data-theme="dark"] :is(.icon-button, .expand-arrow):hover { border-color: #5a5a5a; background: #2c2c2c; color: #fff; }
+html[data-theme="dark"] .game-detail { border-color: #333; background: #1f1f1f; }
+html[data-theme="dark"] :is(.detail-tabs, .gp-tabs) { border-color: #333; background: transparent; }
+html[data-theme="dark"] :is(.detail-tabs button, .gp-tabs button) { color: #a3a3a3; }
+html[data-theme="dark"] :is(.detail-tabs button[aria-selected="true"], .gp-tabs button[aria-selected="true"]) { color: #fff; border-bottom-color: var(--accent); }
+html[data-theme="dark"] .segmented { border-color: #3a3a3a; background: #222; }
+html[data-theme="dark"] .segmented button.active { background: #333; color: #fff; box-shadow: none; }
+html[data-theme="dark"] .gp-message { border-color: #3f5a1a; background: var(--green-soft); color: #a6d65a; }
+html[data-theme="dark"] .gp-apply-bar.is-dirty { background: #1f2a12; border-color: #4f7a12; }
+html[data-theme="dark"] .gp-range output { color: var(--accent); }
+html[data-theme="dark"] .gp-verification article { border-color: #3a4f1d; background: #1d2414; }
+html[data-theme="dark"] .gp-step { color: #95c94a; }
+html[data-theme="dark"] .gp-verification p { color: #b5c7a0; }
+html[data-theme="dark"] .gp-component-stack { border-color: #333; background: #222; }
+html[data-theme="dark"] .gp-component-stack-items > span { border-color: #3a3a3a; background: #2a2a2a; color: #bdbdbd; }
+html[data-theme="dark"] .gp-inline .gp-compatibility { color: #9fd04f; }
+html[data-theme="dark"] .gp-inline .gp-hardware { color: #b2c99a; }
+html[data-theme="dark"] .gp-confirm-feature { border-color: #3f5a1a; background: #1d2414; color: #b8d68c; }
+html[data-theme="dark"] .cx-panel, html[data-theme="dark"] .cx-dialog { --cx-bg: #242424; --cx-border: #333; --cx-text: #ececec; --cx-muted: #a3a3a3; --cx-accent: var(--accent); background: #242424; }
+html[data-theme="dark"] .cx-choice input:checked + span { border-color: var(--accent); background: #2a2a2a; color: #fff; }
+html[data-theme="dark"] :is(.modal-card, .gp-modal-card) { border-color: #333; background: #242424; }
+html[data-theme="dark"] .game-candidate.selected { border-color: var(--accent); background: #232b17; }
+html[data-theme="dark"] .addon-drop { border-color: #3f5a1a; background: #1d2414; color: #a6d65a; }
+html[data-theme="dark"] .addon-guide-card.featured { border-color: #3f5a1a; background: #1d2414; }
+html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #4a4a4a; background-clip: padding-box; }
+
+/* Components page, dark */
+html[data-theme="dark"] .component-library-hero { background: var(--panel); }
+html[data-theme="dark"] .component-library-heading p { color: #8f8f8f; }
+html[data-theme="dark"] :is(.payload-guidance, .component-runtime-guide) { border-color: transparent; background: #262626; }
+html[data-theme="dark"] :is(.payload-guidance-copy strong, .component-runtime-guide-copy strong) { color: #ececec; }
+html[data-theme="dark"] :is(.payload-guidance-copy span, .component-runtime-guide-copy span) { color: #a3a3a3; }
+html[data-theme="dark"] .component-library-toolbar { border-color: #2e2e2e; background: #222; }
+html[data-theme="dark"] .component-section-head h4 { color: #8d8d8d; }
+html[data-theme="dark"] .component-package-row { border-color: transparent; background: #262626; }
+html[data-theme="dark"] .component-package-row:hover { background: #2c2c2c; }
+html[data-theme="dark"] .component-kind-icon { background: #303030; color: #b5b5b5; }
+html[data-theme="dark"] .component-status.ready { color: var(--green); }
+html[data-theme="dark"] .component-status.attention { color: var(--amber); }
+html[data-theme="dark"] :is(.component-repository, .component-advanced, .component-route-overview) { border-color: transparent; background: #262626; }
+html[data-theme="dark"] .component-summary-count { background: #2e2e2e; color: #bdbdbd; }
+html[data-theme="dark"] :is(.component-route-result-head, .component-route-item, .component-route-static-card) { border-color: #333; background: #2a2a2a; }
+html[data-theme="dark"] .component-empty { border-color: #3a3a3a; background: #222; }
+html[data-theme="dark"] .payload-source-location { border-color: #333; background: #222; box-shadow: none; }
+html[data-theme="dark"] :is(.maintenance-mode, .maintenance-file, .gp-uninstall > div) { border-color: #333; background: #242424; }
+html[data-theme="dark"] .maintenance-mode.selected { border-color: var(--accent); background: #232b17; }
+html[data-theme="dark"] :is(.maintenance-mode, .maintenance-file) input { accent-color: var(--accent); }
+html[data-theme="dark"] :is(.setting-row > b, .setting-row strong) { color: #e6e6e6; }
+
+/* Light theme keeps its palette but shares the accent marks. */
+html[data-theme="light"] .nav.active { background: #e4e5e6; }
+html[data-theme="light"] .nav.active .nav-icon { color: #4d8000; }
+html[data-theme="light"] .sidebar:hover, html[data-theme="light"] .sidebar:focus-within { box-shadow: 10px 0 28px rgba(20, 22, 26, .14); }
+html[data-theme="light"] .component-status.ready { color: #3f7d00; }
+html[data-theme="light"] .component-status.attention { color: #9a6700; }
+html[data-theme="light"] .component-kind-icon { background: #eceeef; color: #4b5058; }

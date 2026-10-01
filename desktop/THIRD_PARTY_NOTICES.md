@@ -80,6 +80,14 @@ Four navigation icons and the checkbox check icon are copied without path change
 (`f12b0de177fbc2a6795e99be065887e72b237123`). The full ISC/MIT attribution is
 included in `src/renderer/icons/LICENSE`. Source: https://github.com/lucide-icons/lucide.
 
+## Interface fonts
+
+The interface uses Inter (The Inter Project Authors, https://github.com/rsms/inter)
+and Noto Sans SC (Google Inc.) variable fonts from the Fontsource npm packages
+`@fontsource-variable/inter` and `@fontsource-variable/noto-sans-sc` `5.3.0`.
+Both are licensed under the SIL Open Font License 1.1; the full license ships
+with each package as `node_modules/@fontsource-variable/*/LICENSE`.
+
 ## ReShade runtime
 
 The current Manager payload uses the authorized official ReShade 6.8.0

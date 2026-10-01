@@ -8,6 +8,7 @@
   const operationLabel = key => { const [action, kind] = key.split(':'); return kind ? labels[kind] || kind : ({ runtime: 'DLSS5 模型', import: '组件导入', move: '组件库移动', refresh: '组件列表', updates: '组件更新检查' })[action] || '游戏组件搭配'; };
   const add = (parent, tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; parent.append(node); return node; };
   const label = kind => labels[kind] || kind;
+  const KIND_ICONS = { core: 'icon-sparkle', 'nr-runtime': 'icon-disc', mfg: 'icon-cube', 'dlssg-sm86': 'icon-cube', bridge: 'icon-wrench', feeder: 'icon-sliders', host: 'icon-sliders' };
   const running = new Set();
   let loaded = false, refreshPromise = null, refreshAgain = false, routeGeneration = 0;
   function sourceChanged(result) {
@@ -28,13 +29,16 @@
     const host = $('componentLibraryRows'); host.replaceChildren();
     for (const group of overview.groups || []) {
       const row = add(host, 'article', 'component-package-row component-package-summary');
+      const icon = add(row, 'span', 'component-kind-icon'); icon.setAttribute('aria-hidden', 'true');
+      add(icon, 'span', `ui-icon ${KIND_ICONS[group.kind] || 'icon-cube'}`);
       const copy = add(row, 'div', 'component-package-copy');
       add(copy, 'strong', '', label(group.kind));
       const current = group.entries?.find(x => x.filesReady !== false && x.validation !== 'blocked');
       add(copy, 'span', '', current ? `${group.bundled ? '内置' : '已导入'} ${current.version}` : '随包文件未就绪');
       add(copy, 'small', '', group.message);
-      add(row, 'span', `badge ${group.state === 'prepared' ? 'good' : 'warn'}`,
-        group.state === 'prepared' ? '已准备' : group.state === 'needs-adapter' ? '待适配' : group.state === 'invalid' ? '需检查' : '未准备');
+      const ready = group.state === 'prepared', status = add(row, 'span', `component-status ${ready ? 'ready' : 'attention'}`);
+      if (ready) add(status, 'span', 'ui-icon icon-check').setAttribute('aria-hidden', 'true');
+      status.append(ready ? '已就绪' : group.state === 'needs-adapter' ? '待适配' : group.state === 'invalid' ? '需检查' : '未准备');
     }
     if (!host.childElementCount) add(host, 'p', 'component-empty', '未能读取随包组件，请刷新重试。');
   }
