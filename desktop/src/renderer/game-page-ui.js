@@ -264,10 +264,13 @@
     }
     // A number box with a slider beside it. The box stays the labelled,
     // keyboard-accessible control; the slider is a pointer shortcut.
-    function numberControl(key, value, min, max, step, disabled) {
+    // Special values (0 stops CustomWorkScale or PostWorkPercent) are typed into
+    // the number box; the slider keeps the ordinary range.
+    function numberControl(key, value, min, max, step, disabled, special = []) {
       const lo = Number(min), hi = Number(max), slide = Number.isFinite(lo) && Number.isFinite(hi) && hi > lo && hi - lo <= 10;
       const current = Number(value), position = value !== '' && value != null && Number.isFinite(current) ? Math.min(hi, Math.max(lo, current)) : lo;
-      return `<span class="gp-number">${slide ? `<input type="range" min="${lo}" max="${hi}" step="${hi - lo <= 4 ? .01 : .1}" value="${position}" data-gp-slider tabindex="-1" aria-hidden="true"${disabled ? ' disabled' : ''}>` : ''}<input type="number" min="${min}" max="${max}" step="${step}" value="${esc(value ?? '')}" data-gp-group="nr" data-gp-field="${key}"${disabled ? ' disabled' : ''}></span>`;
+      const extra = special.length ? ` data-gp-floor="${lo}" data-gp-special="${special.join(' ')}"` : '';
+      return `<span class="gp-number">${slide ? `<input type="range" min="${lo}" max="${hi}" step="${hi - lo <= 4 ? .01 : .1}" value="${position}" data-gp-slider tabindex="-1" aria-hidden="true"${disabled ? ' disabled' : ''}>` : ''}<input type="number" min="${Math.min(lo, ...special)}" max="${max}" step="${step}" value="${esc(value ?? '')}" data-gp-group="nr" data-gp-field="${key}"${extra}${disabled ? ' disabled' : ''}></span>`;
     }
     function selectField(group, key, label, markup, disabled = false, note = '', hintText = '') {
       return `<label class="gp-field"><span>${label}</span>${hintText ? `<small class="gp-hint">${hintText}</small>` : ''}<select data-gp-group="${group}" data-gp-field="${key}"${disabled ? ' disabled' : ''}>${markup}</select>${note ? `<small>${note}</small>` : ''}</label>`;
@@ -283,7 +286,7 @@
           if (NR_CHOICES[key]) return selectField('nr', key, label, NR_CHOICES[key].map((label, value) => option(value, label, nr[key] ?? 0)).join(''), !capable, '', NR_HINTS[key]);
           const limits = data.nr?.limits?.[key] || {}, lower = limits.min === undefined ? key === 'SkinStructureStrength' ? 0 : min : Number(limits.min), upper = limits.max === undefined ? max : Number(limits.max);
           const source = data.nr?.fields?.[key];
-          return `<label class="gp-field"><span>${label}</span>${hint(key)}${numberControl(key, nr[key], lower, upper, 'any', !capable)}${source?.status === 'invalid' ? `<small>保存值无效：${esc(source.raw)}；请核对后修改。</small>` : source?.source === 'default' ? '<small>此键未保存，显示当前 Core 缺省值。</small>' : ''}${capable ? key === 'CustomWorkScale' ? '<small>工作模式选为“自定义”后生效。</small>' : '' : '<small>当前 Core 或配置未提供此项。</small>'}</label>`;
+          return `<label class="gp-field"><span>${label}</span>${hint(key)}${numberControl(key, nr[key], lower, upper, 'any', !capable, (limits.special || []).map(Number))}${source?.status === 'invalid' ? `<small>保存值无效：${esc(source.raw)}；请核对后修改。</small>` : source?.source === 'default' ? '<small>此键未保存，显示当前 Core 缺省值。</small>' : ''}${capable ? key === 'CustomWorkScale' ? '<small>工作模式选为“自定义”后生效。</small>' : '' : '<small>当前 Core 或配置未提供此项。</small>'}</label>`;
       }).join('');
       return `<section class="gp-section"><div class="gp-section-title"><h3>${nrTitle()}</h3><label class="check-line gp-check"><input type="checkbox" data-gp-group="nr" data-gp-field="Enabled"${nr.Enabled ? ' checked' : ''}${available ? '' : ' disabled'}>开启</label></div>
         ${!available ? `<p class="gp-caption">${esc((data.nr?.error ? errorText(data.nr.error) : '') || (data.game.installed ? '当前配置或 Core 身份尚未核实，请重新检查。' : '安装后可调整画面增强。'))}</p>` : ''}
@@ -344,11 +347,11 @@
         return '';
       };
       const tip = text => text ? `<small class="gp-hint">${text}</small>` : '';
-      const range = (key, min, max) => { const limits = data.nr?.limits?.[key] || {}; return [limits.min === undefined ? min : Number(limits.min), limits.max === undefined ? max : Number(limits.max)]; };
+      const range = (key, min, max) => { const limits = data.nr?.limits?.[key] || {}; return [limits.min === undefined ? min : Number(limits.min), limits.max === undefined ? max : Number(limits.max), (limits.special || []).map(Number)]; };
       const number = (key, label, min = 0, max = 2, text = null, disabled = false) => {
         if (!shown(key)) return '';
-        const [lo, hi] = range(key, min, max);
-        return `<label class="gp-field"><span>${label}</span>${text === null ? hint(key) : tip(text)}${numberControl(key, nr[key], lo, hi, 'any', disabled || !editable(key))}${note(key)}</label>`;
+        const [lo, hi, special] = range(key, min, max);
+        return `<label class="gp-field"><span>${label}</span>${text === null ? hint(key) : tip(text)}${numberControl(key, nr[key], lo, hi, 'any', disabled || !editable(key), special)}${note(key)}</label>`;
       };
       const toggle = (key, label, text = '', group = 'nr', checked = Number(nr[key])) => (group === 'nr' && !shown(key)) ? '' :
         `<label class="gp-field gp-toggle"><span>${label}</span>${tip(text)}<span class="gp-switch"><input type="checkbox" data-gp-group="${group}" data-gp-field="${group === 'nr' ? key : 'enabled'}"${checked ? ' checked' : ''}${editable(key) ? '' : ' disabled'}><i aria-hidden="true"></i></span>${group === 'nr' ? note(key) : ''}</label>`;
@@ -365,7 +368,7 @@
       const reason = (data.nr?.error ? errorText(data.nr.error) : '') || (data.game.installed ? '当前配置或 Core 身份尚未核实，请重新检查。' : '安装后可开关 DLSS5 和调整画面。');
       const key = String(data.hotkeys?.nr?.label || 'F6').replace(/\s*开关$/, '');
       const main = `<section class="gp-card gp-card-main"><div class="gp-card-main-text"><h3>DLSS5 开关 <kbd class="gp-key">${esc(key)}</kbd></h3><p>${available ? `开启后进入游戏即生效；游戏里按 ${esc(key)} 也能随时开关` : esc(reason)}</p></div>
-        <div class="gp-card-main-side">${act('nr-recommended', '恢复推荐画质', !available || busy, 'subtle', '把画面设置恢复为全新安装时的推荐值；DLSS5 开关保持不变，应用后生效。')}<span class="gp-main-state" aria-hidden="true"><b class="is-on">已开启</b><b class="is-off">已关闭</b></span>
+        <div class="gp-card-main-side">${act('nr-recommended', '恢复推荐画质', !available || busy || !data.nr?.recommended, 'subtle', '把画面设置恢复为全新安装时的推荐值；DLSS5 开关保持不变，应用后生效。')}<span class="gp-main-state" aria-hidden="true"><b class="is-on">已开启</b><b class="is-off">已关闭</b></span>
         <label class="gp-switch big" title="DLSS5 开关"><input type="checkbox" data-gp-group="nr" data-gp-field="Enabled" aria-label="DLSS5 开关"${Number(nr.Enabled) ? ' checked' : ''}${editable('Enabled') ? '' : ' disabled'}><i aria-hidden="true"></i></label></div></section>`;
       const unwritten = uniform && Object.values(data.nr?.fields || {}).some(field => ['default', 'migration'].includes(field?.source));
       const notices = [...(data.nr?.warnings || []).map(row => row.message), ...(unwritten ? ['部分设置文件未写入，显示的是当前 Core 缺省值（新增的层沿用旧版层设置）；应用后会写入。'] : []), ...(effectiveApi() === 'dx9' ? ['游戏内面板提供 DLSS5 开关；完整参数在此调整，退出游戏后应用。'] : [])].map(text => `<p class="gp-caption gp-card-note">${esc(text)}</p>`).join('');
@@ -984,8 +987,10 @@
       const value = input.type === 'checkbox' ? Number(input.checked) : input.type === 'number' && input.value === '' ? '' : group === 'nr' && key !== 'ProcessingStart' || input.type === 'range' || input.type === 'number' ? Number(input.value) : input.value;
       if (group === 'nr') {
         const invalidKey = 'nr:' + key;
-        if (input.type === 'number' && (input.value === '' || !Number.isFinite(value) || !input.validity.valid)) {
-          invalidFields[invalidKey] = `${input.closest('label')?.querySelector('span')?.textContent || key}：请输入 ${input.min}～${input.max} 范围内的有效数值。`;
+        const special = input.dataset.gpSpecial ? input.dataset.gpSpecial.split(' ').map(Number) : [];
+        if (input.type === 'number' && (input.value === '' || !Number.isFinite(value) || !input.validity.valid || special.length && !special.includes(value) && value < Number(input.dataset.gpFloor))) {
+          const allowed = special.length ? `${special.join('、')}（停用）或 ${input.dataset.gpFloor}～${input.max}` : `${input.min}～${input.max}`;
+          invalidFields[invalidKey] = `${input.closest('label')?.querySelector('span')?.textContent || key}：请输入 ${allowed} 范围内的有效数值。`;
           input.setAttribute('aria-invalid', 'true');
         } else { delete invalidFields[invalidKey]; input.removeAttribute('aria-invalid'); }
         message = Object.values(invalidFields).join('；'); error = Boolean(message);
@@ -1104,15 +1109,13 @@
         else if (action === 'refresh') { message = ''; error = false; await refresh(true); if (!error) message = '已重新检查。'; render(); }
         else if (action === 'preview') await preview();
         else if (action === 'nr-recommended') {
-          // Like the Core's own restore: fresh-install picture values, extra
-          // layers off, the DLSS5 switch untouched. Nothing is written until Apply.
-          const skip = /^(?:Enabled|ConfigVersion|StrengthConfigVersion|ExtraStrengthPolicyVersion|UniformChainVersion|UniformChainMigrated|Layer[2-5]Configured)$/, capabilities = data.nr?.capabilities || {};
+          // The product's recommended picture (layer 1 and the shared values reset,
+          // extra layers off with their tuning kept, the DLSS5 switch untouched),
+          // filled in as a draft: nothing is written until Apply.
           draft.nr = { ...(draft.nr || {}) };
-          for (const [key, value] of Object.entries(data.nr?.defaults || {})) {
-            if (skip.test(key) || Object.hasOwn(capabilities, key) && capabilities[key] !== true) continue;
+          for (const [key, value] of Object.entries(data.nr?.recommended || {})) {
             if (String(data.nr?.[key]) === String(value)) delete draft.nr[key]; else draft.nr[key] = value;
           }
-          if (capabilities.Layer2Enabled === true && Object.hasOwn(draft.nr, 'TransferStrength')) draft.nr.StrengthConfigVersion = 1;
           if (!Object.keys(draft.nr).length) delete draft.nr;
           editLayer = 1; message = draft.nr ? '已填入推荐画质，点“应用修改”后生效。' : '当前已是推荐画质。'; error = false; render();
         }

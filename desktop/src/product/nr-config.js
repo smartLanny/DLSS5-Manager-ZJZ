@@ -242,7 +242,11 @@ function inspectText(text, input = '') {
   // Flat values retain the old API, but a saved value always wins over a
   // separately resolved effective/default value. No silent precision changes.
   const flat = Object.fromEntries(Object.keys(fields).filter(key => own(saved, key) || own(defaults, key)).map(key => [key, own(saved, key) ? saved[key] : fields[key].effectiveKnown ? effective[key] : defaults[key]]));
-  return { ...flat, saved, raw, defaults, effective, fields, capabilities, contract, ...(configLimits(input) ? { limits: configLimits(input) } : {}), layers,
+  // The product's one recommended picture, limited to what this Core has and
+  // leaving the DLSS5 switch alone; the game page fills a draft from it, so its
+  // rules live only in defaultPatch.
+  const recommended = contract.known ? Object.fromEntries(Object.entries(defaultPatch(input)).filter(([key]) => key !== 'Enabled' && capabilities[key] === true)) : null;
+  return { ...flat, saved, raw, defaults, effective, fields, capabilities, contract, recommended, ...(configLimits(input) ? { limits: configLimits(input) } : {}), layers,
     layerCount: layers.length ? layers.filter(layer => layer.active).length : null, migration,
     warnings: doc.duplicates.map(row => ({ ...row, code: 'DUPLICATE_INI_ENTRY', message: '按首个配置节和首个同名键读取；后续重复项保持原样。' })), runtimeVerified: false, source: 'active-ini' };
 }

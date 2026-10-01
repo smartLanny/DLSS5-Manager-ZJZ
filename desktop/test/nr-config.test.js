@@ -131,6 +131,16 @@ test('historical versions keep saved values and preserve absent capabilities', t
   assert.equal(nr.defaultPatch('0.4.7beta').Intensity, 1.2);
 });
 
+test('the recommended picture leaves the DLSS5 switch and switched-off layer tuning alone', t => {
+  const f = fixture(t, '[NRBeforeSR]\nEnabled=0\nIntensity=2.75\n');
+  const legacy = f.read('0.4.7beta').recommended;
+  assert.equal(legacy.Intensity, 1.2); assert.equal('Enabled' in legacy, false);
+  const uniform = f.read().recommended;
+  assert.equal(uniform.Intensity, 1.5); assert.equal(uniform.Layer2Enabled, 0); assert.equal('Enabled' in uniform, false);
+  assert.equal(Object.keys(uniform).some(key => /^Layer[2-5](?!Enabled)/.test(key)), false);
+  assert.equal(f.read('imported-aabbccddeeff').recommended, null);
+});
+
 test('malformed work requests expose dependency on the previous runtime value instead of silently raising to 50%', t => {
   const f = fixture(t, '[NRBeforeSR]\nUniformChainVersion=1\nWorkMode=5\nCustomWorkScale=.25\nPostWorkPercent=42\n');
   const value = f.read(); assert.equal(value.CustomWorkScale, .25); assert.equal(value.PostWorkPercent, 42);

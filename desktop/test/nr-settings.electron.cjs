@@ -167,6 +167,15 @@ function interactHero(flags) {
     ok(radio('nr', 'ProcessingStart', 'Before').checked && input('WorkMode') && !input('PostWorkPercent'), 'the position shows its own working scale');
     pick('nr', 'ProcessingStart', 'After');
     ok(input('PostWorkPercent') && !input('WorkMode') && controller.getState().draft.nr.ProcessingStart === 'After', 'after-upscale position switches to its own scale');
+    ok(Number(input('PostWorkPercent').min) === 0, 'the special 0 (stop) stays enterable for the post scale');
+    click('discard');
+    change('WorkMode', 5); change('CustomWorkScale', 0);
+    ok(Number(input('CustomWorkScale').min) === 0 && !input('CustomWorkScale').hasAttribute('aria-invalid') && controller.getState().draft.nr.CustomWorkScale === 0, 'a custom scale of 0 (stop) is accepted');
+    ok(Number(input('CustomWorkScale').parentElement.querySelector('[data-gp-slider]').min) === .5, 'the slider keeps the ordinary range');
+    change('CustomWorkScale', .3);
+    ok(input('CustomWorkScale').getAttribute('aria-invalid') === 'true' && host.textContent.includes('0（停用）或 0.5～1'), 'a value between stop and the ordinary minimum is flagged');
+    change('CustomWorkScale', .75);
+    ok(!input('CustomWorkScale').hasAttribute('aria-invalid'), 'an ordinary value clears the flag');
     click('discard');
     ok(radio('nr-layers', 'count', '5').checked, 'the layer count reads the five contiguous enabled layers');
     ok(input('Intensity') && !input('Layer2Intensity'), 'only the layer being edited is shown');
@@ -196,8 +205,10 @@ function interactHero(flags) {
     click('nr-recommended');
     const restored = controller.getState().draft.nr;
     ok(restored.Intensity === 1.5 && restored.Layer2Enabled === 0 && !('Enabled' in restored), 'restore fills recommended values, turns extra layers off and keeps the switch');
+    ok(!Object.keys(restored).some(key => /^Layer[2-5](?!Enabled)/.test(key)), 'restore keeps the tuning of the layers it switches off');
     click('preview'); await until(() => !controller.getState().busy && !controller.hasDraft(), 'recommended picture saved');
     ok(controller.getState().data.nr.Intensity === 1.5 && controller.getState().data.nr.Layer2Enabled === 0 && controller.getState().data.nr.Enabled === 1, 'recommended picture round-trips through the real INI');
+    ok(controller.getState().data.nr.Layer4Intensity === .66667777, 'a switched-off layer keeps its saved tuning after the restore');
     ok(radio('nr-layers', 'count', '1').checked && host.textContent.includes('第 1 层'), 'one layer is shown after the restore');
     change('Enabled', 0);
     ok(controller.getState().draft.nr.Enabled === 0, 'the DLSS5 switch edits the draft like any other setting');
@@ -217,7 +228,7 @@ app.whenReady().then(async () => {
     if (flags.reconstruction) for (const line of [/^ReconstructionMode=2\r$/m, /^NearBlackChromaGuard=1\r$/m]) assert.match(fs.readFileSync(file, 'utf8'), line);
     const hero = await win.webContents.executeJavaScript(`(${interactHero.toString()})(${JSON.stringify(flags)})`);
     const restored = nr.readConfig(file, contract);
-    assert.equal(restored.Intensity, 1.5); assert.equal(restored.Layer2Enabled, 0); assert.equal(restored.Enabled, 1);
+    assert.equal(restored.Intensity, 1.5); assert.equal(restored.Layer2Enabled, 0); assert.equal(restored.Enabled, 1); assert.equal(restored.Layer4Intensity, .66667777);
     assert.match(fs.readFileSync(file, 'utf8'), /ExperimentalPrivatePreference=keep-exact\r\n/);
     console.log(JSON.stringify({ ok: true, scope: 'production NR GamePage interaction with synthetic INI', mode, ...result, ...hero, writes, actualGameValidation: false }));
     win.destroy(); app.exit(0);
