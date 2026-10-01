@@ -42,8 +42,8 @@ test('Beta 13 pairs one DLSS5 model per GPU series; older Cores keep the shared 
   for (const series of ['RTX40', 'RTX50']) assert.equal(catalog.pairedRuntime(catalog.RECOMMENDED, series).sha256, fortyFifty);
   for (const series of ['RTX20', 'RTX30']) assert.equal(catalog.pairedRuntime(catalog.RECOMMENDED, series).sha256, twentyThirty);
   assert.equal(catalog.pairedRuntime(catalog.RECOMMENDED, null), null, 'an unknown series is refused, never guessed');
-  assert.equal(catalog.requiresPairedRuntime(catalog.RECOMMENDED), true);
-  for (const id of ['0.5.1-beta-ui1', '0.5-dline21-unified5', '0.4.7beta']) assert.equal(catalog.requiresPairedRuntime(id), false);
+  assert.equal(catalog.hasPairedRuntime(catalog.RECOMMENDED), true);
+  for (const id of ['0.5.1-beta-ui1', '0.5-dline21-unified5', '0.4.7beta']) assert.equal(catalog.hasPairedRuntime(id), false);
   assert.equal(catalog.isPairedRuntime(fortyFifty), true); assert.equal(catalog.isPairedRuntime('0'.repeat(64)), false);
   const runtimes = require('../src/product/component-catalog.json').packages.filter(row => catalog.isPairedRuntime(row.sha256));
   assert.deepEqual(runtimes.map(row => row.hardwareSeries.join('/')).sort(), ['RTX20/RTX30', 'RTX40/RTX50']);

@@ -423,9 +423,9 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
       if (core.id === data.selected.core) base.defaultVersion = versionId;
     }
     // A Core with paired DLSS5 models gets the imported model for this GPU series
-    // in its own version directory; it never uses the shared runtime above.
+    // in its own version directory; without it the Core uses the shared runtime above.
     const coreCatalog = require('../shared/core-catalog');
-    for (const version of Object.keys(base.versions).filter(id => coreCatalog.requiresPairedRuntime(id))) {
+    for (const version of Object.keys(base.versions).filter(id => coreCatalog.hasPairedRuntime(id))) {
       const paired = coreCatalog.pairedRuntime(version, hardwareSeries()), dest = path.join(root, 'versions', version, 'nvngx_dlssnr.dll');
       const model = paired && data.packages.find(p => p.kind === 'nr-runtime' && p.files?.some(f => f.sha256 === paired.sha256));
       await noLinks(dest);
@@ -460,10 +460,9 @@ function createComponentLibrary({ userData, root: selectedRoot, catalog = CATALO
     const bundle = readBundle(payloadDir), entry = bundle.versions?.[version];
     if (bundle.version !== 4 || !entry || !['RTX40','RTX50'].includes(family)) fail('当前 Core 或显卡运行包尚未确定。');
     const data = await inventory();
-    // A Core with paired DLSS5 models registers the model paired for this GPU series.
-    const coreCatalog = require('../shared/core-catalog'), paired = coreCatalog.requiresPairedRuntime(version) ? coreCatalog.pairedRuntime(version, hardwareSeries()) : null;
-    if (coreCatalog.requiresPairedRuntime(version) && !paired) fail('还没认出显卡系列，不能为这个 Core 选择配套的 DLSS5 模型。');
-    const runtime = paired ? { sha256: paired.sha256, file: path.join(payloadDir, 'versions', version, 'nvngx_dlssnr.dll') }
+    // A Core with paired DLSS5 models registers the imported model for this GPU series, else the shared runtime.
+    const choice = require('./payload').runtimeChoice(payloadDir, version, hardwareSeries());
+    const runtime = choice.source === 'paired' ? { sha256: choice.paired.sha256, file: choice.file }
       : { sha256: bundle.fixed[family].files['nvngx_dlssnr.dll'],
         file: bundle.fixed[family].paths?.runtime ? path.join(payloadDir, relativeName(bundle.fixed[family].paths.runtime)) : path.join(payloadDir, 'fixed', family, 'nvngx_dlssnr.dll') };
     const files = [
