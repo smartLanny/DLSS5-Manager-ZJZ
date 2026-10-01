@@ -220,11 +220,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 #view-games.is-split .game-card-head {
   position: relative;
   display: grid;
-  grid-template-columns: 74px minmax(0, 1fr);
+  grid-template-columns: 36px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-height: 0;
-  padding: 7px 12px 7px 24px;
+  padding: 8px 12px 8px 24px;
   border-radius: 0;
   cursor: pointer;
 }
@@ -242,21 +242,37 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 #view-games.is-split .game-row-api { flex: 1 1 0; min-width: 0; overflow: hidden; font-size: 11.5px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 #view-games.is-split .game-row-api::before { content: "· "; }
 
-/* Wide game art: Steam header, cropped cover, EXE icon or initial. */
-.game-art { display: grid; place-items: center; overflow: hidden; border-radius: 2px; }
-#gameList .game-art { width: 74px; height: 35px; font-size: 14px; }
+/* Game art. The list uses square EXE icons (else the cover cropped square, else
+   the initial); the game page uses Steam's portrait cover (else a large icon). */
+.game-art { display: grid; place-items: center; overflow: hidden; border-radius: 4px; }
 .game-art img { width: 100%; height: 100%; object-fit: cover; }
-.game-art[data-art="cover"] img { object-position: center 28%; }
-.game-art[data-art="icon"] img { width: 26px; height: 26px; object-fit: contain; }
-.gp-hero-art .game-art { width: 160px; height: 75px; font-size: 26px; }
-.gp-hero-art .game-art[data-art="icon"] img { width: 48px; height: 48px; }
+html[data-theme] .game-art[data-art="icon"], .game-art[data-art="icon"] { background: transparent; }
+.game-art[data-art="icon"] img { object-fit: contain; }
+#gameList .game-art { width: 36px; height: 36px; font-size: 15px; }
+#gameList .game-art[data-art="cover"] img { object-position: center 18%; }
+.gp-hero-art .game-art { width: 120px; height: 180px; border-radius: 6px; font-size: 40px; box-shadow: 0 10px 28px rgba(0, 0, 0, .45); }
+.gp-hero-art .game-art[data-art="icon"] { height: 120px; box-shadow: none; }
+.gp-hero-art .game-art[data-art="initial"] { width: 96px; height: 96px; margin: 12px; border-radius: 20px; box-shadow: none; }
+.gp-hero-art .game-art[data-art="icon"] img { width: 96px; height: 96px; filter: drop-shadow(0 6px 16px rgba(0, 0, 0, .45)); }
+
+/* A Big Picture style backdrop: the game's widest art, blurred and faded,
+   behind the header; it scrolls with the page and fades out at the tabs. */
+#view-games.is-split .game-detail-pane { position: relative; }
+.gp-backdrop { display: none; }
+#view-games.is-split .gp-backdrop { position: absolute; top: 0; left: 0; right: 0; z-index: 0; display: block; height: 300px; overflow: hidden; pointer-events: none; -webkit-mask-image: linear-gradient(#000 45%, transparent); mask-image: linear-gradient(#000 45%, transparent); }
+.gp-backdrop img { position: absolute; inset: -32px; width: calc(100% + 64px); height: calc(100% + 64px); object-fit: cover; object-position: center 30%; filter: blur(5px) saturate(1.1); opacity: .6; }
+.gp-backdrop img[data-kind="soft"] { filter: blur(36px) saturate(1.3); opacity: .45; }
+.gp-backdrop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, var(--backdrop-veil-strong) 0%, var(--backdrop-veil) 55%, var(--backdrop-veil-strong) 100%); }
+/* The page paints over the backdrop by order alone: a z-index here would trap
+   fixed dialogs inside the page below the sidebar. */
+#view-games.is-split .game-pane-card { position: relative; }
 
 /* The selected game's page. */
 #view-games.is-split .game-pane-card { overflow: visible; margin: 0; border: 0; border-radius: 0; background: transparent; }
 #view-games.is-split .game-detail.gp-inline { display: block; padding: 0; border: 0; background: transparent; }
-.gp-hero { display: grid; grid-template-columns: 160px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 14px 24px 12px; }
+.gp-hero { display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; align-items: end; gap: 20px; padding: 22px 24px 16px; }
 .gp-hero-info { min-width: 0; }
-.gp-hero h2 { overflow: hidden; margin: 0; font-size: 20px; font-weight: 600; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.gp-hero h2 { overflow: hidden; margin: 0; font-size: 22px; font-weight: 600; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .gp-hero-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; color: var(--muted); font-size: 12px; }
 .gp-hero-meta + .gp-hero-meta { margin-top: 4px; }
 .gp-hero-meta span { white-space: nowrap; }
@@ -270,7 +286,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .gp-hero-status i { flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .gp-hero-status[data-tone="ok"] { color: var(--accent); }
 .gp-hero-status[data-tone="warn"] { color: var(--amber, #f2b33d); }
-.gp-hero .gp-main-actions { display: flex; align-items: center; gap: 8px; align-self: start; margin-top: 6px; }
+.gp-hero .gp-main-actions { display: flex; align-items: center; gap: 8px; align-self: end; }
 .gp-hero .gp-main-actions .button { min-height: 32px; padding: 0 16px; font-size: 13px; }
 .gp-more { position: relative; }
 .gp-more > summary { display: grid; place-items: center; width: 32px; min-width: 32px; padding: 0 !important; list-style: none; cursor: pointer; }
@@ -366,6 +382,7 @@ html[data-theme="dark"] .game-art { background: #333; color: #d6d6d6; }
 html[data-theme="dark"] .gp-more-menu { border-color: #3a3a3a; background: #262626; }
 html[data-theme="dark"] .gp-more-menu .button:hover:not(:disabled) { background: #333; }
 html[data-theme="dark"] #view-games.is-split .gp-inline .gp-apply-bar { border-color: #333; background: #1f1f1f; }
+html[data-theme="dark"] { --backdrop-veil: rgba(27, 27, 27, .25); --backdrop-veil-strong: rgba(27, 27, 27, .72); }
 html[data-theme="dark"] :is(.icon-button, .expand-arrow) { border-color: #444; background: transparent; color: #cfcfcf; }
 html[data-theme="dark"] :is(.icon-button, .expand-arrow):hover { border-color: #5a5a5a; background: #2c2c2c; color: #fff; }
 html[data-theme="dark"] .game-detail { border-color: #333; background: #1f1f1f; }
@@ -423,6 +440,9 @@ html[data-theme="light"] .sidebar:hover, html[data-theme="light"] .sidebar:focus
 html[data-theme="light"] .component-status.ready { color: #3f7d00; }
 html[data-theme="light"] .component-status.attention { color: #9a6700; }
 html[data-theme="light"] .component-kind-icon { background: #eceeef; color: #4b5058; }
+html[data-theme="light"] { --backdrop-veil: rgba(250, 250, 249, .45); --backdrop-veil-strong: rgba(250, 250, 249, .85); }
+html[data-theme="light"] .gp-backdrop img { opacity: .4; }
+html[data-theme="light"] .gp-hero-art .game-art:not([data-art="icon"]) { box-shadow: 0 8px 22px rgba(0, 0, 0, .22); }
 html[data-theme="light"] #view-games.is-split .game-card-head:hover { background: #eceeef; }
 html[data-theme="light"] #view-games.is-split .game-card.expanded .game-card-head { background: #e2e4e6; }
 html[data-theme="light"] #view-games.is-split .game-card .badge { color: #6b7076; }

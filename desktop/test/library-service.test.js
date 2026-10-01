@@ -254,7 +254,24 @@ test('Steam artwork prefers the local high-resolution poster before header or la
     const result = steamArtworkFor({ launcher: 'Steam', id: '12345', steamRoot: root, poster: null });
     assert.match(result.poster.file, /library_600x900\.jpg$/i);
     assert.match(result.banner.file, /header\.jpg$/i);
+    assert.match(result.cover.file, /library_600x900\.jpg$/i);
+    assert.match(result.backdrop.file, /header\.jpg$/i, 'without a hero image the header becomes the backdrop');
     assert.match(result.steamIcon, /logo\.png$/i);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the game page backdrop prefers Steam\'s widest cached hero art over the header', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-steam-backdrop-'));
+  try {
+    const cache = path.join(root, 'appcache', 'librarycache', '12345');
+    fs.mkdirSync(cache, { recursive: true });
+    for (const name of ['header.jpg', 'library_hero.jpg']) fs.writeFileSync(path.join(cache, name), name);
+    const result = steamArtworkFor({ launcher: 'Steam', id: '12345', steamRoot: root, poster: null });
+    assert.match(result.banner.file, /header\.jpg$/i);
+    assert.match(result.backdrop.file, /library_hero\.jpg$/i);
+    assert.equal(result.cover, null, 'no portrait cover is invented from wide art');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

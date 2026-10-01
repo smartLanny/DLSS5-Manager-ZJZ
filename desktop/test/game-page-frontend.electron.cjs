@@ -234,7 +234,7 @@ app.whenReady().then(async () => {
             firstPoster.replaceChildren(image);
             try { await image.decode(); } catch {}
           }
-          // List art is a 74x35 wide thumbnail: Steam art fills it, an EXE icon stays whole.
+          // List art is a 36x36 square: an EXE icon stays whole, a cover fills it.
           posterGeometry = [...view.querySelectorAll('#gameList .game-art')].map(poster => {
             const rect = poster.getBoundingClientRect();
             const image = poster.querySelector('img');
@@ -245,8 +245,19 @@ app.whenReady().then(async () => {
               objectFit: image ? getComputedStyle(image).objectFit : null
             };
           });
-          if (!posterGeometry.length || posterGeometry.some(item => item.width !== 74 || item.height !== 35 || item.objectFit && item.objectFit !== (item.kind === 'icon' ? 'contain' : 'cover'))) {
-            throw Error('game artwork is not a wide list thumbnail: ' + JSON.stringify(posterGeometry));
+          if (!posterGeometry.length || posterGeometry.some(item => item.width !== 36 || item.height !== 36 || item.objectFit && item.objectFit !== (item.kind === 'icon' ? 'contain' : 'cover'))) {
+            throw Error('game artwork is not a square list icon: ' + JSON.stringify(posterGeometry));
+          }
+          // The game page shows a portrait cover (else a large icon or initial)
+          // over a backdrop layer that sits behind the page, never over it.
+          const heroArt = view.querySelector('#gameDetailPane .gp-hero-art .game-art'), heroRect = heroArt?.getBoundingClientRect();
+          const heroSize = { cover: [120, 180], icon: [120, 120], initial: [96, 96] }[heroArt?.dataset.art];
+          const backdrop = view.querySelector('#gameDetailPane > .gp-backdrop');
+          const pageCard = view.querySelector('#gameDetailPane .game-pane-card');
+          if (!heroSize || Math.round(heroRect.width) !== heroSize[0] || Math.round(heroRect.height) !== heroSize[1] || !backdrop ||
+            backdrop !== backdrop.parentElement.firstElementChild || getComputedStyle(backdrop).pointerEvents !== 'none' ||
+            getComputedStyle(pageCard).position !== 'relative' || getComputedStyle(pageCard).zIndex !== 'auto') {
+            throw Error('game page art is not a cover over a background layer: ' + JSON.stringify({ kind: heroArt?.dataset.art, width: heroRect?.width, height: heroRect?.height }));
           }
         }
         if (viewName === 'settings') {

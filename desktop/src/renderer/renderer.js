@@ -148,7 +148,7 @@ function renderDetailPane() {
   Object.assign(pane.dataset, { gameId: game.id, exe });
   // The pane is the open card of the selected game, so the game page finds
   // its card the same way it did inside the list.
-  pane.innerHTML = `<article class="game-card expanded game-pane-card" data-id="${escapeHtml(game.id)}">${gameDetail(game)}</article>`;
+  pane.innerHTML = `<div class="gp-backdrop" aria-hidden="true">${backdropArt(game)}</div><article class="game-card expanded game-pane-card" data-id="${escapeHtml(game.id)}">${gameDetail(game)}</article>`;
   pane.scrollTop = 0;
 }
 
@@ -168,7 +168,7 @@ function mountInlineDetail(root, game) {
   const controller = window.GamePageUi.mount(placeholder, window.manager, {
     hero: () => {
       const current = state.games.find(row => row.id === game.id) || game;
-      return { art: gameArt(current), launcher: current.launcher };
+      return { art: heroArt(current), launcher: current.launcher };
     },
     onBack: () => { state.expanded = null; renderGames(); },
     onRename: gameId => confirmRenameGame(gameId),
@@ -521,13 +521,27 @@ function poster(game) {
   return `<div class="poster">${first}</div>`;
 }
 
-// Wide art for the side-by-side game page: the Steam header, else the cover
-// cropped to the same shape, else the EXE icon, else the first letter.
-function gameArt(game) {
-  const url = source => /^(?:file:|data:|https?:)/i.test(source) ? source : `file:///${encodeURI(source.replace(/\\/g, '/').replace(/^\/+/, ''))}`;
-  const [kind, source] = game.banner ? ['banner', game.banner] : game.poster ? ['cover', game.poster] : game.icon ? ['icon', game.icon] : ['initial', null];
-  const content = source ? `<img src="${escapeHtml(url(source))}" alt="">` : escapeHtml((game.name || '?').trim().slice(0, 1).toUpperCase());
-  return `<div class="poster game-art" data-art="${kind}">${content}</div>`;
+const artUrl = source => /^(?:file:|data:|https?:)/i.test(source) ? source : `file:///${encodeURI(source.replace(/\\/g, '/').replace(/^\/+/, ''))}`;
+const artTile = (kind, source, game) => `<div class="poster game-art" data-art="${kind}">${source ? `<img src="${escapeHtml(artUrl(source))}" alt="">` : escapeHtml((game.name || '?').trim().slice(0, 1).toUpperCase())}</div>`;
+
+// Square art for the game list: the EXE icon (read from the game itself, so
+// it is almost always there), else the cover cropped square, else the initial.
+function listArt(game) {
+  const [kind, source] = game.icon ? ['icon', game.icon] : game.cover || game.poster ? ['cover', game.cover || game.poster] : ['initial', null];
+  return artTile(kind, source, game);
+}
+
+// The game page shows Steam's portrait cover; without one, the large icon.
+function heroArt(game) {
+  const [kind, source] = game.cover ? ['cover', game.cover] : game.icon ? ['icon', game.icon] : ['initial', null];
+  return artTile(kind, source, game);
+}
+
+// The page background extends the widest art Steam cached (hero, else header)
+// behind the header, blurred and faded; covers and icons only tint it.
+function backdropArt(game) {
+  const wide = game.backdrop || game.banner, source = wide || game.cover || game.poster || game.icon;
+  return source ? `<img src="${escapeHtml(artUrl(source))}" alt="" data-kind="${wide ? 'wide' : 'soft'}">` : '';
 }
 
 function visibleGames() {
@@ -938,7 +952,7 @@ function renderGames(options = {}) {
   if (split && !state.games.some(game => game.id === state.expanded && !game.hoyoManaged && !state.hoyoGameIds.has(game.id))) state.expanded = rows[0]?.id || null;
   $('gameList').innerHTML = rows.map(game => `<article class="game-card${state.expanded === game.id ? ' expanded' : ''}" data-id="${game.id}">
     <div class="game-card-head"${split ? ` role="button" tabindex="0" aria-current="${state.expanded === game.id}"` : ''}>
-      ${split ? gameArt(game) : poster(game)}
+      ${split ? listArt(game) : poster(game)}
       <div class="game-meta"><div class="game-title"><h3>${escapeHtml(game.name)}</h3>${supportBadge(game)}</div><p>${escapeHtml(game.launcher)} · ${escapeHtml(game.chosen ? `${gameApiLabel(game.chosen)} / ${game.chosen.bitness} 位` : game.supportText)}</p>${game.chosen?.path ? `<p class="game-exe-path" title="${escapeHtml(game.chosen.path)}">${escapeHtml(game.chosen.path)}</p>` : ''}${split ? `<small class="game-row-api">${escapeHtml(shortApiLabel(game))}</small>` : ''}</div>
       ${split ? '' : `<div class="card-action">${cardAction(game)}<button class="expand-arrow" type="button" aria-label="展开或收起游戏详情" aria-expanded="${state.expanded === game.id}"></button></div>`}
     </div>
@@ -1006,6 +1020,8 @@ function mergeGameVisuals(previous, next) {
       ...game,
       poster: game.poster || (old && old.poster) || null,
       banner: game.banner || old?.banner || null,
+      cover: game.cover || old?.cover || null,
+      backdrop: game.backdrop || old?.backdrop || null,
       icon: old?.iconCheckedFor === (game.chosen?.path || game.id) ? old.icon : game.icon || old?.icon || null,
       iconCheckedFor: old?.iconCheckedFor === (game.chosen?.path || game.id) ? old.iconCheckedFor : null
     };
@@ -1729,7 +1745,8 @@ async function enrichMissingArtwork() {
         if (poster) { game.poster = poster; changed = true; }
       } catch {}
     }
-    if (!game.poster && game.iconCheckedFor !== (game.chosen?.path || game.id)) {
+    // Every game gets its EXE icon: the list shows it even when Steam has art.
+    if (game.iconCheckedFor !== (game.chosen?.path || game.id)) {
       try {
         const icon = unwrap(await window.manager.getGameIcon(game.id, game.icon));
         if (icon) { game.icon = icon; changed = true; }
@@ -1741,15 +1758,19 @@ async function enrichMissingArtwork() {
 }
 
 function updateGameCardArtwork(game) {
-  const card = [...document.querySelectorAll('.game-card')].find(row => row.dataset.id === game.id);
-  const pane = $('gameDetailPane');
-  const heads = [card, pane?.dataset.gameId === game.id ? pane.querySelector('.gp-hero-art') : null];
-  for (const current of heads.map(head => head?.querySelector('.poster')).filter(Boolean)) {
-    const wrapper = document.createElement('div');
-    wrapper.innerHTML = current.classList.contains('game-art') ? gameArt(game) : poster(game);
-    const next = wrapper.firstElementChild;
-    if (next) current.replaceWith(next);
-  }
+  const card = [...document.querySelectorAll('.game-card')].find(row => row.dataset.id === game.id && !row.classList.contains('game-pane-card'));
+  const pane = $('gameDetailPane'), selected = pane?.dataset.gameId === game.id;
+  const replace = (current, markup) => {
+    if (!current) return;
+    const wrapper = document.createElement('div'); wrapper.innerHTML = markup;
+    if (wrapper.firstElementChild) current.replaceWith(wrapper.firstElementChild);
+  };
+  const listPoster = card?.querySelector('.game-card-head .poster');
+  replace(listPoster, listPoster?.classList.contains('game-art') ? listArt(game) : poster(game));
+  if (!selected) return;
+  replace(pane.querySelector('.gp-hero-art .poster'), heroArt(game));
+  const backdrop = pane.querySelector(':scope > .gp-backdrop');
+  if (backdrop) backdrop.innerHTML = backdropArt(game);
 }
 
 function scheduleArtworkEnrichment() {

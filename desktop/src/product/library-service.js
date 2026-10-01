@@ -52,8 +52,11 @@ function steamArtworkFor(game, directoryCache = new Map()) {
   return {
     ...game,
     poster: poster ? { file: poster.file || poster, tall: /library_600x900/i.test(poster.name || poster.file || '') } : null,
-    // Wide art Steam already cached (header, else hero) for the game list and game page.
+    // Wide art Steam already cached (header, else hero).
     banner: header || hero ? { file: (header || hero).file } : game.banner || null,
+    // The portrait cover for the game page, and the widest art for its backdrop.
+    cover: cover ? { file: cover.file } : game.cover || null,
+    backdrop: hero || header ? { file: (hero || header).file } : game.backdrop || null,
     steamIcon: logo ? pathToFileURL(logo.file).href : game.steamIcon || null
   };
 }
@@ -487,6 +490,8 @@ function createLibraryService(overrides = {}) {
           dir: game.dir,
           poster: posterUrl(game.poster),
           banner: posterUrl(game.banner),
+          cover: posterUrl(game.cover),
+          backdrop: posterUrl(game.backdrop),
           chosen: null,
           supported: false,
           supportCode: 'ERR_INTERNAL',
@@ -557,7 +562,12 @@ function createLibraryService(overrides = {}) {
         rootAliases: [...new Set([sourceRoot, game.dir])],
         poster: posterUrl(game.poster),
         banner: posterUrl(game.banner),
-        icon: override && override.icon ? override.icon : (game.steamIcon || null),
+        cover: posterUrl(game.cover),
+        backdrop: posterUrl(game.backdrop),
+        // Only an icon the player chose; the EXE icon is read later, and Steam's
+        // title logo is kept apart because it is wide text, not an icon.
+        icon: override && override.icon ? override.icon : null,
+        steamLogo: game.steamIcon || null,
         chosen: scan.chosen ? {
           path: scan.chosen.path,
           rel: scan.chosen.rel,
