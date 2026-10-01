@@ -75,7 +75,7 @@ test('bad v1 fields are isolated without discarding valid API, manual EXE, sourc
   const read = f.store.read(), status = f.store.readRecoveryStatus();
   assert.equal(status.reason, 'fields-normalized'); assert.ok(status.changedFields.includes('scanFolders')); assert.ok(status.changedFields.includes('manualGames'));
   assert.equal(read.animationsEnabled, true); assert.ok(status.changedFields.includes('animationsEnabled'));
-  assert.equal(read.theme, 'system'); assert.ok(status.changedFields.includes('theme'));
+  assert.equal(read.theme, 'dark'); assert.ok(status.changedFields.includes('theme'));
   assert.equal(read.scanDrives, false); assert.deepEqual(read.scanFolders, []); assert.deepEqual(read.manualGames, [f.root]);
   assert.equal(read.gameOverrides[f.root.toLowerCase()].api, 'vulkan'); assert.equal(read.gameOverrides[f.root.toLowerCase()].apiExecutable, exe);
   assert.equal(read.payloadSourcePath, f.root); assert.equal(read.payloadSourceIdentity, 'b'.repeat(64)); assert.equal(read.addonVersion, '0.4.2');
@@ -92,12 +92,12 @@ test('animation preference defaults on and persists an explicit off value', asyn
   assert.equal(createStore(f.file).read().animationsEnabled, false);
 });
 
-test('theme preference defaults to system and persists a supported override', async t => {
+test('theme preference defaults to dark and persists a supported override', async t => {
   const f = fixture(t);
-  assert.equal(f.store.read().theme, 'system');
-  const saved = await f.store.write({ theme: 'dark' });
-  assert.equal(saved.theme, 'dark');
-  assert.equal(createStore(f.file).read().theme, 'dark');
+  assert.equal(f.store.read().theme, 'dark');
+  const saved = await f.store.write({ theme: 'light' });
+  assert.equal(saved.theme, 'light');
+  assert.equal(createStore(f.file).read().theme, 'light');
 });
 
 test('component storage keeps only a validated absolute library pointer in the small settings file', t => {

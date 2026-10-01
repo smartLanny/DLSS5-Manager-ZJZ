@@ -32,12 +32,20 @@ app.whenReady().then(async () => {
       webPreferences: { preload, sandbox: true, contextIsolation: false, nodeIntegration: false, offscreen: true } });
     await win.loadFile(path.resolve(__dirname, '../src/renderer/index.html'));
     await until(() => document.querySelector('.open-game-page-btn'), 'library');
+    // Inter and Noto Sans SC ship as npm packages, linked relative to the renderer.
+    await until(() => document.fonts.status === 'loaded', 'fonts');
+    await check(() => ['Inter Variable', 'Noto Sans SC Variable'].every(name =>
+      [...document.fonts].some(face => face.family.replace(/["']/g, '') === name && face.status === 'loaded')), 'bundled UI fonts load');
     for (const [width, height] of [[1100, 780], [900, 620], [1000, 620], [1440, 900]]) {
       win.setContentSize(width, height); await delay(80);
       await check(() => {
         const side = document.querySelector('.sidebar');
         return side.getBoundingClientRect().bottom <= innerHeight + 1 && side.clientHeight <= innerHeight;
       }, 'sidebar stays within window ' + width);
+      // The rail is collapsed to icons and expands over the page on hover or keyboard focus.
+      await check(() => document.querySelector('.sidebar').getBoundingClientRect().width <= 64, 'rail is collapsed at rest ' + width);
+      await evaluate(() => document.querySelector('.sidebar .nav').focus());
+      await until(() => document.querySelector('.sidebar').getBoundingClientRect().width >= 200, 'rail expands on focus ' + width); assertions++;
       for (const id of ['bilibiliBtn', 'qqBtn', 'updateBtn']) {
         await evaluate(id => document.getElementById(id).scrollIntoView({ block: 'nearest' }), id);
         await check((() => {
@@ -50,6 +58,8 @@ app.whenReady().then(async () => {
         }, id);
         if (!visible) throw Error('unreachable footer ' + id + ' at ' + width); assertions++;
       }
+      await evaluate(() => document.activeElement.blur());
+      await until(() => document.querySelector('.sidebar').getBoundingClientRect().width <= 64, 'rail collapses after blur ' + width); assertions++;
       for (const theme of ['light', 'dark']) {
         await evaluate(theme => { document.documentElement.dataset.theme = theme; document.documentElement.dataset.motion = 'off'; }, theme);
         await delay(40);

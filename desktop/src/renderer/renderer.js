@@ -41,9 +41,10 @@ let managerUpdateBusy = false;
 const overlayTimers = new WeakMap();
 const systemTheme = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
-function applyThemePreference(preference = 'system') {
+// The NVIDIA-style dark theme is the default; light and system remain available.
+function applyThemePreference(preference = 'dark') {
   if (typeof document === 'undefined') return;
-  const selected = ['system', 'light', 'dark'].includes(preference) ? preference : 'system';
+  const selected = ['system', 'light', 'dark'].includes(preference) ? preference : 'dark';
   const resolved = selected === 'system' ? (systemTheme?.matches ? 'dark' : 'light') : selected;
   document.documentElement.dataset.themePreference = selected;
   document.documentElement.dataset.theme = resolved;
@@ -59,7 +60,7 @@ if (systemTheme) {
   if (typeof systemTheme.addEventListener === 'function') systemTheme.addEventListener('change', syncSystemTheme);
   else if (typeof systemTheme.addListener === 'function') systemTheme.addListener(syncSystemTheme);
 }
-if (typeof document !== 'undefined') applyThemePreference('system');
+if (typeof document !== 'undefined') applyThemePreference('dark');
 
 function motionAllowed() {
   const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
