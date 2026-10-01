@@ -51,7 +51,6 @@ contextBridge.exposeInMainWorld('manager', Object.freeze({
   },
   pickGame: () => invoke('pick-game'),
   pickExecutable: () => invoke('pick-executable'),
-  pickHoYoLauncher: () => invoke('pick-hoyo-launcher'),
   hoyoDiscover: () => invoke('hoyo-discover'),
   hoyoInspect: (id, options) => invoke('hoyo-inspect', id, options),
   hoyoPickGame: () => invoke('hoyo-pick-game'),
