@@ -115,11 +115,11 @@ async function exercise(kind) {
   const set = (group, key, value) => { const input = host().querySelector(`[data-gp-group="${group}"][data-gp-field="${key}"]`); check(input && !input.disabled, key + ' is editable'); input.value = value; input.dispatchEvent(new Event('change', { bubbles: true })); };
   const inspect = async id => { const response = await window.__adoption('evidence', id); check(response.ok, 'real service evidence readable'); return response.value; };
   const capture = async label => { await document.fonts.ready; await new Promise(resolve => setTimeout(resolve, 100)); const r = await window.__adoption('capture', label); check(r.ok, 'captured ' + label); };
-  const applyIntent = () => { const button = host().querySelector('.gp-apply-bar .primary'); check(button && !button.disabled && ['prepare', 'preview'].includes(button.dataset.gpAction), 'apply intent does not combine launch'); button.click(); };
+  const applyIntent = () => { const button = host().querySelector('.gp-main-actions .primary'); check(button && !button.disabled && ['prepare', 'preview'].includes(button.dataset.gpAction), 'apply intent does not combine launch'); button.click(); };
   await until(() => document.getElementById('addGameBtn') && !document.body.classList.contains('is-busy'), 'startup');
   document.getElementById('addGameBtn').click(); await until(() => !document.getElementById('gamePickerModal').classList.contains('hidden'), 'picker');
-  document.getElementById('confirmGameBtn').click(); await until(() => document.querySelector('.open-game-page-btn'), 'added');
-  document.querySelector('.open-game-page-btn').click(); await until(() => state()?.loaded.includes('installation'), 'installation page');
+  document.getElementById('confirmGameBtn').click(); await until(() => document.querySelector('#gameList .game-card-head'), 'added');
+  document.querySelector('#gameList .game-card-head').click(); await until(() => state()?.loaded.includes('installation'), 'installation page');
   const id = state().id;
   check(!state().data.game.installed && state().data.game.existingInstallation?.detected, 'real scan exposes unmanaged installation');
   set('route', 'api', 'dx12'); await until(() => state().data.game.apiOverride === 'dx12' && state().loaded.includes('installation'), 'API metadata');

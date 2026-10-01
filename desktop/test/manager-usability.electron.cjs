@@ -50,11 +50,12 @@ async function audit() {
   const state = () => host().__gpController.getState();
   const click = action => { const node = host().querySelector(`[data-gp-action="${action}"]`); assert(node && !node.disabled, action + ' enabled'); node.click(); };
   const tab = async key => { const start = performance.now(); host().querySelector(`[data-gp-tab="${key}"]`).click(); await until(() => state().tab === key && (key !== 'enhance' || state().loaded.includes('enhancements')), key); await new Promise(requestAnimationFrame); timings.push(performance.now() - start); };
-  await until(() => document.querySelector('[data-id="fixture"] .open-game-page-btn'), 'library');
+  await until(() => document.querySelector('[data-id="fixture"] .game-card-head'), 'library');
   await capture('01-library', document.getElementById('view-games'));
-  document.querySelector('[data-id="fixture"] .open-game-page-btn').click(); await until(() => state()?.loaded.includes('installation'), 'editor');
-  await capture('02-installation', host());
-  assert(host().querySelector('[data-gp-detail="startup"]:not([open])'), 'startup details collapsed');
+  document.querySelector('[data-id="fixture"] .game-card-head').click(); await until(() => state()?.loaded.includes('installation'), 'editor');
+  assert(state().tab === 'nr', 'an installed game opens on 画质增强');
+  await tab('overview'); await capture('02-installation', host());
+  assert(host().querySelector('[data-gp-tab="launch"]') && !host().querySelector('[data-gp-detail="startup"]'), 'launch settings have their own tab');
   assert([...host().querySelectorAll('.primary')].filter(visible).length === 1, 'one main action');
   await tab('nr'); await capture('03-nr-standard', host());
   const nr = mock.assessment.nr, contract = mock.features.uniform;
@@ -74,7 +75,7 @@ async function audit() {
   assert(host().innerText.includes('应用后使用 M 模型'), 'SR model hint matches selected model');
   await tab('nr'); input.value = '1.25';
   const current = host().querySelector('[data-gp-field="Intensity"]'); current.value = '1.25'; current.dispatchEvent(new Event('input', { bubbles: true }));
-  assert(!host().querySelector('.gp-apply-bar .primary').disabled, 'unavailable FG does not block NR draft'); click('discard');
+  assert(!host().querySelector('.gp-main-actions .primary').disabled, 'unavailable FG does not block NR draft'); click('discard');
   for (let i = 0; i < 20; i++) await tab(i % 2 ? 'nr' : 'overview');
   document.querySelector('[data-view="hoyo"]').click();
   const hh = () => document.querySelector('.hoyo-settings-host'), h = window.__hoyoMock;

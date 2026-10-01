@@ -64,8 +64,8 @@ async function experience() {
  const add = performance.now(); document.getElementById('addGameBtn').click();
  await until(() => !document.getElementById('gamePickerModal').classList.contains('hidden'), 'game picker');
  document.getElementById('confirmGameBtn').click();
- await until(() => document.querySelector('.open-game-page-btn'), 'added game'); times.addMs = performance.now() - add;
- document.querySelector('.open-game-page-btn').click(); await until(() => state()?.loaded.includes('installation'), 'installation');
+ await until(() => document.querySelector('#gameList .game-card-head'), 'added game'); times.addMs = performance.now() - add;
+ document.querySelector('#gameList .game-card-head').click(); await until(() => state()?.loaded.includes('installation'), 'installation');
  const id = state().id; check(!state().data.game.installed, 'starts uninstalled');
  set('route', 'api', 'dx12'); await until(() => state()?.data.game.apiOverride === 'dx12' && state().data.api.effectiveApi === 'dx12' && state().loaded.includes('installation'), 'metadata save');
  check(!state().data.game.installed, 'API selection must not install');

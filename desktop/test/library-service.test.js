@@ -253,7 +253,22 @@ test('Steam artwork prefers the local high-resolution poster before header or la
     fs.writeFileSync(path.join(cache, 'library_600x900.jpg'), 'poster');
     const result = steamArtworkFor({ launcher: 'Steam', id: '12345', steamRoot: root, poster: null });
     assert.match(result.poster.file, /library_600x900\.jpg$/i);
+    assert.match(result.banner.file, /header\.jpg$/i);
     assert.match(result.steamIcon, /logo\.png$/i);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Steam wide art falls back to the cached hero image and is never downloaded', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-steam-banner-'));
+  try {
+    const cache = path.join(root, 'appcache', 'librarycache', '12345');
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, 'library_hero.jpg'), 'hero');
+    assert.match(steamArtworkFor({ launcher: 'Steam', id: '12345', steamRoot: root, poster: null }).banner.file, /library_hero\.jpg$/i);
+    fs.rmSync(path.join(cache, 'library_hero.jpg'));
+    assert.equal(steamArtworkFor({ launcher: 'Steam', id: '12345', steamRoot: root, poster: null }).banner, null);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

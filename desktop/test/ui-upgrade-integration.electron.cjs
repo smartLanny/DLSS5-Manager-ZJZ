@@ -31,7 +31,7 @@ app.whenReady().then(async () => {
     win = new BrowserWindow({ width: 1100, height: 780, frame: false, show: false, useContentSize: true,
       webPreferences: { preload, sandbox: true, contextIsolation: false, nodeIntegration: false, offscreen: true } });
     await win.loadFile(path.resolve(__dirname, '../src/renderer/index.html'));
-    await until(() => document.querySelector('.open-game-page-btn'), 'library');
+    await until(() => document.querySelector('#gameList .game-card-head'), 'library');
     // Inter and Noto Sans SC ship as npm packages, linked relative to the renderer.
     await until(() => document.fonts.status === 'loaded', 'fonts');
     await check(() => ['Inter Variable', 'Noto Sans SC Variable'].every(name =>
@@ -76,13 +76,15 @@ app.whenReady().then(async () => {
       }
     }
     win.setContentSize(1100, 780);
-    await evaluate(() => document.querySelector('.open-game-page-btn').click());
+    await evaluate(() => document.querySelector('#gameList .game-card-head').click());
     await until(() => document.querySelector('.game-detail')?.__gpController.getState().loaded.includes('installation'), 'installation');
     await evaluate(() => {
       window.__gpMock.assessment.coreVersions = window.__curatedCores;
       window.__gpMock.assessment.game.addonVersion = window.__gpMock.assessment.deployment.version = window.__gpMock.assessment.defaults.version = '0.5-dline12';
       return document.querySelector('.game-detail').__gpController.refresh(true);
     });
+    // An installed game opens on 画质增强; the Core picker is under 高级.
+    await evaluate(() => document.querySelector('.game-detail [data-gp-tab="overview"]').click());
     await check(() => document.querySelector('[data-gp-group="route"][data-gp-field="version"]').value === '0.5-dline12', 'installed D12 survives curated menu');
     await check(() => {
       // Older Cores such as D21 are listed under the rollback section, not the main picker.

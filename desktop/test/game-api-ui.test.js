@@ -18,23 +18,16 @@ test('DXGI awaiting confirmation is never labeled temporarily unsupported', () =
   assert.match(html, /API 待确认/); assert.doesNotMatch(html, /暂不支持/);
 });
 
-test('an unmanaged existing Core is visible before opening its required preview', () => {
-  const context = { state: { expanded: null }, escapeHtml: String, inlineGameDetails: new Map(), window: { manager: { assessGame() {} } } }; vm.createContext(context);
+test('an unmanaged existing Core is visible in the game list before opening its required preview', () => {
+  const context = { state: { expanded: null }, escapeHtml: String }; vm.createContext(context);
   runRouteHelpers(context, 'function hardwareLabel(');
-  vm.runInContext(source.slice(source.indexOf('function cardAction('), source.indexOf('const API_LABELS')), context);
   context.game = { supported: true, installed: false, existingInstallation: { detected: true } };
   assert.match(vm.runInContext('supportBadge(game)', context), /已有插件待确认/);
-  const action = vm.runInContext('cardAction(game)', context);
-  assert.match(action, /检查已有安装/); assert.doesNotMatch(action, /安装与设置/);
-  assert.match(action, /unified-launch-btn[^>]*>安装</);
-  assert.doesNotMatch(action, /rename-game-btn|>改名</);
 });
 
-test('modern cards offer Install before installation and keep rename inside expanded advanced controls', () => {
-  const context = { state: { expanded: null }, escapeHtml: String, inlineGameDetails: new Map(), window: { manager: { assessGame() {} } } }; vm.createContext(context);
-  vm.runInContext(source.slice(source.indexOf('function cardAction('), source.indexOf('const API_LABELS')), context);
-  const html = vm.runInContext("cardAction({ installed:false, existingInstallation:{detected:false} })", context);
-  assert.match(html, /^<button[^>]*unified-launch-btn[^>]*>安装<\/button><button[^>]*open-game-page-btn[^>]*>安装与设置<\/button>$/);
+test('side-by-side game rows select a game and keep rename inside the game page', () => {
+  const render = source.slice(source.indexOf('function renderGames('), source.indexOf('function captureGameViewAnchor('));
+  assert.match(render, /split \? '' : `<div class="card-action">/);
   assert.match(gamePageSource, /act\('rename-game', '修改游戏名称'/);
   assert.match(source, /onRename: gameId => confirmRenameGame\(gameId\)/);
 });

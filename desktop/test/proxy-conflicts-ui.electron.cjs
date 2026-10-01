@@ -46,14 +46,16 @@ async function smoke() {
   const button = (root, action) => root.querySelector(`[data-gp-action="${action}"]`);
   const click = (root, action) => { const node = button(root, action); check(node && !node.disabled, action + ' available'); node.click(); };
   const set = (group, key, value) => { const node = host().querySelector(`[data-gp-group="${group}"][data-gp-field="${key}"]`); node.value = value; node.dispatchEvent(new Event('change', { bubbles: true })); };
-  await until(() => document.querySelector('[data-id="fixture"] .open-game-page-btn'), 'library'); document.querySelector('[data-id="fixture"] .open-game-page-btn').click();
+  await until(() => document.querySelector('[data-id="fixture"] .game-card-head'), 'library'); document.querySelector('[data-id="fixture"] .game-card-head').click();
   await until(() => state()?.loaded.includes('installation'), 'installation page');
+  // The loading entry is an install setting under 高级.
+  host().querySelector('[data-gp-tab="overview"]').click();
   check(button(host(), 'switch-proxy')?.textContent === '改用 DXGI' && host().querySelector('.gp-proxy-entry').textContent.includes('加载入口：D3D12'), 'homepage honors actual/default D3D12 entry');
   check(button(host(), 'switch-proxy').title.includes('DXGI 冲突') && button(host(), 'switch-proxy').getClientRects().length > 0, 'short entry and tooltip are visible on installation page');
   check(!host().querySelector('[data-gp-field="proxyEntry"]'), 'advanced duplicate proxy selector removed');
   const callsBefore = mock.calls.length; click(host(), 'switch-proxy');
   check(JSON.stringify(state().draft) === JSON.stringify({ proxyEntry: 'dxgi' }) && mock.calls.length === callsBefore, 'switch only stages proxyEntry without IPC or writes');
-  check(host().querySelector('.gp-apply-bar .primary').textContent === '应用修改' && mock.starts === 0, 'staged switch waits for unified Apply');
+  check(host().querySelector('.gp-main-actions .primary').textContent === '应用修改' && mock.starts === 0, 'staged switch waits for unified Apply');
   click(host(), 'preview'); await until(() => host().querySelector('.gp-modal') && !state().busy, 'conflict short confirmation');
   const dialog = () => host().querySelector('.gp-modal');
   check(dialog().textContent.includes('C:\\Fixture\\_DLSS5_Backup') && dialog().textContent.includes('D:\\Manager\\runtime-backups'), 'confirmation shows both fixed owner backup directories');

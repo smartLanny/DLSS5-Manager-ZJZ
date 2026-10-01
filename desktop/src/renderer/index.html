@@ -41,7 +41,7 @@
 
     <main>
       <header class="titlebar">
-        <div class="page-title"><h2 id="pageTitle">我的游戏</h2><p id="pageSubtitle">选择游戏，确认兼容性后安装</p></div>
+        <div class="page-title"><h2 id="pageTitle">游戏</h2><p id="pageSubtitle"></p></div>
         <div class="product-wordmark" aria-hidden="true"><span>GAME</span><i>/</i><span>MOD</span><i>/</i><span>PLAY</span></div>
         <div class="title-actions">
           <button class="window-button" id="minBtn" aria-label="最小化"><span class="ui-icon icon-minus" aria-hidden="true"></span></button>
@@ -51,18 +51,34 @@
       </header>
 
       <section class="view active" id="view-games">
-        <div class="library-header"><div><h3>游戏库</h3><p class="summary" id="gameSummary"></p></div><div class="library-actions"><button class="button primary" id="addGameBtn"><span class="ui-icon icon-plus" aria-hidden="true"></span>添加游戏</button><details class="library-more"><summary class="button subtle">更多</summary><div><button class="button subtle" id="addExeBtn">选择游戏程序</button><button class="button subtle" id="refreshBtn"><span class="ui-icon icon-disc" aria-hidden="true"></span>扫描本机</button></div></details></div></div>
-        <div class="notice hidden" id="hardwareNotice"></div>
-        <div class="payload-guidance hidden" id="payloadNotice" role="status" aria-live="polite"></div>
-        <div class="toolbar-row">
-          <div class="search"><span class="ui-icon icon-search" aria-hidden="true"></span><input id="searchInput" placeholder="搜索游戏名称" autocomplete="off"></div>
-          <select id="gameFilter" aria-label="筛选游戏"><option value="all">全部游戏</option><option value="installed">已安装</option><option value="supported">可安装</option><option value="unsupported">暂不支持</option></select>
+        <div class="games-tabs" role="tablist" aria-label="游戏">
+          <button class="games-tab" type="button" role="tab" id="gamesLibraryTab" data-games-page="library" aria-controls="gamesLibraryPanel" aria-selected="true">我的游戏</button>
+          <button class="games-tab" type="button" role="tab" id="gamesAddTab" data-games-page="add" aria-controls="gamesAddPanel" aria-selected="false" tabindex="-1">添加与扫描</button>
         </div>
-        <div class="game-list" id="gameList"></div>
-        <div class="empty hidden" id="emptyState">
-          <h3>还没有找到游戏</h3>
-          <p>先自动扫描 Steam、Epic、GOG；也可以选择游戏文件夹或实际运行 EXE。</p>
-          <button class="button primary" id="emptyAddBtn">添加游戏</button>
+        <div class="payload-guidance hidden" id="payloadNotice" role="status" aria-live="polite"></div>
+        <div class="games-split" id="gamesLibraryPanel" role="tabpanel" aria-labelledby="gamesLibraryTab">
+          <div class="game-list-pane">
+            <div class="toolbar-row">
+              <div class="search"><span class="ui-icon icon-search" aria-hidden="true"></span><input id="searchInput" placeholder="搜索游戏" autocomplete="off"></div>
+              <button class="icon-button game-add-quick" type="button" id="addGameQuickBtn" title="添加游戏" aria-label="添加游戏"><span class="ui-icon icon-plus" aria-hidden="true"></span></button>
+            </div>
+            <div class="game-list-meta"><span id="gameSummary"></span><select id="gameFilter" aria-label="筛选游戏"><option value="all">全部</option><option value="installed">已安装</option><option value="supported">可安装</option><option value="unsupported">暂不支持</option></select></div>
+            <div class="game-list" id="gameList"></div>
+            <div class="empty hidden" id="emptyState">
+              <h3>还没有找到游戏</h3>
+              <p>先自动扫描 Steam、Epic、GOG；也可以选择游戏文件夹或实际运行 EXE。</p>
+              <button class="button primary" id="emptyAddBtn">添加游戏</button>
+            </div>
+          </div>
+          <div class="game-detail-pane" id="gameDetailPane" aria-label="游戏设置"></div>
+        </div>
+        <div class="games-add" id="gamesAddPanel" role="tabpanel" aria-labelledby="gamesAddTab" hidden>
+          <div class="games-add-rows">
+            <div class="games-add-row"><div><strong>添加游戏</strong><small>选择游戏所在的文件夹，管理器会找到要运行的游戏程序。</small></div><button class="button primary" id="addGameBtn"><span class="ui-icon icon-plus" aria-hidden="true"></span>添加游戏</button></div>
+            <div class="games-add-row"><div><strong>选择游戏程序</strong><small>找不到时，直接选择游戏实际运行的 .exe 文件。</small></div><button class="button" id="addExeBtn">选择程序</button></div>
+            <div class="games-add-row"><div><strong>扫描本机</strong><small>重新查找 Steam、Epic、GOG 中已安装的游戏。更多目录可在“设置”里开启。</small></div><button class="button" id="refreshBtn"><span class="ui-icon icon-disc" aria-hidden="true"></span>扫描本机</button></div>
+            <div class="games-add-row"><div><strong>显卡</strong><small class="hidden" id="hardwareNotice"></small></div></div>
+          </div>
         </div>
       </section>
 
