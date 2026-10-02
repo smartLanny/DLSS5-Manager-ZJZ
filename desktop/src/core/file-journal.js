@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { lockedFs } = require('./locked-file-retry');
 const active = new Map();
 const rootKey = dir => path.resolve(dir).toLowerCase();
 const pendingPath = dir => path.join(dir, '_DLSS5_Backup', 'pending-switch.json');
@@ -34,8 +35,8 @@ function safePath(root, rel) {
 async function atomicJson(file, data) {
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
   const temp = file + '.tmp';
-  await fs.promises.writeFile(temp, JSON.stringify(data, null, 2), 'utf8');
-  await fs.promises.rename(temp, file);
+  await lockedFs.writeFile(temp, JSON.stringify(data, null, 2), 'utf8');
+  await lockedFs.rename(temp, file);
 }
 async function capture(gameDir, target) {
   const state = active.get(rootKey(gameDir));
@@ -55,7 +56,7 @@ async function capture(gameDir, target) {
   if (existed) {
     const copy = safePath(gameDir, snapshot);
     await fs.promises.mkdir(path.dirname(copy), { recursive: true });
-    await fs.promises.copyFile(target, copy);
+    await lockedFs.copyFile(target, copy);
   }
   state.files.push({ rel, existed, snapshot });
   await atomicJson(pendingPath(gameDir), state);
@@ -75,7 +76,7 @@ async function cleanup(gameDir, state) {
   // Only our numbered snapshots and now-empty transaction folder.
   for (const item of state.files) {
     const file = safePath(gameDir, item.snapshot);
-    if (fs.existsSync(file)) await fs.promises.unlink(file);
+    if (fs.existsSync(file)) await lockedFs.unlink(file);
   }
   try { await fs.promises.rmdir(safePath(gameDir, state.folder)); } catch {}
 }
@@ -99,13 +100,13 @@ async function recover(gameDir) {
     const target = safePath(gameDir, item.rel);
     if (item.existed) {
       await fs.promises.mkdir(path.dirname(target), { recursive: true });
-      await fs.promises.copyFile(safePath(gameDir, item.snapshot), target);
-    } else if (fs.existsSync(target)) await fs.promises.unlink(target);
+      await lockedFs.copyFile(safePath(gameDir, item.snapshot), target);
+    } else if (fs.existsSync(target)) await lockedFs.unlink(target);
   }
   for (const dir of [...state.dirs].sort((a, b) => b.length - a.length)) {
     try { await fs.promises.rmdir(safePath(gameDir, dir)); } catch {}
   }
-  await fs.promises.unlink(pending);
+  await lockedFs.unlink(pending);
   await cleanup(gameDir, state).catch(() => {});
   return true;
 }
@@ -119,7 +120,7 @@ async function transaction(gameDir, work, options = {}) {
   try {
     await capture(gameDir, path.join(gameDir, '_DLSS5_Backup', 'manifest.json'));
     const result = await work();
-    await fs.promises.unlink(pendingPath(gameDir));
+    await lockedFs.unlink(pendingPath(gameDir));
     active.delete(rootKey(gameDir));
     await cleanup(gameDir, state).catch(() => {});
     return result;

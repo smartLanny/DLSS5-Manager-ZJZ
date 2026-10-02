@@ -5,6 +5,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { noLinks, atomicJson } = require('./launch-safety');
+const { lockedFs } = require('../core/locked-file-retry');
 const { hashRegularFile } = require('./streamed-file-digest');
 const { snapshotAddonLoadingLayout, assertAddonSnapshot } = require('./addon-loading-layout');
 
@@ -96,25 +97,25 @@ function createUserAddonManager({ componentRoot, assertGameClosed, environment =
       await fsp.mkdir(path.dirname(target), { recursive: true });
       const temp = `${target}.${crypto.randomUUID()}.part`;
       try {
-        await fsp.copyFile(file.source, temp, fs.constants.COPYFILE_EXCL);
+        await lockedFs.copyFile(file.source, temp, fs.constants.COPYFILE_EXCL);
         if (await digest(temp) !== file.sha256) fail('USER_ADDON_COPY', '复制用户 Add-on 后校验不一致。');
-        await fsp.rename(temp, target);
+        await lockedFs.rename(temp, target);
         receipt.items = receipt.items.filter(row => row.componentId !== item.id);
         receipt.items.push({ componentId: item.id, name: file.name, target, sha256: file.sha256, installedAt: new Date().toISOString() });
         try { await atomicJson(receiptFile(game), receipt); }
-        catch (error) { await fsp.unlink(target).catch(() => {}); throw error; }
-      } finally { await fsp.unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+        catch (error) { await lockedFs.unlink(target).catch(() => {}); throw error; }
+      } finally { await lockedFs.unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
       return { changed: true, installed: true, notice: '用户 Add-on 已复制到当前 ReShade 加载目录；请重启游戏验证。' };
     }
     if (!owned) return { changed: false, installed: false, notice: '该文件不是由本管理器部署，未删除。' };
     if (!same(owned.target, target)) fail('USER_ADDON_CHANGED', 'ReShade 加载目录已经改变；未从旧位置自动删除文件，请先恢复原加载布局。');
     if (!fs.existsSync(target) || await digest(target) !== owned.sha256) fail('USER_ADDON_CHANGED', '用户 Add-on 已被外部修改或移动，未自动删除。');
     const parked = `${target}.${crypto.randomUUID()}.remove`;
-    await fsp.rename(target, parked);
+    await lockedFs.rename(target, parked);
     receipt.items = receipt.items.filter(row => row !== owned);
     try { await atomicJson(receiptFile(game), receipt); }
-    catch (error) { await fsp.rename(parked, target).catch(() => {}); throw error; }
-    await fsp.unlink(parked);
+    catch (error) { await lockedFs.rename(parked, target).catch(() => {}); throw error; }
+    await lockedFs.unlink(parked);
     return { changed: true, installed: false, notice: '已移除管理器部署的用户 Add-on。' };
   }
 
@@ -130,7 +131,7 @@ function createUserAddonManager({ componentRoot, assertGameClosed, environment =
         fail('USER_ADDON_CHANGED', `用户 Add-on 的原加载目录与当前布局不一致，未删除：${row.name}`);
       const currentHash = fs.existsSync(row.target) ? await digest(row.target) : null;
       if (currentHash && currentHash !== row.sha256) fail('USER_ADDON_CHANGED', `用户 Add-on 已被修改，未删除：${row.name}`);
-      if (currentHash) { await noLinks(row.target); await fsp.unlink(row.target); }
+      if (currentHash) { await noLinks(row.target); await lockedFs.unlink(row.target); }
     }
     receipt.items = [];
     await atomicJson(receiptFile(game), receipt);
