@@ -348,7 +348,9 @@ function createExternalRuntime(options) {
       '(' + literal(temp) + ',' + literal(destination) + (replacing ? ',[NullString]::Value' : '') + ');';
     await execFile(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-      { windowsHide: true, timeout: 15000, maxBuffer: 8192 });
+      // A cold PowerShell start can exceed 15 s while antivirus scans; a timeout
+      // here fails the install, so the bound only stops a hang.
+      { windowsHide: true, timeout: 60000, maxBuffer: 8192 });
   }
   async function atomicCopy(t, source, destination, expected, before) {
     await noLinks(destination); await fsp.mkdir(path.dirname(destination), { recursive: true });

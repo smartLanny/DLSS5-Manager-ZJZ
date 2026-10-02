@@ -8,7 +8,8 @@ function execute(program, args) {
   return new Promise(resolve => {
     execFile(program, args, {
       encoding: 'utf8',
-      timeout: 15000,
+      // Compiles C# (Add-Type) before touching DRS; the bound only stops a hang.
+      timeout: 60000,
       windowsHide: true,
       maxBuffer: 256 * 1024
     }, (error, stdout, stderr) => {

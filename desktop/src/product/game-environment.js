@@ -51,7 +51,7 @@ function createGameEnvironment(options) {
     try {
       await execute(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
         ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-        { windowsHide: true, timeout: 15000, maxBuffer: 8192 });
+        { windowsHide: true, timeout: 60000, maxBuffer: 8192 }); // cold PowerShell start under antivirus; bounds a hang only
     } catch (cause) { throw Object.assign(new Error('文件提交未完成，原文件和恢复记录已保留；请检查目录权限或重试恢复。'), { code: 'ENVIRONMENT_COMMIT_FAILED', cause }); }
   }
   async function atomicCopy(t, source, destination, expected, replace = false) {

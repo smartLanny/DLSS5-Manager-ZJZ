@@ -86,7 +86,7 @@ function createWindowsProcessInspector(runPowerShell) {
     if (!Number.isInteger(pid) || pid < 1) fail('PROCESS', '进程身份无效。');
     const queryImage = 'using System;using System.Text;using System.Runtime.InteropServices;public static class ExactProcessImage{[DllImport("kernel32.dll",SetLastError=true)]public static extern IntPtr OpenProcess(uint a,bool b,uint c);[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern bool QueryFullProcessImageName(IntPtr h,uint f,StringBuilder b,ref uint n);[DllImport("kernel32.dll")]public static extern bool CloseHandle(IntPtr h);}';
     const command = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false); $p=Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}'; if($null -eq $p){'null'}else{$image=[string]$p.ExecutablePath;if(!$image){Add-Type -TypeDefinition ${quote(queryImage)};$h=[ExactProcessImage]::OpenProcess(4096,$false,${pid});if($h -ne [IntPtr]::Zero){try{$b=New-Object Text.StringBuilder 32768;$n=[uint32]32768;if([ExactProcessImage]::QueryFullProcessImageName($h,0,$b,[ref]$n)){$image=$b.ToString()}}finally{[void][ExactProcessImage]::CloseHandle($h)}}};[ordered]@{pid=[int]$p.ProcessId;executable=$image;startedAt=$p.CreationDate.ToUniversalTime().ToString('o')}|ConvertTo-Json -Compress}`;
-    let row; try { row = JSON.parse(await runPowerShell(command, 10000)); } catch { fail('PROCESS', '无法核对工作进程身份，请导出诊断。'); }
+    let row; try { row = JSON.parse(await runPowerShell(command, 30000)); } catch { fail('PROCESS', '无法核对工作进程身份，请导出诊断。'); }
     if (row === null) return null;
     if (!processIdentity(row)) fail('PROCESS', '无法完整核对进程路径及启动时间。');
     return row;
