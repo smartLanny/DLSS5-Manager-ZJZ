@@ -182,3 +182,37 @@ test('process-query failure remains a conservative process-check error', async (
   const invalid = createInstallGuards({ queryProcesses: async () => null });
   await assert.rejects(invalid.assertGameClosed(root, game), { code: 'errProcessCheck' });
 });
+
+test('a process snapshot taken moments ago confirms a closed game without listing processes again', async () => {
+  let clock = 1000, queries = 0, rows = [row(100, 90, 'DLSS 5 AI 超分管理器.exe', manager)];
+  const guards = createInstallGuards({ processId: 100, executablePath: manager, reuseMs: 3000, now: () => clock,
+    queryProcesses: async () => { queries++; return rows; } });
+  await guards.assertGameClosed(root, game);
+  clock += 2000; await guards.assertGameClosed(root, game);
+  assert.equal(queries, 1, 'a check within three seconds reuses the snapshot');
+  clock += 1500; await guards.assertGameClosed(root, game);
+  assert.equal(queries, 2, 'an older snapshot is taken again');
+  await Promise.all([1, 2, 3].map(() => guards.assertGameClosed(root, path.join(root, 'Other.exe'))));
+  assert.equal(queries, 2, 'concurrent checks share the recent snapshot');
+});
+
+test('a reused snapshot never reports a running game without listing processes again', async () => {
+  let clock = 1000, queries = 0, rows = [row(110, 1, 'NBA2K27.exe', game)];
+  const guards = createInstallGuards({ processId: 100, executablePath: manager, reuseMs: 3000, now: () => clock,
+    queryProcesses: async () => { queries++; return rows; } });
+  await assert.rejects(guards.assertGameClosed(root, game), { code: 'errGameRunning' });
+  assert.equal(queries, 1);
+  rows = []; clock += 1000;
+  await guards.assertGameClosed(root, game);
+  assert.equal(queries, 2, 'the game that just exited is confirmed by a fresh list, not the old one');
+  rows = [row(110, 1, 'NBA2K27.exe', game)]; clock += 4000;
+  await assert.rejects(guards.assertGameClosed(root, game), { code: 'errGameRunning' });
+  assert.equal(queries, 3);
+});
+
+test('injected process queries are not reused unless asked', async () => {
+  let queries = 0;
+  const guards = createInstallGuards({ processId: 100, executablePath: manager, queryProcesses: async () => { queries++; return []; } });
+  await guards.assertGameClosed(root, game); await guards.assertGameClosed(root, game);
+  assert.equal(queries, 2);
+});

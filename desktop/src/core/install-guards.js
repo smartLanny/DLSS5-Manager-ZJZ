@@ -79,6 +79,8 @@ async function systemProcesses(runner = run) {
   return processRows(parsed);
 }
 
+const PROCESS_REUSE_MS = 3000;
+
 function createInstallGuards(options = {}) {
   const processId = numericPid(options.processId === undefined ? process.pid : options.processId);
   const executablePath = normalizedExecutable(options.executablePath === undefined ? process.execPath : options.executablePath);
@@ -86,6 +88,26 @@ function createInstallGuards(options = {}) {
     ? process.env.PORTABLE_EXECUTABLE_FILE
     : options.portableExecutablePath);
   const queryProcesses = options.queryProcesses || (() => systemProcesses());
+  // Every check starts PowerShell and lists all processes (about 1-3 s), and
+  // one install checks several times. A snapshot taken moments ago is reused
+  // to confirm the game is closed; one that shows it running is always taken
+  // again first. Injected queries (tests) opt in through reuseMs.
+  const reuseMs = Number.isInteger(options.reuseMs) && options.reuseMs >= 0 ? options.reuseMs : options.queryProcesses ? 0 : PROCESS_REUSE_MS;
+  const now = typeof options.now === 'function' ? options.now : Date.now;
+  let recent = null, inflight = null;
+
+  async function snapshot({ fresh = false } = {}) {
+    if (!fresh && recent && reuseMs > 0 && now() - recent.at <= reuseMs) return { rows: recent.rows, reused: true };
+    if (!inflight) {
+      const startedAt = now();
+      inflight = Promise.resolve().then(queryProcesses).then(value => {
+        const rows = processRows(value);
+        recent = { at: startedAt, rows };
+        return rows;
+      }).finally(() => { inflight = null; });
+    }
+    return { rows: await inflight, reused: false };
+  }
 
   function ownedProcessIds(rows, gameExePath) {
     const gamePath = normalizedExecutable(gameExePath);
@@ -143,13 +165,17 @@ function createInstallGuards(options = {}) {
   }
 
   async function assertGameClosed(gameDir, gameExePath) {
-    let rows;
-    try {
-      rows = processRows(await queryProcesses());
-    } catch (cause) {
-      throw Object.assign(new Error('errProcessCheck'), { code: 'errProcessCheck', cause });
+    const read = async options => {
+      try { return await snapshot(options); }
+      catch (cause) { throw Object.assign(new Error('errProcessCheck'), { code: 'errProcessCheck', cause }); }
+    };
+    let current = await read();
+    let matches = matchingProcesses(current.rows, gameDir, gameExePath);
+    // Never report a running game from a reused snapshot; it may have exited.
+    if (matches.length && current.reused) {
+      current = await read({ fresh: true });
+      matches = matchingProcesses(current.rows, gameDir, gameExePath);
     }
-    const matches = matchingProcesses(rows, gameDir, gameExePath);
     if (matches.length) {
       const processes = matches.map(row => {
         const executable = normalizedExecutable(row && row.ExecutablePath);
