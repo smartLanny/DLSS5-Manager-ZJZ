@@ -11,6 +11,7 @@ const { appError, MESSAGES } = require('./errors');
 const { inspectAddonLayout, requireAddonLayout } = require('./reshade-layout');
 const { assess, classifyApi, isDx11Only } = require('./game-support');
 const { sha256 } = require('./payload');
+const { sha256Async } = require('./digest-async');
 const companionPolicy = require('./payload-companions');
 const { ensureDefaultReShadeHotkey } = require('./hotkeys');
 const { createDeploymentTiming, readDeploymentTiming, attachDeploymentTiming } = require('./deployment-timing');
@@ -50,7 +51,7 @@ function createInstaller(overrides = {}) {
     if (!fs.existsSync(file)) return null;
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.nlink > 1) throw appError('ERR_FILE_CHANGED', { rel: path.relative(gameDir, file) });
-    return sha256(file);
+    return sha256Async(file);
   }
   function trustedHashes(version, info) {
     if (!/^0\.4\.7-?beta$/i.test(String(version || '')) || info?.id && !/^0\.4\.7-?beta$/i.test(info.id) ||
@@ -62,14 +63,14 @@ function createInstaller(overrides = {}) {
     const trusted = trustedHashes(version, info), adoptions = [];
     for (const write of writes) {
       await noLinks(write.source);
-      if (!write.expected || !fs.existsSync(write.source) || !fs.statSync(write.source).isFile() || sha256(write.source) !== write.expected.toLowerCase())
+      if (!write.expected || !fs.existsSync(write.source) || !fs.statSync(write.source).isFile() || (await sha256Async(write.source)) !== write.expected.toLowerCase())
         throw appError('ERR_PAYLOAD_HASH', { file: path.basename(write.source), reason: 'source-changed' });
       const row = require('./native-loader-target').nativeEntryForTarget(manifest, path.relative(gameDir, write.target)), current = await checkedHash(gameDir, write.target);
       if (!row) continue;
       validateEntry(gameDir, manifest, row, journal.safePath);
       if (row.original.existed) {
         const backup = journal.safePath(gameDir, row.original.backupRel); await noLinks(backup);
-        if (!row.original.sha256 || sha256(backup) !== row.original.sha256) throw appError('ERR_BACKUP_INVALID', { rel: row.rel });
+        if (!row.original.sha256 || (await sha256Async(backup)) !== row.original.sha256) throw appError('ERR_BACKUP_INVALID', { rel: row.rel });
       }
       if (current && current !== row.installedSha256) {
         if (write.kind !== 'addon' || row.kind !== 'addon' || !trusted.has(current)) throw appError('ERR_FILE_CHANGED', { rel: row.rel });
@@ -85,10 +86,10 @@ function createInstaller(overrides = {}) {
       const backupRel = path.join('_DLSS5_Backup', 'trusted-core-upgrades', manifest.installId, `${adoption.row.rel}.${adoption.current}.bin`);
       const backup = journal.safePath(gameDir, backupRel); await noLinks(backup);
       const exists = fs.existsSync(backup);
-      if (exists && (!fs.statSync(backup).isFile() || sha256(backup) !== adoption.current)) throw appError('ERR_BACKUP_INVALID', { rel: backupRel });
+      if (exists && (!fs.statSync(backup).isFile() || (await sha256Async(backup)) !== adoption.current)) throw appError('ERR_BACKUP_INVALID', { rel: backupRel });
       if (!exists) {
         await journal.capture(gameDir, backup); await copyFile(adoption.target, backup);
-        if (sha256(backup) !== adoption.current) throw appError('ERR_BACKUP_INVALID', { rel: backupRel });
+        if ((await sha256Async(backup)) !== adoption.current) throw appError('ERR_BACKUP_INVALID', { rel: backupRel });
       }
       if (manifest.trustedCoreUpgrades !== undefined && !Array.isArray(manifest.trustedCoreUpgrades)) throw appError('ERR_BACKUP_INVALID');
       manifest.trustedCoreUpgrades = [...(manifest.trustedCoreUpgrades || []), { rel: adoption.row.rel, fromSha256: adoption.current,
@@ -115,7 +116,7 @@ function createInstaller(overrides = {}) {
     if (fs.existsSync(receiptFile)) {
       const stat = fs.statSync(receiptFile);
       if (!stat.isFile() || stat.size > 128 * 1024) refError('REF_RECEIPT_INVALID', 'REFramework 收据无效，请先检查兼容组件。');
-      receiptHash = sha256(receiptFile);
+      receiptHash = await sha256Async(receiptFile);
       try { record = JSON.parse(fs.readFileSync(receiptFile, 'utf8')); } catch { refError('REF_RECEIPT_INVALID', 'REFramework 收据无法解析，请保留文件并保存反馈。'); }
       if (record.version !== 1 || record.product !== 'xiaofeng-reframework-preparation' || record.adapter !== adapter.id ||
           !record.game || !samePath(record.game.dir, gameDir) || record.game.exe?.toLowerCase() !== adapter.executable.toLowerCase() || !Array.isArray(record.mirrors))
@@ -152,7 +153,7 @@ function createInstaller(overrides = {}) {
   }
   async function planRefUpdate(context, nextHash) {
     if (!context || !context.mirrors.length) return;
-    if (context.receiptHash !== (fs.existsSync(context.receiptFile) ? sha256(context.receiptFile) : null)) refError('REF_STATE_CHANGED', 'Core 预检后 REFramework 收据发生变化。');
+    if (context.receiptHash !== (fs.existsSync(context.receiptFile) ? await sha256Async(context.receiptFile) : null)) refError('REF_STATE_CHANGED', 'Core 预检后 REFramework 收据发生变化。');
     if (context.claims.length) await context.service.confirmMirrors(context.input, { confirm: true, mirrors: context.claims });
     context.plan = await context.service.planMirrors(context.input, { operation: 'replace', files: context.mirrors.map(item => ({
       rootRel: item.row.rel, sha256: nextHash || item.rootHash })) });
@@ -164,12 +165,12 @@ function createInstaller(overrides = {}) {
     if (await checkedHash(gameDir, from) !== operation.archive.sha256) refError('REF_MIRROR_CHANGED', '备份前 Core 镜像发生变化。');
     if (await checkedHash(gameDir, to) !== null) refError('REF_MIRROR_BACKUP_CHANGED', 'Core 镜像备份目标已出现，不会覆盖。');
     await journal.capture(gameDir, to); await copyFile(from, to);
-    if (sha256(to) !== operation.archive.sha256) refError('REF_MIRROR_BACKUP_CHANGED', 'Core 镜像备份读回不一致。');
+    if ((await sha256Async(to)) !== operation.archive.sha256) refError('REF_MIRROR_BACKUP_CHANGED', 'Core 镜像备份读回不一致。');
   }
   async function saveRefPlan(context, next) {
     if (!context?.plan) return;
     await noLinks(context.receiptFile);
-    if (sha256(context.receiptFile) !== context.plan.receiptBeforeSha256) refError('REF_STATE_CHANGED', '写入前 REFramework 收据发生变化。');
+    if ((await sha256Async(context.receiptFile)) !== context.plan.receiptBeforeSha256) refError('REF_STATE_CHANGED', '写入前 REFramework 收据发生变化。');
     await journal.capture(context.input.gameDir, context.receiptFile); await atomicJson(context.receiptFile, next);
   }
   async function applyRefUpdate(context) {
@@ -181,7 +182,7 @@ function createInstaller(overrides = {}) {
       if (await checkedHash(gameDir, root) !== operation.sha256 || await checkedHash(gameDir, mirror) !== operation.expectedMirrorSha256)
         refError('REF_MIRROR_CHANGED', 'Core 写入前 root/mirror 状态改变，整笔升级将回滚。');
       await journal.capture(gameDir, mirror); await copyFile(root, mirror);
-      if (sha256(mirror) !== operation.sha256) refError('REF_MIRROR_CHANGED', 'Core 镜像写入后读回不一致，整笔升级将回滚。');
+      if ((await sha256Async(mirror)) !== operation.sha256) refError('REF_MIRROR_CHANGED', 'Core 镜像写入后读回不一致，整笔升级将回滚。');
     }
     await saveRefPlan(context, context.plan.receiptNext);
   }
@@ -199,7 +200,7 @@ function createInstaller(overrides = {}) {
       await journal.capture(gameDir, mirror);
       if (restoredHash) {
         await copyFile(root, mirror);
-        if (sha256(mirror) !== restoredHash) refError('REF_MIRROR_CHANGED', '恢复 Core 镜像后读回不一致。');
+        if ((await sha256Async(mirror)) !== restoredHash) refError('REF_MIRROR_CHANGED', '恢复 Core 镜像后读回不一致。');
       } else await lockedFs.unlink(mirror);
       restored.push({ rootRel: row.rel, mirrorRel: operation.mirrorRel, restoredSha256: restoredHash });
     }
@@ -228,17 +229,17 @@ function createInstaller(overrides = {}) {
 
   async function sidecarBackup(gameDir, target, manifest) {
     if (!fs.existsSync(target) || !fs.statSync(target).isFile()) return null;
-    const originalHash = sha256(target);
+    const originalHash = await sha256Async(target);
     for (let index = 0; index < 16; index += 1) {
       const suffix = index === 0 ? '.bak' : `.bak.${index}`;
       const candidate = `${target}${suffix}`;
       if (fs.existsSync(candidate)) {
-        if (fs.statSync(candidate).isFile() && sha256(candidate) === originalHash) return path.basename(candidate);
+        if (fs.statSync(candidate).isFile() && (await sha256Async(candidate)) === originalHash) return path.basename(candidate);
         continue;
       }
       await journal.capture(gameDir, candidate);
       await copyFile(target, candidate);
-      if (sha256(candidate) !== originalHash) throw appError('ERR_BACKUP_INVALID');
+      if ((await sha256Async(candidate)) !== originalHash) throw appError('ERR_BACKUP_INVALID');
       // Only a newly created sidecar is ours. Equal bytes in a pre-existing
       // .bak do not confer ownership (older managers also reused these).
       manifest.sidecars = [...(manifest.sidecars || []), {
@@ -262,7 +263,7 @@ function createInstaller(overrides = {}) {
     entry = {
       rel,
       kind,
-      original: { existed, backupRel: null, sha256: existed ? sha256(target) : null },
+      original: { existed, backupRel: null, sha256: existed ? await sha256Async(target) : null },
       installedSha256: null
     };
     if (existed) {
@@ -282,27 +283,27 @@ function createInstaller(overrides = {}) {
     safe(gameDir, target);
     const expected = typeof expectedHash === 'string' && /^[a-f0-9]{64}$/i.test(expectedHash) ? expectedHash.toLowerCase() : null;
     let sourceHash = null;
-    try { sourceHash = fs.statSync(source).isFile() ? sha256(source) : null; } catch {}
+    try { sourceHash = fs.statSync(source).isFile() ? await sha256Async(source) : null; } catch {}
     if (!expected || sourceHash !== expected) throw appError('ERR_PAYLOAD_HASH', { file: path.basename(source), reason: 'source-changed' });
     const existing = require('./native-loader-target').nativeEntryForTarget(manifest, path.relative(gameDir, target));
     if (existing && fs.existsSync(target)) {
-      const current = fs.statSync(target).isFile() ? sha256(target) : null;
+      const current = fs.statSync(target).isFile() ? await sha256Async(target) : null;
       if (!existing.installedSha256 || current !== existing.installedSha256) {
         throw appError('ERR_FILE_CHANGED', { rel: existing.rel });
       }
     }
     // Repeated repair of an unchanged owned file needs no extra disk writes.
-    if (existing && fs.existsSync(target) && sha256(target) === expected) return existing;
+    if (existing && fs.existsSync(target) && (await sha256Async(target)) === expected) return existing;
     const sidecar = await sidecarBackup(gameDir, target, manifest);
     await journal.capture(gameDir, target);
     const entry = await recordOriginal(gameDir, manifest, target, kind);
     if (kind === 'addon') {
       await guards.assertGameClosed(gameDir, manifestExecutable(gameDir, manifest)); await noLinks(source); await noLinks(target);
-      if (sha256(source) !== expected) throw appError('ERR_PAYLOAD_HASH', { file: path.basename(source), reason: 'source-changed' });
-      if (existing && fs.existsSync(target) && sha256(target) !== existing.installedSha256) throw appError('ERR_FILE_CHANGED', { rel: existing.rel });
+      if ((await sha256Async(source)) !== expected) throw appError('ERR_PAYLOAD_HASH', { file: path.basename(source), reason: 'source-changed' });
+      if (existing && fs.existsSync(target) && (await sha256Async(target)) !== existing.installedSha256) throw appError('ERR_FILE_CHANGED', { rel: existing.rel });
     }
     await copyFile(source, target);
-    const installedHash = fs.statSync(target).isFile() ? sha256(target) : null;
+    const installedHash = fs.statSync(target).isFile() ? await sha256Async(target) : null;
     if (installedHash !== expected) throw appError('ERR_PAYLOAD_HASH', { file: path.basename(source), reason: 'copy-changed' });
     entry.installedSha256 = installedHash;
     entry.sourceName = path.basename(source);
@@ -317,7 +318,7 @@ function createInstaller(overrides = {}) {
     if (!entry || (kind && entry.kind !== kind)) return;
     safe(gameDir, target);
     if (fs.existsSync(target)) {
-      const current = fs.statSync(target).isFile() ? sha256(target) : null;
+      const current = fs.statSync(target).isFile() ? await sha256Async(target) : null;
       if (!entry.installedSha256 || current !== entry.installedSha256) {
         throw appError('ERR_FILE_CHANGED', { rel });
       }
@@ -325,12 +326,12 @@ function createInstaller(overrides = {}) {
     await journal.capture(gameDir, target);
     if (entry.original.existed) {
       const backup = journal.safePath(gameDir, entry.original.backupRel);
-      if (!entry.original.sha256 || !fs.existsSync(backup) || sha256(backup) !== entry.original.sha256) {
+      if (!entry.original.sha256 || !fs.existsSync(backup) || (await sha256Async(backup)) !== entry.original.sha256) {
         throw appError('ERR_BACKUP_INVALID', { rel });
       }
       await copyFile(backup, target);
     } else if (fs.existsSync(target)) {
-      const current = fs.statSync(target).isFile() ? sha256(target) : null;
+      const current = fs.statSync(target).isFile() ? await sha256Async(target) : null;
       if (entry.installedSha256 && current !== entry.installedSha256) {
         throw appError('ERR_FILE_CHANGED', { rel });
       }
@@ -358,7 +359,7 @@ function createInstaller(overrides = {}) {
 
   async function captureAddonConfigOriginal(gameDir, manifest, file) {
     safe(gameDir, file); await noLinks(file);
-    const current = fs.existsSync(file) ? sha256(file) : null, existing = manifest.addonConfigOriginal;
+    const current = fs.existsSync(file) ? await sha256Async(file) : null, existing = manifest.addonConfigOriginal;
     if (existing) {
       if (existing.existed === false) {
         if (existing.rel !== path.relative(gameDir, file) || existing.backupRel !== null || existing.sha256 !== null) throw appError('ERR_BACKUP_INVALID');
@@ -366,7 +367,7 @@ function createInstaller(overrides = {}) {
         return;
       }
       const backup = journal.safePath(gameDir, existing.backupRel);
-      if (existing.rel !== path.relative(gameDir, file) || sha256(backup) !== existing.sha256) throw appError('ERR_BACKUP_INVALID');
+      if (existing.rel !== path.relative(gameDir, file) || (await sha256Async(backup)) !== existing.sha256) throw appError('ERR_BACKUP_INVALID');
       if (existing.managedSha256 && current !== null && current !== existing.managedSha256) existing.preserveEdited = true;
       return;
     }
@@ -379,7 +380,7 @@ function createInstaller(overrides = {}) {
     if (fs.existsSync(backup)) throw appError('ERR_BACKUP_INVALID');
     await journal.capture(gameDir, backup); await fs.promises.mkdir(path.dirname(backup), { recursive: true });
     await copyFile(file, backup);
-    if (sha256(backup) !== current) throw appError('ERR_BACKUP_INVALID');
+    if ((await sha256Async(backup)) !== current) throw appError('ERR_BACKUP_INVALID');
     manifest.addonConfigOriginal = { rel: path.relative(gameDir, file), backupRel: path.relative(gameDir, backup), sha256: current, managedSha256: current, preserveEdited: false };
   }
   function addonConfigRestoration(gameDir, manifest, mode) {
@@ -402,10 +403,10 @@ function createInstaller(overrides = {}) {
   }
 
   async function applyAddonConfigEdit(gameDir, manifest, edit) {
-    if ((fs.existsSync(edit.path) ? sha256(edit.path) : null) !== edit.beforeSha256) throw appError('ERR_FILE_CHANGED');
+    if ((fs.existsSync(edit.path) ? await sha256Async(edit.path) : null) !== edit.beforeSha256) throw appError('ERR_FILE_CHANGED');
     await captureAddonConfigOriginal(gameDir, manifest, edit.path);
     await journal.capture(gameDir, edit.path); await lockedFs.writeFile(edit.path, edit.afterText, 'utf8');
-    if (sha256(edit.path) !== edit.afterSha256) throw appError('ERR_FILE_CHANGED');
+    if ((await sha256Async(edit.path)) !== edit.afterSha256) throw appError('ERR_FILE_CHANGED');
     manifest.addonConfigOriginal.managedSha256 = edit.afterSha256;
   }
 
@@ -529,7 +530,7 @@ function createInstaller(overrides = {}) {
     await sidecarBackup(gameDir, file, manifest);
     await journal.capture(gameDir, file);
     await lockedFs.writeFile(file, edited.text, 'utf8');
-    manifest.addonConfigOriginal.managedSha256 = sha256(file);
+    manifest.addonConfigOriginal.managedSha256 = await sha256Async(file);
   }
 
   function editAddonDisabled(text, remove = false) {
@@ -677,7 +678,7 @@ function createInstaller(overrides = {}) {
           }
         }
         if (carrierRequired) await enableCarrier(gameDir, exeDir, manifest);
-        if (manifest.addonConfigOriginal) manifest.addonConfigOriginal.managedSha256 = sha256(path.join(exeDir, 'ReShade.ini'));
+        if (manifest.addonConfigOriginal) manifest.addonConfigOriginal.managedSha256 = await sha256Async(path.join(exeDir, 'ReShade.ini'));
 
         timing.end('backupWrite');
         timing.begin('commit');
@@ -822,7 +823,7 @@ function createInstaller(overrides = {}) {
       const file = recorded ? safe(gameDir, path.resolve(gameDir, recorded.rel)) : installedFile(exeDir, kind);
       const exists = fs.existsSync(file);
       const expectedHash = kind === 'carrier' && !carrierRequired ? null : manifest ? recorded?.installedSha256 : expected[kind]?.actual;
-      const actual = exists && kind !== 'config' ? sha256(file) : null;
+      const actual = exists && kind !== 'config' ? await sha256Async(file) : null;
       const routeOk = kind === 'carrier' && !carrierRequired ? !exists : exists && !(kind === 'carrier' && carrierDisabled);
       components.push({
         key: kind,
@@ -849,7 +850,7 @@ function createInstaller(overrides = {}) {
     for (const name of resourceNames) {
       if (!companionPolicy.isCompanionName(name)) throw appError('ERR_BACKUP_INVALID');
       const file = safe(gameDir, path.join(exeDir, name)), record = companionRows.find(row => samePath(path.resolve(gameDir, row.rel), file));
-      const actual = fs.existsSync(file) && fs.statSync(file).isFile() ? sha256(file) : null;
+      const actual = fs.existsSync(file) && fs.statSync(file).isFile() ? await sha256Async(file) : null;
       components.push({ key: 'companion:' + name, label: name, file, sha256: actual, expectedSha256: record?.installedSha256 || null,
         ok: Boolean(actual && record?.installedSha256 === actual), detail: actual ? null : '文件缺失' });
     }
@@ -881,11 +882,11 @@ function createInstaller(overrides = {}) {
     const manifest = readManifest(gameDir);
     if (!manifest) throw appError('ERR_NOT_INSTALLED');
     const exePath = assertManifestExecutable(gameDir, manifest, scan?.chosen?.path);
-    if (sha256(manifestPath(gameDir)) !== manifestHash) throw appError('ERR_FILE_CHANGED');
+    if ((await sha256Async(manifestPath(gameDir))) !== manifestHash) throw appError('ERR_FILE_CHANGED');
     await guards.assertGameClosed(gameDir, exePath);
     if (guards.antiCheatPresent(gameDir) && !allowAntiCheat) throw appError('ERR_ANTI_CHEAT_CONFIRM', { operation: 'repair' });
     return journal.transaction(gameDir, async () => {
-      if (sha256(manifestPath(gameDir)) !== manifestHash) throw appError('ERR_FILE_CHANGED');
+      if ((await sha256Async(manifestPath(gameDir))) !== manifestHash) throw appError('ERR_FILE_CHANGED');
       if (addonPolicy) {
         await require('./native-addon-policy').assertNativeAddonPolicy(gameDir, addonPolicy);
         const moved = await movePlannedConflicts(gameDir, manifest.installId, addonPolicy.plan, { capture: target => journal.capture(gameDir, target) });
@@ -902,9 +903,9 @@ function createInstaller(overrides = {}) {
         const target = safe(gameDir, path.resolve(gameDir, targetRel));
         await noLinks(item.source); await noLinks(target);
         if (fs.existsSync(target)) throw appError('ERR_FILE_CHANGED', { rel: row.rel });
-        if (sha256(item.source) !== item.sha256) throw appError('ERR_FILE_CHANGED');
+        if ((await sha256Async(item.source)) !== item.sha256) throw appError('ERR_FILE_CHANGED');
         await journal.capture(gameDir, target); await fs.promises.mkdir(path.dirname(target), { recursive: true }); await lockedFs.copyFile(item.source, target);
-        if (sha256(target) !== item.sha256) throw appError('ERR_FILE_CHANGED');
+        if ((await sha256Async(target)) !== item.sha256) throw appError('ERR_FILE_CHANGED');
       }
       if (entries.length || addonPolicy?.changes.some(row => row.action !== 'keep' && row.action !== 'preserve')) await saveManifest(gameDir, manifest);
       return { ...(await diagnose({ gameDir, scan })), repaired: true, preservedVersion: manifest.payloadVersion };
@@ -936,14 +937,14 @@ function createInstaller(overrides = {}) {
       const owned = manifest.files.find(row => row.kind === 'reshade' &&
         path.resolve(gameDir, require('./native-loader-target').nativeTargetRel(manifest, row)).toLowerCase() === source.toLowerCase());
       await noLinks(source); await noLinks(destination);
-      if (!fs.existsSync(source) || (owned ? sha256(source) !== owned.installedSha256 : !want || !isAddonReShade(source))) throw appError('ERR_FILE_CHANGED');
+      if (!fs.existsSync(source) || (owned ? (await sha256Async(source)) !== owned.installedSha256 : !want || !isAddonReShade(source))) throw appError('ERR_FILE_CHANGED');
       if (fs.existsSync(destination)) throw appError('ERR_D3D12_CONFLICT');
       if (want) {
         if (!fs.existsSync(dxgi)) throw appError('ERR_NOT_INSTALLED');
         if (fs.existsSync(d3d12)) throw appError('ERR_D3D12_CONFLICT');
         if (!owned) {
           const entry = await recordOriginal(gameDir, manifest, dxgi, 'reshade');
-          entry.installedSha256 = sha256(dxgi);
+          entry.installedSha256 = await sha256Async(dxgi);
           entry.sourceName = path.basename(dxgi);
         }
         await sidecarBackup(gameDir, dxgi, manifest);
@@ -1033,15 +1034,15 @@ function createInstaller(overrides = {}) {
         manifest.updatedAt = new Date().toISOString();
         await saveManifest(gameDir, manifest);
         const expected = {
-          addon: { file: target, actual: sha256(target), name: path.basename(target) }
+          addon: { file: target, actual: await sha256Async(target), name: path.basename(target) }
         };
         if (addon.bridgeFile) expected.bridge = {
           file: installedFile(exeDir, 'bridge'),
-          actual: sha256(installedFile(exeDir, 'bridge')),
+          actual: await sha256Async(installedFile(exeDir, 'bridge')),
           name: path.basename(installedFile(exeDir, 'bridge'))
         };
         if (carrierRequired) expected.carrier = {
-          file: carrierTarget, actual: sha256(carrierTarget), name: path.basename(carrierTarget)
+          file: carrierTarget, actual: await sha256Async(carrierTarget), name: path.basename(carrierTarget)
         };
         return diagnose({
           gameDir,
@@ -1105,7 +1106,7 @@ function createInstaller(overrides = {}) {
         throw appError('ERR_FILE_CHANGED', { rel: row.rel });
       const restore = mode === 'restore' && row.original.existed;
       const source = restore ? journal.safePath(gameDir, row.original.backupRel) : null;
-      if (restore && sha256(source) !== row.original.sha256) throw appError('ERR_BACKUP_INVALID', { rel: row.rel });
+      if (restore && (await sha256Async(source)) !== row.original.sha256) throw appError('ERR_BACKUP_INVALID', { rel: row.rel });
       if (restore && resolution.original !== file) {
         add(file, row.kind, null); add(resolution.original, row.kind, row.original.sha256, source);
       } else add(file, row.kind, restore ? row.original.sha256 : null, source);
@@ -1114,7 +1115,7 @@ function createInstaller(overrides = {}) {
       const conflicts = [...new Map([...(manifest.conflicts || [])].reverse().map(row => [row.sourceRel.toLowerCase(), row])).values()];
       for (const row of conflicts) {
         const source = journal.safePath(gameDir, row.backupRel);
-        if (!fs.existsSync(source) || sha256(source) !== row.sha256) throw appError('ERR_BACKUP_INVALID', { rel: row.sourceRel });
+        if (!fs.existsSync(source) || (await sha256Async(source)) !== row.sha256) throw appError('ERR_BACKUP_INVALID', { rel: row.sourceRel });
         add(journal.safePath(gameDir, row.sourceRel), 'prior-conflict', row.sha256, source);
       }
     }
@@ -1162,18 +1163,18 @@ function createInstaller(overrides = {}) {
         journal.safePath(gameDir, row.sourceRel);
         const file = journal.safePath(gameDir, row.rel);
         if (!fs.existsSync(file)) continue;
-        if (fs.statSync(file).isFile() && sha256(file) === row.sha256) ownedSidecars.push({ ...row, file });
+        if (fs.statSync(file).isFile() && (await sha256Async(file)) === row.sha256) ownedSidecars.push({ ...row, file });
         else retainedSidecars.push(row.rel);
       }
       const rowTargets = new Map(manifest.files.map(row => [row, managedTargetForRow(gameDir, manifest, row)]));
       for (const row of manifest.files.filter(row => row.original.existed)) {
         const backup = journal.safePath(gameDir, row.original.backupRel);
-        if (!row.original.sha256 || sha256(backup) !== row.original.sha256) throw appError('ERR_BACKUP_INVALID', { rel: row.rel });
+        if (!row.original.sha256 || (await sha256Async(backup)) !== row.original.sha256) throw appError('ERR_BACKUP_INVALID', { rel: row.rel });
       }
       for (const row of manifest.conflicts || []) {
         journal.safePath(gameDir, row.sourceRel);
         const backup = journal.safePath(gameDir, row.backupRel);
-        if (!fs.existsSync(backup) || !row.sha256 || sha256(backup) !== row.sha256) throw appError('ERR_BACKUP_INVALID', { rel: row.sourceRel });
+        if (!fs.existsSync(backup) || !row.sha256 || (await sha256Async(backup)) !== row.sha256) throw appError('ERR_BACKUP_INVALID', { rel: row.sourceRel });
       }
       // Refuse the whole uninstall before touching anything when a managed
       // binary was changed after installation. In particular, never overwrite
@@ -1187,7 +1188,7 @@ function createInstaller(overrides = {}) {
           continue;
         }
         if (!fs.existsSync(target)) continue;
-        const current = fs.statSync(target).isFile() ? sha256(target) : null;
+        const current = fs.statSync(target).isFile() ? await sha256Async(target) : null;
         const protectChange = row.original.existed || row.kind !== 'config';
         if (protectChange && (!row.installedSha256 || current !== row.installedSha256)) {
           warnings.push({ code: 'ERR_FILE_CHANGED', rel: row.rel });
@@ -1205,7 +1206,7 @@ function createInstaller(overrides = {}) {
         const backup = journal.safePath(gameDir, row.backupRel);
         if (fs.existsSync(source) && fs.existsSync(backup) &&
             !managedTargets.has(path.normalize(row.sourceRel).toLowerCase()) &&
-            (!fs.statSync(source).isFile() || sha256(source) !== row.sha256)) {
+            (!fs.statSync(source).isFile() || (await sha256Async(source)) !== row.sha256)) {
           warnings.push({ code: 'ERR_FILE_CHANGED', rel: row.sourceRel });
         }
       }
@@ -1237,7 +1238,7 @@ function createInstaller(overrides = {}) {
         // Recheck after asynchronous restore operations. A changed sidecar is
         // retained; it must never prevent restoring the active game files.
         if (!fs.existsSync(row.file)) continue;
-        if (!fs.statSync(row.file).isFile() || sha256(row.file) !== row.sha256) { retainedSidecars.push(row.rel); continue; }
+        if (!fs.statSync(row.file).isFile() || (await sha256Async(row.file)) !== row.sha256) { retainedSidecars.push(row.rel); continue; }
         const backupRel = path.join('_DLSS5_Backup', 'xiaofeng-sidecars', manifest.installId, row.rel);
         const backup = journal.safePath(gameDir, backupRel);
         if (fs.existsSync(backup)) throw appError('ERR_FILE_CHANGED', { rel: backupRel });
@@ -1249,13 +1250,13 @@ function createInstaller(overrides = {}) {
       }
       if (configRestore?.restore) {
         await noLinks(configRestore.file); if (configRestore.backup) await noLinks(configRestore.backup);
-        const current = fs.existsSync(configRestore.file) ? sha256(configRestore.file) : null;
-        if (current === configRestore.current && (configRestore.remove || sha256(configRestore.backup) === configRestore.sha256)) {
+        const current = fs.existsSync(configRestore.file) ? await sha256Async(configRestore.file) : null;
+        if (current === configRestore.current && (configRestore.remove || (await sha256Async(configRestore.backup)) === configRestore.sha256)) {
           await journal.capture(gameDir, configRestore.file);
           if (configRestore.remove) { if (current !== null) await lockedFs.unlink(configRestore.file); }
           else {
             await copyFile(configRestore.backup, configRestore.file);
-            if (sha256(configRestore.file) !== configRestore.sha256) throw appError('ERR_BACKUP_INVALID');
+            if ((await sha256Async(configRestore.file)) !== configRestore.sha256) throw appError('ERR_BACKUP_INVALID');
           }
         } else warnings.push({ code: 'CONFIG_EDITED_RETAINED', message: configRestore.warning });
       } else if (configRestore) warnings.push({ code: 'CONFIG_EDITED_RETAINED', message: configRestore.warning });

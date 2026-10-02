@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { sha256 } = require('./payload');
+const { sha256Async } = require('./digest-async');
 const { safePath } = require('../core/file-journal');
 const { lockedFs } = require('../core/locked-file-retry');
 const { appError } = require('./errors');
@@ -126,7 +127,7 @@ async function moveConflicts(gameDir, installId, options = {}) {
         await options.capture(conflict.source);
         await options.capture(destination);
       }
-      if (sha256(conflict.source) !== conflict.sha256) throw appError('ERR_FILE_CHANGED', { rel: conflict.rel });
+      if ((await sha256Async(conflict.source)) !== conflict.sha256) throw appError('ERR_FILE_CHANGED', { rel: conflict.rel });
       await rename(conflict.source, destination);
       moved.push({
         sourceRel: conflict.rel,
@@ -177,7 +178,7 @@ async function movePlannedConflicts(gameDir, installId, plan, options = {}) {
     const relative = path.relative(root, row.path), file = safePath(root, relative), identity = path.resolve(file).toLowerCase();
     if (seen.has(identity)) throw appError('ERR_FILE_CHANGED', { reason: '插件隔离目标重复。' });
     seen.add(identity); await noLinks(file);
-    if (sha256(file) !== row.sha256) throw appError('ERR_FILE_CHANGED', { rel: relative });
+    if ((await sha256Async(file)) !== row.sha256) throw appError('ERR_FILE_CHANGED', { rel: relative });
   }
   try {
     for (const row of rows) {
@@ -186,10 +187,10 @@ async function movePlannedConflicts(gameDir, installId, plan, options = {}) {
       while (fs.existsSync(destination)) destination = conflictBackupPath(root, installId, relative, ++index);
       await noLinks(source); await noLinks(destination);
       if (typeof options.capture === 'function') { await options.capture(source); await options.capture(destination); }
-      if (sha256(source) !== row.sha256) throw appError('ERR_FILE_CHANGED', { rel: relative });
+      if ((await sha256Async(source)) !== row.sha256) throw appError('ERR_FILE_CHANGED', { rel: relative });
       await fs.promises.mkdir(path.dirname(destination), { recursive: true });
       await noLinks(source); await noLinks(destination);
-      if (sha256(source) !== row.sha256 || fs.existsSync(destination)) throw appError('ERR_FILE_CHANGED', { rel: relative });
+      if ((await sha256Async(source)) !== row.sha256 || fs.existsSync(destination)) throw appError('ERR_FILE_CHANGED', { rel: relative });
       await rename(source, destination);
       moved.push({ sourceRel: relative, backupRel: path.relative(root, destination), name: path.basename(source), sha256: row.sha256,
         category: row.action === 'retire-core' ? 'own-core-upgrade' : row.mandatory ? 'confirmed-addon-conflict' : 'unverified-addon',
@@ -210,12 +211,12 @@ async function restoreConflicts(gameDir, rows, options = {}) {
     if (!row || typeof row.sourceRel !== 'string' || typeof row.backupRel !== 'string') continue;
     const source = safePath(gameDir, row.sourceRel);
     const backup = safePath(gameDir, row.backupRel);
-    if (!fs.existsSync(backup) || (row.sha256 && sha256(backup) !== row.sha256)) {
+    if (!fs.existsSync(backup) || (row.sha256 && (await sha256Async(backup)) !== row.sha256)) {
       warnings.push({ code: 'ERR_BACKUP_INVALID', rel: row.sourceRel });
       continue;
     }
     if (fs.existsSync(source)) {
-      if (row.sha256 && fs.statSync(source).isFile() && sha256(source) === row.sha256) continue;
+      if (row.sha256 && fs.statSync(source).isFile() && (await sha256Async(source)) === row.sha256) continue;
       warnings.push({ code: 'ERR_FILE_CHANGED', rel: row.sourceRel });
       continue;
     }
@@ -228,7 +229,7 @@ async function restoreConflicts(gameDir, rows, options = {}) {
       // A confirmed uninstall already has a file WAL. Restore the original
       // without consuming the fixed quarantine archive or overwriting a new file.
       await lockedFs.copyFile(backup, source, fs.constants.COPYFILE_EXCL);
-      if (sha256(source) !== sha256(backup) || row.sha256 && sha256(source) !== row.sha256)
+      if ((await sha256Async(source)) !== (await sha256Async(backup)) || row.sha256 && (await sha256Async(source)) !== row.sha256)
         throw appError('ERR_BACKUP_INVALID', { rel: row.sourceRel });
     } else await rename(backup, source);
   }

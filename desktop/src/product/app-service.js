@@ -14,6 +14,7 @@ const { finalizeRows } = require('./library-service');
 const { createPayloadInspectionCache } = require('./payload-inspection-cache');
 const { createInstaller } = require('./installer');
 const { payloadRoot, readBundle, requirePayload, safePayloadPath, sha256 } = require('./payload');
+const { sha256Async } = require('./digest-async');
 const { readConfig, writeConfig, defaultPatch } = require('./nr-config');
 const { readReShadeHotkey, writeReShadeHotkey } = require('./hotkeys');
 const { readManifest, assertManifestExecutable, manifestPath } = require('./manifest');
@@ -504,7 +505,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   async function selectPayloadSource(selectedPath) {
     const directory = selectedPath === null ? bundledPayloadDir : resolvePayloadDirectory(selectedPath);
     const sourceBundle = readBundle(directory), current = store.read();
-    const identity = sha256(path.join(directory, 'bundle.json'));
+    const identity = await sha256Async(path.join(directory, 'bundle.json'));
     payloadInspection.invalidate(directory);
     let inspected;
     try { inspected = await payloadInspection.prime(directory, { allowMissingBundle: true, hardwareFamily: hardware.family,
@@ -516,7 +517,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     if (inspected.missing.length) throw Object.assign(new Error('外部组件目录缺少所需文件。'), { code: 'ERR_PAYLOAD_SOURCE_MISSING', details: { path: directory, files: inspected.missing } });
     if (!inspected.ready || inspected.invalid.length) throw Object.assign(new Error('外部组件目录文件与清单哈希不一致。'), { code: 'ERR_PAYLOAD_SOURCE_HASH', details: { path: directory, files: inspected.invalid } });
     readBundle(directory);
-    if (sha256(path.join(directory, 'bundle.json')) !== identity) throw appError('ERR_PAYLOAD_SOURCE_CHANGED', { path: directory });
+    if ((await sha256Async(path.join(directory, 'bundle.json'))) !== identity) throw appError('ERR_PAYLOAD_SOURCE_CHANGED', { path: directory });
     await store.update(latest => ({ payloadSourcePath: selectedPath === null ? null : directory,
       payloadSourceIdentity: selectedPath === null ? null : identity,
       addonVersion: inspected.versions && latest.addonVersion && !inspected.versions[latest.addonVersion] ? null : latest.addonVersion }));
@@ -1462,7 +1463,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       for (const [kind, storedKind] of [['config', 'config'], ['reshade', 'loader']]) {
         const current = state.files.find(row => row.kind === storedKind);
         const file = current ? path.join(state.runtimeDir, current.name) : kind === 'reshade' ? state.proxyPaths?.[0] : null;
-        if (file && fs.existsSync(file)) payload[kind] = { file, actual: sha256(file), name: path.basename(file) };
+        if (file && fs.existsSync(file)) payload[kind] = { file, actual: await sha256Async(file), name: path.basename(file) };
       }
     }
     return payload;
@@ -1621,7 +1622,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       for (const kind of ['addon', 'bridge', 'runtime', ...(!fs.existsSync(path.join(directory, loaderName)) || adoption?.replaceProxy ? ['reshade'] : []), ...(!manifest ? ['config'] : []), ...(api === 'dx11' ? ['carrier'] : [])]) {
         const row = payload[kind]; if (!row) continue;
         const file = path.join(directory, kind === 'reshade' ? loaderName : INSTALLED_NAMES[kind]);
-        const before = fs.existsSync(file) && fs.statSync(file).isFile() ? sha256(file) : null;
+        const before = fs.existsSync(file) && fs.statSync(file).isFile() ? await sha256Async(file) : null;
         changes.push({ path: file, name: path.basename(file), role: kind, phase: 'local-install',
           beforeSha256: before, afterSha256: kind === 'config' && before !== null ? before : row.actual,
           action: kind === 'config' && before !== null || before === row.actual ? 'keep' : before === null ? 'create' : 'replace' });
@@ -1645,7 +1646,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         if (request.loadingMode === 'helper') {
           const existingName = ['dxgi.dll', 'd3d12.dll'].find(name => fs.existsSync(path.join(directory, name)));
           const loaderName = existingName || INSTALLED_NAMES.reshade;
-          const loaderHash = existingName ? sha256(path.join(directory, existingName)) : payload.reshade.actual;
+          const loaderHash = existingName ? await sha256Async(path.join(directory, existingName)) : payload.reshade.actual;
           changes.push({ path: path.join(location.runtimeDir, 'ReShade64.dll'), name: 'ReShade64.dll',
             role: 'profile-loader', phase: 'external-migration', beforeSha256: null, afterSha256: loaderHash, action: 'create' });
           changes.push({ path: path.join(directory, loaderName), name: loaderName, role: 'game-proxy', phase: 'external-migration',
@@ -2436,7 +2437,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
           if (otaError?.code === 'ERR_OTA_CORE_ONLY') throw appError('ERR_OTA_CORE_ONLY');
           throw appError('ERR_ADDON_INVALID', { reason: otaError?.message || 'invalid-ota' });
         }
-        const digest = sha256(file);
+        const digest = await sha256Async(file);
         const id = `imported-${digest.slice(0, 12)}`;
         const dir = path.join(addonVersionsDir, id);
         await fs.promises.mkdir(dir, { recursive: true });
@@ -2475,7 +2476,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         await componentLibrary.importComponent(file);
         return listAddonVersions();
       }
-      const digest = sha256(file);
+      const digest = await sha256Async(file);
       const id = `imported-${digest.slice(0, 12)}`;
       const dir = path.join(addonVersionsDir, id);
       await fs.promises.mkdir(dir, { recursive: true });
