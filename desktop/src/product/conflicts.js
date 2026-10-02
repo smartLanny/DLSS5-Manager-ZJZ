@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { sha256 } = require('./payload');
 const { safePath } = require('../core/file-journal');
+const { lockedFs } = require('../core/locked-file-retry');
 const { appError } = require('./errors');
 
 const BACKUP_DIR = '_DLSS5_Backup';
@@ -109,7 +110,7 @@ function conflictBackupPath(gameDir, installId, rel, index = 0) {
 
 async function moveConflicts(gameDir, installId, options = {}) {
   const moved = [];
-  const rename = options.rename || fs.promises.rename;
+  const rename = options.rename || lockedFs.rename;
   try {
     for (const conflict of scanConflicts(gameDir, options)) {
       safePath(gameDir, conflict.rel);
@@ -165,7 +166,7 @@ async function movePlannedConflicts(gameDir, installId, plan, options = {}) {
     if (options.snapshot.fingerprint !== plan.sourceFingerprint) throw appError('ERR_FILE_CHANGED', { reason: '插件预览来源不一致。' });
     await assertAddonSnapshot(options.snapshot, { environment: options.environment || process.env });
   }
-  const root = path.resolve(gameDir), moved = [], seen = new Set(), rename = options.rename || fs.promises.rename;
+  const root = path.resolve(gameDir), moved = [], seen = new Set(), rename = options.rename || lockedFs.rename;
   const rows = plan.decisions.filter(row => ['isolate', 'retire-core'].includes(row.action));
   // Validate the COMPLETE selection before creating a backup or moving files.
   for (const row of rows) {
@@ -204,7 +205,7 @@ async function movePlannedConflicts(gameDir, installId, plan, options = {}) {
 
 async function restoreConflicts(gameDir, rows, options = {}) {
   const warnings = [];
-  const rename = options.rename || fs.promises.rename;
+  const rename = options.rename || lockedFs.rename;
   for (const row of Array.isArray(rows) ? rows : []) {
     if (!row || typeof row.sourceRel !== 'string' || typeof row.backupRel !== 'string') continue;
     const source = safePath(gameDir, row.sourceRel);
@@ -226,7 +227,7 @@ async function restoreConflicts(gameDir, rows, options = {}) {
     if (typeof options.capture === 'function') {
       // A confirmed uninstall already has a file WAL. Restore the original
       // without consuming the fixed quarantine archive or overwriting a new file.
-      await fs.promises.copyFile(backup, source, fs.constants.COPYFILE_EXCL);
+      await lockedFs.copyFile(backup, source, fs.constants.COPYFILE_EXCL);
       if (sha256(source) !== sha256(backup) || row.sha256 && sha256(source) !== row.sha256)
         throw appError('ERR_BACKUP_INVALID', { rel: row.sourceRel });
     } else await rename(backup, source);

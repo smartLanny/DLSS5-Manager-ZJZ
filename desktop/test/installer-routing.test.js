@@ -12,6 +12,12 @@ const { sha256 } = require('../src/product/payload');
 const { PAYLOAD_FILES, INSTALLED_NAMES, DX11_COMPAT_VERSION, DX11_COMPAT_CARRIER } = require('../src/product/constants');
 const { manifestPath, readManifest } = require('../src/product/manifest');
 const { normalizeError } = require('../src/product/errors');
+const { retryPolicy } = require('../src/core/locked-file-retry');
+
+function shortRetries(t) {
+  const delays = retryPolicy.delays; retryPolicy.delays = [1, 1];
+  t.after(() => { retryPolicy.delays = delays; });
+}
 
 test('installation does not quarantine inactive subdirectory addons', async t => {
   const f = fixture(t), nested = path.join(f.exeDir, 'unused-addon-archive');
@@ -91,19 +97,39 @@ test('externally changed sidecar is retained and reported without blocking activ
   assert.equal(fs.readFileSync(`${runtime}.bak`, 'utf8'), 'external change');
 });
 
+test('a briefly locked file during uninstall is retried and the uninstall completes', async t => {
+  const f = fixture(t), name = path.join(f.exeDir, 'renodx-dlss5.addon64');
+  fs.writeFileSync(name, 'old addon');
+  await f.installer.install({ gameDir: f.gameDir, payload: f.payload, scan: f.scan });
+  shortRetries(t);
+  const copy = fs.promises.copyFile; let failures = 2;
+  fs.promises.copyFile = async (source, target, flags) => {
+    if (failures > 0 && path.resolve(target) === path.resolve(name)) { failures--; throw Object.assign(new Error('scanned by antivirus'), { code: 'EBUSY' }); }
+    return copy(source, target, flags);
+  };
+  try { assert.equal((await f.installer.uninstall({ gameDir: f.gameDir })).removed, true); }
+  finally { fs.promises.copyFile = copy; }
+  assert.equal(failures, 0);
+  assert.equal(fs.readFileSync(name, 'utf8'), 'old addon', 'the isolated plugin is back at its original path');
+  assert.equal(fs.existsSync(manifestPath(f.gameDir)), false);
+  assert.equal(fs.existsSync(journal.pendingPath(f.gameDir)), false);
+});
+
 test('late conflict restoration failure rolls all removed manager files and receipt back', async t => {
   const f = fixture(t), name = path.join(f.exeDir, 'renodx-dlss5.addon64');
   fs.writeFileSync(name, 'old addon');
   await f.installer.install({ gameDir: f.gameDir, payload: f.payload, scan: f.scan });
   const receipt = fs.readFileSync(manifestPath(f.gameDir));
-  const copy = fs.promises.copyFile; let failed = false;
+  shortRetries(t);
+  // The lock outlasts every retry of this one restore step.
+  const copy = fs.promises.copyFile; let failures = retryPolicy.delays.length + 1;
   fs.promises.copyFile = async (source, target, flags) => {
-    if (!failed && path.resolve(target) === path.resolve(name)) { failed = true; throw Object.assign(new Error('restore locked'), { code: 'EBUSY' }); }
+    if (failures > 0 && path.resolve(target) === path.resolve(name)) { failures--; throw Object.assign(new Error('restore locked'), { code: 'EBUSY' }); }
     return copy(source, target, flags);
   };
   try { await assert.rejects(f.installer.uninstall({ gameDir: f.gameDir }), /restore locked/); }
   finally { fs.promises.copyFile = copy; }
-  assert.equal(failed, true); assert.deepEqual(fs.readFileSync(manifestPath(f.gameDir)), receipt);
+  assert.equal(failures, 0); assert.deepEqual(fs.readFileSync(manifestPath(f.gameDir)), receipt);
   assert.equal(fs.existsSync(name), false);
   for (const kind of ['addon', 'bridge', 'runtime', 'reshade']) assert.equal(sha256(path.join(f.exeDir, INSTALLED_NAMES[kind])), f.payload[kind].actual);
   assert.equal(fs.existsSync(journal.pendingPath(f.gameDir)), false);

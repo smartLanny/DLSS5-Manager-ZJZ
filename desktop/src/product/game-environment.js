@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const { promisify } = require('node:util');
 const execute = promisify(require('node:child_process').execFile);
 const { noLinks, inside, atomicJson } = require('./launch-safety');
+const { lockedFs, lockedRetry, powerShellLockCode, POWERSHELL_HRESULT } = require('../core/locked-file-retry');
 const { inspectComponentClues } = require('./component-assessment');
 const { snapshotAddonLoadingLayout, assertAddonSnapshot } = require('./addon-loading-layout');
 const { planAddonCompatibility } = require('./addon-compatibility');
@@ -40,19 +41,28 @@ function createGameEnvironment(options) {
   const journal = options.journal || require('../core/file-journal');
   const guards = options.guards || require('../core/install-guards');
   const pe = options.pe || require('../core/pe');
-  const copy = options.copyFile || fsp.copyFile, plans = new Map();
+  const copy = options.copyFile || lockedFs.copyFile, plans = new Map();
   async function publish(temp, targetFile, replace) {
     if (process.platform !== 'win32') fail('PLATFORM_UNSUPPORTED', '此环境清理功能需要 Windows。');
     // File.Move refuses an existing destination. Unlike copyFile, it never
     // exposes incomplete bytes at the live path. File.Replace is used only
     // for an already validated manager JSON receipt during rollback.
     const literal = file => `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(file).toString('base64')}'))`;
-    const script = `$ErrorActionPreference='Stop'; [IO.File]::${replace ? 'Replace' : 'Move'}(${literal(temp)},${literal(targetFile)}${replace ? ',[NullString]::Value' : ''});`;
+    const script = `$ErrorActionPreference='Stop'; try { [IO.File]::${replace ? 'Replace' : 'Move'}(${literal(temp)},${literal(targetFile)}${replace ? ',[NullString]::Value' : ''}); } ${POWERSHELL_HRESULT}`;
     try {
-      await execute(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-        ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-        { windowsHide: true, timeout: 60000, maxBuffer: 8192 }); // cold PowerShell start under antivirus; bounds a hang only
-    } catch (cause) { throw Object.assign(new Error('文件提交未完成，原文件和恢复记录已保留；请检查目录权限或重试恢复。'), { code: 'ENVIRONMENT_COMMIT_FAILED', cause }); }
+      // A target held by antivirus or the indexer is retried briefly.
+      await lockedRetry(async () => {
+        try {
+          await execute(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+            ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+            { windowsHide: true, timeout: 60000, maxBuffer: 8192 }); // cold PowerShell start under antivirus; bounds a hang only
+        } catch (error) { const code = powerShellLockCode(error); throw code ? Object.assign(error, { code }) : error; }
+      }, [temp, targetFile]);
+    } catch (cause) {
+      throw Object.assign(new Error(cause?.code === 'ERR_FILE_CHANGED' ? '文件在等待重试时被其他程序改变，原文件和恢复记录已保留，未覆盖。'
+        : cause?.code === 'EBUSY' ? '文件正被其他程序占用（可能是杀毒软件正在扫描），原文件和恢复记录已保留；请稍后重试。'
+        : '文件提交未完成，原文件和恢复记录已保留；请检查目录权限或重试恢复。'), { code: 'ENVIRONMENT_COMMIT_FAILED', cause });
+    }
   }
   async function atomicCopy(t, source, destination, expected, replace = false) {
     const staging = journal.safePath(t.game, `_DLSS5_Backup/environment-staging/${crypto.randomUUID()}.part`);
@@ -67,7 +77,7 @@ function createGameEnvironment(options) {
     } finally {
       // A process exit may leave a .part inside this dedicated staging folder.
       // It is never a live DLL or an accepted backup and cannot block recovery.
-      await fsp.unlink(staging).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      await lockedFs.unlink(staging).catch(error => { if (error.code !== 'ENOENT') throw error; });
     }
   }
   function target(id) {
@@ -201,7 +211,7 @@ function createGameEnvironment(options) {
       const current = await digest(destination);
       if (current === check.before) continue;
       if (![check.before, ...check.after].includes(current)) fail('FILE_CHANGED', '恢复前文件被外部改变，未覆盖。');
-      if (check.before === null) await fsp.unlink(destination);
+      if (check.before === null) await lockedFs.unlink(destination);
       else {
         // An existing unequal target can only be the owned JSON record. Live
         // DLL restoration always commits into an absent destination.
@@ -211,8 +221,8 @@ function createGameEnvironment(options) {
     }
     // All live files are restored before discarding the WAL. Incomplete
     // snapshot/staging cleanup can leave harmless archives, never a false state.
-    await fsp.unlink(journal.pendingPath(t.game));
-    for (const row of state.files) await fsp.unlink(journal.safePath(t.game, row.snapshot)).catch(() => {});
+    await lockedFs.unlink(journal.pendingPath(t.game));
+    for (const row of state.files) await lockedFs.unlink(journal.safePath(t.game, row.snapshot)).catch(() => {});
     await fsp.rmdir(journal.safePath(t.game, state.folder)).catch(() => {});
     return true;
   }
@@ -257,7 +267,7 @@ function createGameEnvironment(options) {
           if (await digest(original) !== row.sha256 || await digest(backup) !== null) fail('FILE_CHANGED', '文件或备份在清理前改变。');
           await journal.capture(t.game, backup); await fsp.mkdir(path.dirname(backup), { recursive: true }); await atomicCopy(t, original, backup, row.sha256);
           if (await digest(backup) !== row.sha256 || await digest(original) !== row.sha256) fail('FILE_CHANGED', '备份验证失败，未隔离原文件。');
-          await journal.capture(t.game, original); await fsp.unlink(original);
+          await journal.capture(t.game, original); await lockedFs.unlink(original);
         }
         await atomicJson(t.record, next);
       });

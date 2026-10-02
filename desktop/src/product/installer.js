@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { noLinks, atomicJson } = require('./launch-safety');
+const { lockedFs } = require('../core/locked-file-retry');
 const { createReframeworkPreparation, RECEIPT: REF_RECEIPT } = require('./reframework-preparation');
 const { REFRAMEWORK_ADAPTERS, OFFICIAL_REFRAMEWORK_01417: REF_OFFICIAL } = require('./reframework-compatibility');
 const { INSTALLED_NAMES, DX11_COMPAT_VERSION } = require('./constants');
@@ -34,7 +35,7 @@ function createInstaller(overrides = {}) {
   const guards = overrides.guards || require('../core/install-guards');
   const pe = overrides.pe || require('../core/pe');
   const bridges = overrides.bridges || require('./component-registry');
-  const copy = overrides.copyFile || ((source, target) => fs.promises.copyFile(source, target));
+  const copy = overrides.copyFile || ((source, target) => lockedFs.copyFile(source, target));
   const refDigest = overrides.reframeworkFileDigest || sha256;
 
   const safe = (gameDir, target) => journal.safePath(gameDir, path.relative(gameDir, target));
@@ -199,7 +200,7 @@ function createInstaller(overrides = {}) {
       if (restoredHash) {
         await copyFile(root, mirror);
         if (sha256(mirror) !== restoredHash) refError('REF_MIRROR_CHANGED', '恢复 Core 镜像后读回不一致。');
-      } else await fs.promises.unlink(mirror);
+      } else await lockedFs.unlink(mirror);
       restored.push({ rootRel: row.rel, mirrorRel: operation.mirrorRel, restoredSha256: restoredHash });
     }
     next.retiredMirrors = [...(next.retiredMirrors || []), ...next.mirrors.filter(row => restored.some(item => relKey(item.mirrorRel) === relKey(row.mirrorRel)))];
@@ -333,7 +334,7 @@ function createInstaller(overrides = {}) {
       if (entry.installedSha256 && current !== entry.installedSha256) {
         throw appError('ERR_FILE_CHANGED', { rel });
       }
-      await fs.promises.unlink(target);
+      await lockedFs.unlink(target);
     }
     manifest.files = manifest.files.filter(row => row !== entry);
     manifest.updatedAt = new Date().toISOString();
@@ -403,7 +404,7 @@ function createInstaller(overrides = {}) {
   async function applyAddonConfigEdit(gameDir, manifest, edit) {
     if ((fs.existsSync(edit.path) ? sha256(edit.path) : null) !== edit.beforeSha256) throw appError('ERR_FILE_CHANGED');
     await captureAddonConfigOriginal(gameDir, manifest, edit.path);
-    await journal.capture(gameDir, edit.path); await fs.promises.writeFile(edit.path, edit.afterText, 'utf8');
+    await journal.capture(gameDir, edit.path); await lockedFs.writeFile(edit.path, edit.afterText, 'utf8');
     if (sha256(edit.path) !== edit.afterSha256) throw appError('ERR_FILE_CHANGED');
     manifest.addonConfigOriginal.managedSha256 = edit.afterSha256;
   }
@@ -527,7 +528,7 @@ function createInstaller(overrides = {}) {
     await captureAddonConfigOriginal(gameDir, manifest, file);
     await sidecarBackup(gameDir, file, manifest);
     await journal.capture(gameDir, file);
-    await fs.promises.writeFile(file, edited.text, 'utf8');
+    await lockedFs.writeFile(file, edited.text, 'utf8');
     manifest.addonConfigOriginal.managedSha256 = sha256(file);
   }
 
@@ -672,7 +673,7 @@ function createInstaller(overrides = {}) {
             await captureAddonConfigOriginal(gameDir, manifest, reshadeIni);
             if (fs.existsSync(reshadeIni)) await sidecarBackup(gameDir, reshadeIni, manifest);
             await journal.capture(gameDir, reshadeIni);
-            await fs.promises.writeFile(reshadeIni, next, 'utf8');
+            await lockedFs.writeFile(reshadeIni, next, 'utf8');
           }
         }
         if (carrierRequired) await enableCarrier(gameDir, exeDir, manifest);
@@ -902,7 +903,7 @@ function createInstaller(overrides = {}) {
         await noLinks(item.source); await noLinks(target);
         if (fs.existsSync(target)) throw appError('ERR_FILE_CHANGED', { rel: row.rel });
         if (sha256(item.source) !== item.sha256) throw appError('ERR_FILE_CHANGED');
-        await journal.capture(gameDir, target); await fs.promises.mkdir(path.dirname(target), { recursive: true }); await fs.promises.copyFile(item.source, target);
+        await journal.capture(gameDir, target); await fs.promises.mkdir(path.dirname(target), { recursive: true }); await lockedFs.copyFile(item.source, target);
         if (sha256(target) !== item.sha256) throw appError('ERR_FILE_CHANGED');
       }
       if (entries.length || addonPolicy?.changes.some(row => row.action !== 'keep' && row.action !== 'preserve')) await saveManifest(gameDir, manifest);
@@ -948,7 +949,7 @@ function createInstaller(overrides = {}) {
         await sidecarBackup(gameDir, dxgi, manifest);
         await journal.capture(gameDir, dxgi);
         await journal.capture(gameDir, d3d12);
-        await fs.promises.rename(dxgi, d3d12);
+        await lockedFs.rename(dxgi, d3d12);
         manifest.reshadeRoute = 'd3d12';
       } else {
         if (!fs.existsSync(d3d12)) throw appError('ERR_NOT_INSTALLED');
@@ -956,7 +957,7 @@ function createInstaller(overrides = {}) {
         await sidecarBackup(gameDir, d3d12, manifest);
         await journal.capture(gameDir, d3d12);
         await journal.capture(gameDir, dxgi);
-        await fs.promises.rename(d3d12, dxgi);
+        await lockedFs.rename(d3d12, dxgi);
         manifest.reshadeRoute = 'dxgi';
       }
       manifest.updatedAt = new Date().toISOString();
@@ -1221,10 +1222,10 @@ function createInstaller(overrides = {}) {
           if (resolution.original !== target) {
             await journal.capture(gameDir, resolution.original);
             await copyFile(backup, resolution.original);
-            if (fs.existsSync(target)) await fs.promises.unlink(target);
+            if (fs.existsSync(target)) await lockedFs.unlink(target);
           } else await copyFile(backup, target);
         } else if (fs.existsSync(target)) {
-          await fs.promises.unlink(target);
+          await lockedFs.unlink(target);
         }
       }
       const restoreWarnings = await restoreConflicts(gameDir, conflictRestores, {
@@ -1243,7 +1244,7 @@ function createInstaller(overrides = {}) {
         await journal.capture(gameDir, row.file);
         await journal.capture(gameDir, backup);
         await fs.promises.mkdir(path.dirname(backup), { recursive: true });
-        await fs.promises.rename(row.file, backup);
+        await lockedFs.rename(row.file, backup);
         archivedSidecars.push({ sourceRel: row.rel, backupRel, sha256: row.sha256 });
       }
       if (configRestore?.restore) {
@@ -1251,7 +1252,7 @@ function createInstaller(overrides = {}) {
         const current = fs.existsSync(configRestore.file) ? sha256(configRestore.file) : null;
         if (current === configRestore.current && (configRestore.remove || sha256(configRestore.backup) === configRestore.sha256)) {
           await journal.capture(gameDir, configRestore.file);
-          if (configRestore.remove) { if (current !== null) await fs.promises.unlink(configRestore.file); }
+          if (configRestore.remove) { if (current !== null) await lockedFs.unlink(configRestore.file); }
           else {
             await copyFile(configRestore.backup, configRestore.file);
             if (sha256(configRestore.file) !== configRestore.sha256) throw appError('ERR_BACKUP_INVALID');
@@ -1266,7 +1267,7 @@ function createInstaller(overrides = {}) {
         restoration: { mode, conflictSources: conflictRestores.map(row => row.sourceRel), retainedSidecars, archivedSidecars, reframeworkMirrors } });
       const file = manifestPath(gameDir);
       await journal.capture(gameDir, file);
-      if (fs.existsSync(file)) await fs.promises.unlink(file);
+      if (fs.existsSync(file)) await lockedFs.unlink(file);
       return { removed: true, mode, settingsKept, warnings, reframeworkMirrors, backupsRetained: true,
         notice: mode === 'clean' ? '本次受管安装已移除；安装前旧组件未重新放回，原件和历史备份均保留。' : undefined,
         restoredOriginalFiles: [...manifest.files.filter(row => mode === 'restore' && row.original.existed).map(row => row.rel), ...conflictRestores.map(row => row.sourceRel)],

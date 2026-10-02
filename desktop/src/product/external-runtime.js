@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
 const { noLinks, inside, atomicJson } = require('./launch-safety');
+const { lockedFs, lockedRetry, powerShellLockCode, POWERSHELL_HRESULT } = require('../core/locked-file-retry');
 const { hashRegularFile, deploymentHashLimit } = require('./streamed-file-digest');
 const { readManifest, manifestPath, newManifest, backupPath, assertManifestExecutable } = require('./manifest');
 const { requireAddonLayout, inspectAddonLayout } = require('./reshade-layout');
@@ -68,7 +69,7 @@ async function digest(file) {
 function createExternalRuntime(options) {
   if (!path.isAbsolute(options.userData || '')) fail('CONFIG', '外置运行目录需要绝对用户目录。');
   const base = path.join(path.resolve(options.userData), 'external-runtime'), plans = new Map(), rescuePlans = new Map();
-  const copy = options.copyFile || fsp.copyFile;
+  const copy = options.copyFile || lockedFs.copyFile;
   const guards = options.guards || require('../core/install-guards');
   const pe = options.pe || require('../core/pe');
   function target(game, recovering = false) {
@@ -342,15 +343,20 @@ function createExternalRuntime(options) {
   }
   async function publish(temp, destination, replacing) {
     if (options.publish) return options.publish(temp, destination, replacing);
-    if (process.platform !== 'win32') { await fsp.rename(temp, destination); return; }
+    if (process.platform !== 'win32') { await lockedFs.rename(temp, destination); return; }
     const literal = file => "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + Buffer.from(file).toString('base64') + "'))";
-    const script = "$ErrorActionPreference='Stop'; [IO.File]::" + (replacing ? 'Replace' : 'Move') +
-      '(' + literal(temp) + ',' + literal(destination) + (replacing ? ',[NullString]::Value' : '') + ');';
-    await execFile(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-      // A cold PowerShell start can exceed 15 s while antivirus scans; a timeout
-      // here fails the install, so the bound only stops a hang.
-      { windowsHide: true, timeout: 60000, maxBuffer: 8192 });
+    const script = "$ErrorActionPreference='Stop'; try { [IO.File]::" + (replacing ? 'Replace' : 'Move') +
+      '(' + literal(temp) + ',' + literal(destination) + (replacing ? ',[NullString]::Value' : '') + '); } ' + POWERSHELL_HRESULT;
+    // A target held by antivirus or the indexer is retried briefly.
+    await lockedRetry(async () => {
+      try {
+        await execFile(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+          ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+          // A cold PowerShell start can exceed 15 s while antivirus scans; a timeout
+          // here fails the install, so the bound only stops a hang.
+          { windowsHide: true, timeout: 60000, maxBuffer: 8192 });
+      } catch (error) { const code = powerShellLockCode(error); throw code ? Object.assign(error, { code }) : error; }
+    }, [temp, destination]);
   }
   async function atomicCopy(t, source, destination, expected, before) {
     await noLinks(destination); await fsp.mkdir(path.dirname(destination), { recursive: true });
@@ -362,11 +368,11 @@ function createExternalRuntime(options) {
       await closed(t);
       if (await digest(destination) !== before) fail('FILE_CHANGED', '提交前目标被外部修改，未覆盖。', { file: destination });
       await publish(staging, destination, before !== null);
-    } finally { await fsp.unlink(staging).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+    } finally { await lockedFs.unlink(staging).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
   }
   async function snapshot(source, destination, expected) {
     await noLinks(source); await noLinks(destination); await fsp.mkdir(path.dirname(destination), { recursive: true });
-    await fsp.copyFile(source, destination, fs.constants.COPYFILE_EXCL);
+    await lockedFs.copyFile(source, destination, fs.constants.COPYFILE_EXCL);
     if (await digest(destination) !== expected || await digest(source) !== expected) fail('FILE_CHANGED', '创建恢复快照时文件改变。');
     const file = await fsp.open(destination, 'r+'); try { await file.sync(); } finally { await file.close(); }
   }
@@ -408,11 +414,11 @@ function createExternalRuntime(options) {
         await closed(t); await noLinks(row.file);
         if (await digest(row.file) !== row.after) throw Object.assign(new Error('删除前目标已变化，已保留外部文件和恢复记录。'),
           { code: 'DEPLOYMENT_FILE_CHANGED', details: { file: row.file }, preservePending: true });
-        await fsp.unlink(row.file);
+        await lockedFs.unlink(row.file);
       }
       else await atomicCopy(t, historyFile(t, wal.operation, row.snapshot), row.file, row.before, current);
     }
-    await fsp.unlink(t.pending);
+    await lockedFs.unlink(t.pending);
     return { recovered: true, runtimeVerified: false };
   }
   async function transaction(t, plan) {
@@ -429,7 +435,7 @@ function createExternalRuntime(options) {
         const preparedFile = historyFile(t, plan.operation, prepared);
         if (row.bytes !== undefined) {
           await noLinks(preparedFile); await fsp.mkdir(path.dirname(preparedFile), { recursive: true });
-          await fsp.writeFile(preparedFile, row.bytes, { flag: 'wx' });
+          await lockedFs.writeFile(preparedFile, row.bytes, { flag: 'wx' });
           const file = await fsp.open(preparedFile, 'r+'); try { await file.sync(); } finally { await file.close(); }
         } else await snapshot(row.source, preparedFile, row.after);
       }
@@ -455,13 +461,13 @@ function createExternalRuntime(options) {
             await noLinks(row.file);
             if (await digest(row.file) !== row.before) throw Object.assign(new Error('删除前目标已变化，已保留外部文件和恢复记录。'),
               { code: 'DEPLOYMENT_FILE_CHANGED', details: { file: row.file }, preservePending: true });
-            await fsp.unlink(row.file);
+            await lockedFs.unlink(row.file);
           }
           else await atomicCopy(t, historyFile(t, wal.operation, row.prepared), row.file, row.after, current);
         }
         await options.afterWrite?.({ index: i, row, target: t });
       }
-      await fsp.unlink(t.pending);
+      await lockedFs.unlink(t.pending);
     } catch (error) {
       if (!error.preservePending) try { await rollback(t, wal); } catch (recoveryError) { error.recoveryError = recoveryError; error.preservePending = true; }
       if (error.preservePending) { error.details = { ...error.details, needsRecovery: true }; }

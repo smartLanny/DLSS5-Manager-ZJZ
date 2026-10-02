@@ -7,6 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createGameEnvironment, RECEIPT, PRODUCT } = require('../src/product/game-environment');
 const journal = require('../src/core/file-journal');
+const { retryPolicy } = require('../src/core/locked-file-retry');
 
 function fixture(t, overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'manager-environment-'));
@@ -233,11 +234,13 @@ test('a failed final pending-file deletion restores original files through atomi
     copies.push({ source, destination });
     return fsp.copyFile(source, destination, flags);
   } });
-  const unlink = fsp.unlink;
-  let injected = false;
+  const unlink = fsp.unlink, delays = retryPolicy.delays;
+  retryPolicy.delays = [1, 1]; t.after(() => { retryPolicy.delays = delays; });
+  // The denial outlasts every retry of the final deletion; rollback then succeeds.
+  let failures = retryPolicy.delays.length + 1;
   fsp.unlink = async file => {
-    if (!injected && path.resolve(file) === path.resolve(f.pending)) {
-      injected = true;
+    if (failures > 0 && path.resolve(file) === path.resolve(f.pending)) {
+      failures--;
       throw Object.assign(new Error('pending-file deletion denied after successful cleanup'), { code: 'EACCES' });
     }
     return unlink(file);
@@ -247,7 +250,7 @@ test('a failed final pending-file deletion restores original files through atomi
   } finally {
     fsp.unlink = unlink;
   }
-  assert.equal(injected, true);
+  assert.equal(failures, 0);
   const rollbackCopies = copies.filter(row => row.source.replaceAll('\\', '/').includes('/_DLSS5_Backup/.transactions/'));
   assert.equal(rollbackCopies.length, 2, 'both removed originals must be restored through the environment copy hook');
   for (const row of rollbackCopies) {
