@@ -6,6 +6,10 @@
 // that change a game folder retry those codes for about three seconds before
 // reporting the original error unchanged (so a real permission problem still
 // reaches the elevation and recovery paths).
+//
+// Callers check ownership and hashes once, right before the step. A retry
+// must not act on a file that another program replaced in the meantime, so
+// every guarded path has to keep the identity it had before the first try.
 const fs = require('node:fs');
 
 const LOCK_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
@@ -13,20 +17,39 @@ const LOCK_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
 const retryPolicy = { delays: [50, 100, 200, 400, 800, 1500] };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function lockedRetry(operation) {
+function identity(file) {
+  try {
+    const stat = fs.lstatSync(file);
+    return [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs, stat.isFile(), stat.isSymbolicLink()].join(':');
+  } catch (error) {
+    // Unreadable metadata is compared like any other value; only a later
+    // difference stops the retries, the first attempt behaves as before.
+    return error.code === 'ENOENT' ? null : `error:${error.code}`;
+  }
+}
+const changed = file => Object.assign(new Error('文件在等待重试时被其他程序改变，已停止，未覆盖或删除。'),
+  { code: 'ERR_FILE_CHANGED', details: { file } });
+
+async function lockedRetry(operation, guard = []) {
+  const paths = guard.filter(file => typeof file === 'string');
+  const before = paths.map(identity);
   for (let attempt = 0; ; attempt++) {
     try { return await operation(); }
     catch (error) {
       if (!LOCK_CODES.has(error?.code) || attempt >= retryPolicy.delays.length) throw error;
       await sleep(retryPolicy.delays[attempt]);
+      const moved = paths.find((file, index) => identity(file) !== before[index]);
+      if (moved !== undefined) throw changed(moved);
     }
   }
 }
 
 // fs.promises is looked up on every call so a replaced method is still used.
-const retried = name => (...args) => lockedRetry(() => fs.promises[name](...args));
 const lockedFs = Object.freeze({
-  rename: retried('rename'), unlink: retried('unlink'), copyFile: retried('copyFile'), writeFile: retried('writeFile')
+  rename: (source, target) => lockedRetry(() => fs.promises.rename(source, target), [source, target]),
+  unlink: file => lockedRetry(() => fs.promises.unlink(file), [file]),
+  copyFile: (source, target, ...rest) => lockedRetry(() => fs.promises.copyFile(source, target, ...rest), [source, target]),
+  writeFile: (file, ...rest) => lockedRetry(() => fs.promises.writeFile(file, ...rest), [file])
 });
 
 // Windows PowerShell reports a failed [IO.File]::Move/Replace through the

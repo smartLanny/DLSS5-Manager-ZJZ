@@ -57,9 +57,10 @@ function createGameEnvironment(options) {
             ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
             { windowsHide: true, timeout: 60000, maxBuffer: 8192 }); // cold PowerShell start under antivirus; bounds a hang only
         } catch (error) { const code = powerShellLockCode(error); throw code ? Object.assign(error, { code }) : error; }
-      });
+      }, [temp, targetFile]);
     } catch (cause) {
-      throw Object.assign(new Error(cause?.code === 'EBUSY' ? '文件正被其他程序占用（可能是杀毒软件正在扫描），原文件和恢复记录已保留；请稍后重试。'
+      throw Object.assign(new Error(cause?.code === 'ERR_FILE_CHANGED' ? '文件在等待重试时被其他程序改变，原文件和恢复记录已保留，未覆盖。'
+        : cause?.code === 'EBUSY' ? '文件正被其他程序占用（可能是杀毒软件正在扫描），原文件和恢复记录已保留；请稍后重试。'
         : '文件提交未完成，原文件和恢复记录已保留；请检查目录权限或重试恢复。'), { code: 'ENVIRONMENT_COMMIT_FAILED', cause });
     }
   }

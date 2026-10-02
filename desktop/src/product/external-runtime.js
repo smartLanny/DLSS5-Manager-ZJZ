@@ -356,7 +356,7 @@ function createExternalRuntime(options) {
           // here fails the install, so the bound only stops a hang.
           { windowsHide: true, timeout: 60000, maxBuffer: 8192 });
       } catch (error) { const code = powerShellLockCode(error); throw code ? Object.assign(error, { code }) : error; }
-    });
+    }, [temp, destination]);
   }
   async function atomicCopy(t, source, destination, expected, before) {
     await noLinks(destination); await fsp.mkdir(path.dirname(destination), { recursive: true });
