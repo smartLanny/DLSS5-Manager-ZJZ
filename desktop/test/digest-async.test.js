@@ -41,15 +41,15 @@ test('large files are hashed on the worker with the same result while this threa
 });
 
 test('worker failures carry the same error type, code and message as the direct digest', async () => {
-  digest.policy.offloadBytes = 1;
+  // Threshold 0 sends every path to the worker, including ones whose size reads as 0
+  // (a folder on Windows, a missing file).
+  digest.policy.offloadBytes = 0;
   try {
-    const dir = path.join(root, 'folder.dll'); fs.mkdirSync(dir);
-    await sameError(dir);
-    if (process.platform !== 'win32') {
-      const link = path.join(root, 'link.dll'); fs.symlinkSync(write('target.dll', 'target'), link);
-      await sameError(link);
-    }
-    assert.ok(digest._state().offloaded >= 2);
+    const before = digest._state().offloaded, cases = [path.join(root, 'missing-on-worker.dll'), path.join(root, 'folder.dll')];
+    fs.mkdirSync(cases[1]);
+    if (process.platform !== 'win32') { cases.push(path.join(root, 'link.dll')); fs.symlinkSync(write('target.dll', 'target'), cases[2]); }
+    for (const target of cases) await sameError(target);
+    assert.equal(digest._state().offloaded - before, cases.length, 'every case went through the worker');
   } finally { digest.policy.offloadBytes = 8 * 1024 * 1024; }
 });
 
