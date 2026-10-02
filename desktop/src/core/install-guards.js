@@ -2,7 +2,8 @@
 
 const path = require('path');
 const fs = require('fs');
-const { execFile } = require('child_process');
+const crypto = require('crypto');
+const { execFile, spawn } = require('child_process');
 const upstream = require('../../vendor/DLSS5-Swapper/src/core/install-guards.js');
 
 function run(file, args) {
@@ -67,16 +68,120 @@ function independentEngineReporter(row, gameDir, gameExePath) {
   } catch { return false; }
 }
 
+const powershellPath = () => path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
+
+// The list leaves PowerShell as Base64 of UTF-8 JSON. Plain output follows the
+// console code page (GBK on Chinese Windows), which garbles a path such as a
+// game folder named in Chinese, so the game would not be recognized as running.
+const SNAPSHOT = '[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject ' +
+  '@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath))))';
+
+function decodeSnapshot(text) {
+  const value = String(text || '').trim();
+  if (!value || value.length % 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw new TypeError('Invalid process snapshot');
+  return processRows(JSON.parse(Buffer.from(value, 'base64').toString('utf8')));
+}
+
 async function systemProcesses(runner = run) {
-  const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
-  const output = await runner(powershell, [
-    '-NoProfile',
-    '-NonInteractive',
-    '-Command',
-    "$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath) | ConvertTo-Json -Compress"
-  ]);
-  const parsed = JSON.parse(output || '[]');
-  return processRows(parsed);
+  return decodeSnapshot(await runner(powershellPath(), ['-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference='Stop'; ${SNAPSHOT}`]));
+}
+
+// Starting PowerShell takes most of a check's 1-3 s, and one install checks
+// before every stage and file group. A host started on first use answers each
+// request with a list taken after the request arrives; nothing is reused, so a
+// game started a moment ago is still seen. Each request carries a random id
+// and is answered on one line. A failed, slow or garbled answer stops the host
+// and that check runs the one-shot query instead. The session then uses only
+// the one-shot query if the host never answered, or after a second failure.
+const HOST_SCRIPT = [
+  "$ErrorActionPreference='Stop'",
+  'while ($true) { $id = [Console]::In.ReadLine(); if ($null -eq $id) { break }',
+  `try { $line = $id + ' OK ' + (${SNAPSHOT}) } catch { $line = $id + ' ERR' }`,
+  '[Console]::Out.Write($line + [char]10); [Console]::Out.Flush() }'
+].join('; ');
+const HOST_LINE = /^([0-9a-f]{32}) (OK|ERR)(?: (\S+))?$/;
+
+function spawnProcessHost() {
+  // -InputFormat None keeps PowerShell itself from reading the request lines.
+  return spawn(powershellPath(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-InputFormat', 'None', '-Command', HOST_SCRIPT],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+}
+
+function createProcessHost(options = {}) {
+  const start = options.spawn || spawnProcessHost;
+  const timeoutMs = options.timeoutMs || 15000, idleMs = options.idleMs || 60000, maxFailures = options.maxFailures || 2;
+  let child = null, buffer = '', pending = null, idle = null, failures = 0, worked = false, queue = Promise.resolve();
+
+  function stop() {
+    clearTimeout(idle); idle = null;
+    const current = child; child = null; buffer = '';
+    if (current) { try { current.stdin.destroy(); } catch {} try { current.kill(); } catch {} }
+  }
+  function settle(error, rows) {
+    const request = pending; if (!request) return;
+    pending = null; clearTimeout(request.timer);
+    if (error) request.reject(error); else request.resolve(rows);
+  }
+  function broken(reason) {
+    // A host that has never answered will not start working later.
+    failures = worked ? failures + 1 : maxFailures; stop();
+    settle(Object.assign(new Error(`process host ${reason}`), { code: 'ERR_PROCESS_HOST' }));
+  }
+  function receive(line) {
+    const match = HOST_LINE.exec(line);
+    if (!match) return; // Not an answer line; the request keeps its timeout.
+    if (!pending || match[1] !== pending.id) return broken('answered an unknown request');
+    if (match[2] === 'ERR') return settle(Object.assign(new Error('process query failed'), { code: 'ERR_PROCESS_QUERY' }));
+    let rows;
+    try { rows = decodeSnapshot(match[3]); } catch { return broken('returned an invalid list'); }
+    worked = true; settle(null, rows);
+  }
+  function launch() {
+    const current = start();
+    child = current;
+    const gone = () => { if (child === current) broken('exited'); };
+    current.on('error', gone); current.on('exit', gone);
+    current.stdin.on('error', gone);
+    current.stdout.setEncoding('latin1');
+    current.stdout.on('data', chunk => {
+      if (child !== current) return;
+      buffer += chunk;
+      if (buffer.length > 16 * 1024 * 1024) return broken('returned too much output');
+      for (let end; child === current && (end = buffer.indexOf('\n')) >= 0;) {
+        const line = buffer.slice(0, end).replace(/\r$/, ''); buffer = buffer.slice(end + 1);
+        receive(line);
+      }
+    });
+    // The pending request's timer keeps Node alive; an idle host never does.
+    // The host exits by itself when this process ends and its input closes.
+    for (const handle of [current, current.stdin, current.stdout]) handle?.unref?.();
+  }
+  function send() {
+    return new Promise((resolve, reject) => {
+      clearTimeout(idle); idle = null;
+      if (!child) { try { launch(); } catch (error) { failures = maxFailures; child = null; throw error; } }
+      const id = crypto.randomBytes(16).toString('hex');
+      pending = { id, resolve, reject, timer: setTimeout(() => broken('timed out'), timeoutMs) };
+      child.stdin.write(`${id}\n`);
+    }).finally(() => {
+      if (child && !idle) { idle = setTimeout(stop, idleMs); idle.unref?.(); }
+    });
+  }
+  return {
+    get usable() { return failures < maxFailures; },
+    query() { const result = queue.then(send, send); queue = result.catch(() => {}); return result; },
+    dispose: stop
+  };
+}
+
+let sharedHost = null;
+async function hostedProcesses(host, oneShot = systemProcesses) {
+  if (!host) {
+    if (!sharedHost) { sharedHost = createProcessHost(); process.once('exit', () => sharedHost.dispose()); }
+    host = sharedHost;
+  }
+  if (host.usable) { try { return await host.query(); } catch {} }
+  return oneShot();
 }
 
 function createInstallGuards(options = {}) {
@@ -85,7 +190,7 @@ function createInstallGuards(options = {}) {
   const portableExecutablePath = normalizedExecutable(options.portableExecutablePath === undefined
     ? process.env.PORTABLE_EXECUTABLE_FILE
     : options.portableExecutablePath);
-  const queryProcesses = options.queryProcesses || (() => systemProcesses());
+  const queryProcesses = options.queryProcesses || (() => hostedProcesses());
 
   function ownedProcessIds(rows, gameExePath) {
     const gamePath = normalizedExecutable(gameExePath);
@@ -173,4 +278,4 @@ function createInstallGuards(options = {}) {
   return { ...upstream, matchingProcesses, assertGameClosed };
 }
 
-module.exports = { ...createInstallGuards(), createInstallGuards };
+module.exports = { ...createInstallGuards(), createInstallGuards, createProcessHost, spawnProcessHost, hostedProcesses, systemProcesses };

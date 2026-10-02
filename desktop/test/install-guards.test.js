@@ -182,3 +182,169 @@ test('process-query failure remains a conservative process-check error', async (
   const invalid = createInstallGuards({ queryProcesses: async () => null });
   await assert.rejects(invalid.assertGameClosed(root, game), { code: 'errProcessCheck' });
 });
+
+test('every check takes a new process list, so a game started after an earlier check is still blocked', async () => {
+  const rows = [row(100, 90, 'DLSS 5 AI 超分管理器.exe', manager)];
+  let queries = 0;
+  const guards = createInstallGuards({ processId: 100, executablePath: manager, queryProcesses: async () => { queries++; return rows.slice(); } });
+  await guards.assertGameClosed(root, game);
+  rows.push(row(110, 1, 'NBA2K27.exe', game));
+  await assert.rejects(guards.assertGameClosed(root, game), { code: 'errGameRunning' });
+  rows.pop();
+  await guards.assertGameClosed(root, game);
+  assert.equal(queries, 3);
+});
+
+const { EventEmitter } = require('node:events');
+const { PassThrough, Writable } = require('node:stream');
+const { createProcessHost, hostedProcesses, systemProcesses } = require('../src/core/install-guards');
+const encoded = rows => Buffer.from(JSON.stringify(rows), 'utf8').toString('base64');
+
+function fakeHost(answer) {
+  const spawned = [];
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.killed = false;
+    child.kill = () => { child.killed = true; setImmediate(() => child.emit('exit', null, 'SIGTERM')); return true; };
+    child.stdin = new Writable({ write(chunk, encoding, done) {
+      for (const id of String(chunk).split('\n').filter(Boolean)) setImmediate(() => answer(id, child, spawned.length));
+      done();
+    } });
+    spawned.push(child);
+    return child;
+  };
+  return { spawn, spawned };
+}
+
+test('the process host answers each request with a list taken for that request and keeps running between checks', async () => {
+  const lists = [[row(1, 0, 'System', null)], [row(1, 0, 'System', null), row(110, 1, '游戏.exe', 'D:\\游戏\\游戏.exe')]];
+  const requests = [];
+  const fake = fakeHost((id, child) => {
+    requests.push(id);
+    // Stray lines are ignored; only the exact answer line counts. Chunks may split a line.
+    const answer = `WARNING: stray text\r\n${id} OK ${encoded(lists[requests.length - 1])}\r\n`;
+    child.stdout.write(answer.slice(0, 40)); child.stdout.write(answer.slice(40));
+  });
+  const host = createProcessHost({ spawn: fake.spawn });
+  assert.deepEqual(await host.query(), lists[0]);
+  const second = await host.query();
+  assert.deepEqual(second, lists[1]);
+  assert.equal(second[1].ExecutablePath, 'D:\\游戏\\游戏.exe', 'non-ASCII paths arrive intact');
+  assert.equal(fake.spawned.length, 1);
+  assert.equal(new Set(requests).size, 2);
+  assert.ok(requests.every(id => /^[0-9a-f]{32}$/.test(id)));
+  host.dispose();
+  assert.equal(fake.spawned[0].killed, true);
+});
+
+test('concurrent checks are answered one after another, each with its own list', async () => {
+  let count = 0;
+  const fake = fakeHost((id, child) => { count++; child.stdout.write(`${id} OK ${encoded([row(count, 0, `p${count}.exe`, null)])}\n`); });
+  const host = createProcessHost({ spawn: fake.spawn });
+  const [a, b] = await Promise.all([host.query(), host.query()]);
+  assert.deepEqual([a[0].ProcessId, b[0].ProcessId], [1, 2]);
+});
+
+test('a host that never answers correctly is stopped and the one-shot query is used for the rest of the session', async t => {
+  for (const [name, answer, options] of [
+    ['exit', (id, child) => child.emit('exit', 1, null), {}],
+    ['garbled', (id, child) => child.stdout.write(`${id} OK not-base64!\n`), {}],
+    ['wrong id', (id, child) => child.stdout.write(`${'0'.repeat(32)} OK ${encoded([])}\n`), {}],
+    ['timeout', () => {}, { timeoutMs: 20 }]
+  ]) {
+    await t.test(name, async () => {
+      const fake = fakeHost(answer);
+      const host = createProcessHost({ spawn: fake.spawn, ...options });
+      let oneShot = 0;
+      const fallback = async () => { oneShot++; return [row(7, 0, 'one-shot.exe', null)]; };
+      assert.deepEqual(await hostedProcesses(host, fallback), [row(7, 0, 'one-shot.exe', null)]);
+      assert.equal(fake.spawned[0].killed, true);
+      assert.equal(host.usable, false);
+      await hostedProcesses(host, fallback);
+      assert.equal(fake.spawned.length, 1, 'no new host after it never answered');
+      assert.equal(oneShot, 2);
+    });
+  }
+});
+
+test('a working host is restarted after one failure and given up after a second', async () => {
+  let mode = 'ok';
+  const fake = fakeHost((id, child) => mode === 'ok' ? child.stdout.write(`${id} OK ${encoded([])}\n`) : child.emit('exit', 1, null));
+  const host = createProcessHost({ spawn: fake.spawn });
+  const fallback = async () => 'one-shot';
+  assert.deepEqual(await hostedProcesses(host, fallback), []);
+  mode = 'exit';
+  assert.equal(await hostedProcesses(host, fallback), 'one-shot');
+  assert.equal(host.usable, true);
+  mode = 'ok';
+  assert.deepEqual(await hostedProcesses(host, fallback), []);
+  assert.equal(fake.spawned.length, 2);
+  mode = 'exit';
+  assert.equal(await hostedProcesses(host, fallback), 'one-shot');
+  assert.equal(host.usable, false);
+});
+
+test('a query error inside the host falls back for that check without stopping the host', async () => {
+  let calls = 0;
+  const fake = fakeHost((id, child) => child.stdout.write(++calls === 1 ? `${id} ERR\n` : `${id} OK ${encoded([])}\n`));
+  const host = createProcessHost({ spawn: fake.spawn });
+  await assert.rejects(host.query(), { code: 'ERR_PROCESS_QUERY' });
+  assert.deepEqual(await host.query(), []);
+  assert.equal(fake.spawned.length, 1);
+  assert.equal(fake.spawned[0].killed, false);
+  host.dispose();
+});
+
+test('an idle host is stopped and a later check starts a new one', async () => {
+  const fake = fakeHost((id, child) => child.stdout.write(`${id} OK ${encoded([])}\n`));
+  const host = createProcessHost({ spawn: fake.spawn, idleMs: 10 });
+  await host.query();
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(fake.spawned[0].killed, true);
+  await host.query();
+  assert.equal(fake.spawned.length, 2);
+  host.dispose();
+});
+
+test('the one-shot query decodes UTF-8 lists and rejects empty or garbled output', async () => {
+  const rows = [row(110, 1, '测试.exe', 'D:\\测试游戏\\测试.exe')];
+  assert.deepEqual(await systemProcesses(async () => `${encoded(rows)}\r\n`), rows);
+  for (const output of ['', '   ', '[]', 'not base64!', encoded('text')]) {
+    await assert.rejects(systemProcesses(async () => output), TypeError, JSON.stringify(output));
+  }
+});
+
+test('Windows: a game in a Chinese-named folder is seen by the host and the one-shot query as soon as it starts', { skip: process.platform !== 'win32' && '只在 Windows 上运行' }, async t => {
+  const { spawn } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), '装机宅测试-'));
+  const gameDir = path.join(dir, '测试游戏'), exe = path.join(gameDir, '测试游戏.exe');
+  fs.mkdirSync(gameDir);
+  fs.copyFileSync(process.execPath, exe); // A hardlink to the running node.exe could not be deleted afterwards.
+  let child = null, exited = null;
+  t.after(async () => {
+    // A killed process reports signalCode, not exitCode; wait on the one exit promise.
+    if (child) { if (child.exitCode === null && child.signalCode === null) child.kill(); await exited; }
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  });
+  let spawns = 0;
+  const { spawnProcessHost } = require('../src/core/install-guards');
+  const host = createProcessHost({ spawn: () => { spawns++; return spawnProcessHost(); } });
+  t.after(() => host.dispose());
+  const guards = createInstallGuards({ queryProcesses: () => host.query() });
+  await guards.assertGameClosed(gameDir, exe);
+  child = spawn(exe, ['-e', 'setTimeout(() => {}, 120000)'], { windowsHide: true, stdio: 'ignore' });
+  exited = new Promise(resolve => child.once('exit', resolve));
+  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+  await assert.rejects(guards.assertGameClosed(gameDir, exe), error => {
+    assert.equal(error.code, 'errGameRunning');
+    assert.deepEqual(error.details.processes.map(item => [item.pid, item.name, item.reason]), [[child.pid, '测试游戏.exe', '所选游戏进程仍在运行']]);
+    return true;
+  });
+  const oneShot = createInstallGuards({ queryProcesses: () => systemProcesses() });
+  await assert.rejects(oneShot.assertGameClosed(gameDir, exe), { code: 'errGameRunning' });
+  child.kill(); await exited;
+  await guards.assertGameClosed(gameDir, exe);
+  assert.equal(spawns, 1, 'all three host checks used one PowerShell');
+  assert.equal(host.usable, true);
+});
