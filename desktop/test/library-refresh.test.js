@@ -100,3 +100,53 @@ test('worker scan revisions bypass singleflight without leaking an extra library
   assert.notEqual(first.requestId, second.requestId);
   assert.deepEqual(first.args, [state]); assert.deepEqual(second.args, [state]);
 });
+
+test('a change to one game rescans only that game and keeps the other rows', async t => {
+  const root = temporary(t), payload = path.join(root, 'payload', 'nr-before-sr'), version = '0.3.3.5';
+  for (const family of ['RTX40', 'RTX50']) {
+    const dir = path.join(payload, 'fixed', family); fs.mkdirSync(dir, { recursive: true });
+    for (const name of ['ReShade64.dll', 'nrchain_nvngx.dll', 'nvngx_dlssnr.dll']) fs.writeFileSync(path.join(dir, name), `${family}:${name}`);
+  }
+  const versionDir = path.join(payload, 'versions', version); fs.mkdirSync(versionDir, { recursive: true });
+  for (const name of [PAYLOAD_FILES.addon, PAYLOAD_FILES.config]) fs.writeFileSync(path.join(versionDir, name), `fixture:${name}`);
+  fs.writeFileSync(path.join(payload, 'bundle.json'), JSON.stringify(createCompactBundle(payload, [{ id: version, label: version }], version)));
+  const dirs = { a: path.join(root, 'game-a'), b: path.join(root, 'game-b') }, installed = { a: false, b: false };
+  for (const dir of Object.values(dirs)) { fs.mkdirSync(dir); fs.writeFileSync(path.join(dir, 'Game.exe'), 'synthetic'); }
+  const row = id => { const chosen = { path: path.join(dirs[id], 'Game.exe'), api: 'dxgi', apiLabel: 'DirectX 12', dx12: true, bitness: 64 };
+    return { id, name: `Game ${id}`, dir: dirs[id], rootAliases: [dirs[id]], installed: installed[id], supported: true, chosen, scan: { chosen } }; };
+  const calls = { all: 0, games: [] };
+  let partial = true;
+  const library = {
+    scanAll: async () => { calls.all++; return [row('a'), row('b')]; },
+    scanGames: async (_state, wanted) => { calls.games.push(wanted); return partial ? Object.keys(dirs).filter(id => wanted.includes(dirs[id])).map(row) : null; }
+  };
+  const service = createAppService({ userData: path.join(root, 'user'), appDir: root, resourcesPath: root,
+    overrides: { library, detectGpu: () => ({ family: 'RTX50', series: ['RTX50'] }), installer: {
+      install: async ({ gameDir }) => { installed[gameDir === dirs.a ? 'a' : 'b'] = true; return { installed: true }; },
+      uninstall: async ({ gameDir }) => { installed[gameDir === dirs.a ? 'a' : 'b'] = false; return { removed: true }; }
+    } } });
+  await service.refresh(); assert.equal(calls.all, 1);
+  installed.b = true; // changed on disk behind the manager's back: a partial refresh must not pick it up
+  await service.install('a', { version });
+  assert.equal(calls.all, 1, 'installing one game does not walk the whole library again');
+  assert.deepEqual(calls.games, [[dirs.a]]);
+  const list = await service.listGames();
+  assert.equal(list.find(game => game.id === 'a').installed, true);
+  assert.equal(list.find(game => game.id === 'b').installed, false, 'the other game keeps its previous scan');
+  assert.equal(list.length, 2);
+  partial = false;
+  await service.uninstall('a');
+  assert.equal(calls.all, 2, 'when the single-game scan cannot answer, the whole library is scanned');
+  assert.equal((await service.listGames()).find(game => game.id === 'a').installed, false);
+});
+
+test('the worker client sends a single-game rescan with its folders and never coalesces it', async t => {
+  const root = temporary(t), workerFile = path.join(root, 'echo-worker.cjs');
+  fs.writeFileSync(workerFile, `const {parentPort}=require('node:worker_threads');
+    parentPort.on('message', request => parentPort.postMessage({id:request.id,ok:true,value:{method:request.method,args:request.args}}));`);
+  const client = createLibraryWorkerClient({ workerFile }); t.after(() => client.dispose());
+  const state = { scanDrives: false, manualGames: [] }, dirs = [path.join(root, 'game')];
+  const [first, second] = await Promise.all([client.scanGames(state, dirs), client.scanGames(state, dirs)]);
+  assert.deepEqual(first, { method: 'scanGames', args: [state, dirs] });
+  assert.deepEqual(second, first);
+});
