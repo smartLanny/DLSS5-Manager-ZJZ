@@ -321,9 +321,10 @@ test('Windows: a game in a Chinese-named folder is seen by the host and the one-
   const gameDir = path.join(dir, '测试游戏'), exe = path.join(gameDir, '测试游戏.exe');
   fs.mkdirSync(gameDir);
   fs.copyFileSync(process.execPath, exe); // A hardlink to the running node.exe could not be deleted afterwards.
-  let child = null;
+  let child = null, exited = null;
   t.after(async () => {
-    if (child && child.exitCode === null) { const exited = new Promise(resolve => child.once('exit', resolve)); child.kill(); await exited; }
+    // A killed process reports signalCode, not exitCode; wait on the one exit promise.
+    if (child) { if (child.exitCode === null && child.signalCode === null) child.kill(); await exited; }
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
   let spawns = 0;
@@ -333,6 +334,7 @@ test('Windows: a game in a Chinese-named folder is seen by the host and the one-
   const guards = createInstallGuards({ queryProcesses: () => host.query() });
   await guards.assertGameClosed(gameDir, exe);
   child = spawn(exe, ['-e', 'setTimeout(() => {}, 120000)'], { windowsHide: true, stdio: 'ignore' });
+  exited = new Promise(resolve => child.once('exit', resolve));
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
   await assert.rejects(guards.assertGameClosed(gameDir, exe), error => {
     assert.equal(error.code, 'errGameRunning');
@@ -341,7 +343,7 @@ test('Windows: a game in a Chinese-named folder is seen by the host and the one-
   });
   const oneShot = createInstallGuards({ queryProcesses: () => systemProcesses() });
   await assert.rejects(oneShot.assertGameClosed(gameDir, exe), { code: 'errGameRunning' });
-  const exited = new Promise(resolve => child.once('exit', resolve)); child.kill(); await exited;
+  child.kill(); await exited;
   await guards.assertGameClosed(gameDir, exe);
   assert.equal(spawns, 1, 'all three host checks used one PowerShell');
   assert.equal(host.usable, true);
