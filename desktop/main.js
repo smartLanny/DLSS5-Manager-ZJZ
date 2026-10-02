@@ -164,7 +164,7 @@ async function setLaunchMode(id, mode) {
   const key = path.resolve(service.gameDirectory(id)).toLowerCase();
   await service.store.update(state => ({ gameOverrides: { ...state.gameOverrides,
     [key]: { ...state.gameOverrides[key], launchMode: mode, launchExecutable: current.exe } } }));
-  await service.refresh(); return inspectLaunchMode(id);
+  await service.refreshAfterMutation(null, id); return inspectLaunchMode(id);
 }
 async function applyEnhancement(id, domain, input, options = {}) {
   const policy = require('./src/product/launch-settings-policy');
@@ -409,8 +409,7 @@ function registerIpc() {
   call('game-operation-preview', (id, request) => operationPlans.preview(id, request));
   call('game-operation-apply', (id, planId, consent) => deferredOperations.apply(id, planId, consent));
   call('game-operation-apply-elevated', async (id, planId, consent) => {
-    const result = await operationElevation.apply(id, planId, consent);
-    await service.refresh(); return result;
+    return service.refreshAfterMutation(await operationElevation.apply(id, planId, consent), id);
   });
   call('game-operation-recover', id => operationPlans.recover(id));
   call('game-feature-confirm', (id, domain, value) => launchSettings.confirmGameFeature(id, domain, value));
@@ -461,12 +460,12 @@ function registerIpc() {
     const preview = await environment.preview(id);
     return { ...preview, managedInstallationRestored: true, restorationNotice: restoration.notice || '本管理器的配套已恢复到安装前状态。' };
   });
-  call('game-environment-apply', async (id, planId, names) => service.refreshAfterMutation(await environment.apply(id, planId, names)));
+  call('game-environment-apply', async (id, planId, names) => service.refreshAfterMutation(await environment.apply(id, planId, names), id));
   call('game-environment-restore', async id => {
     await assertEnvironmentRestorable(id);
     const recovered = await environment.recoverPending(id);
     await preparation.assertReady(id);
-    return service.refreshAfterMutation({ ...await environment.restore(id), interruptedFilesRecovered: recovered.recovered });
+    return service.refreshAfterMutation({ ...await environment.restore(id), interruptedFilesRecovered: recovered.recovered }, id);
   });
   call('game-feeder-inspect', id => service.inspectFeeder(id));
   call('game-feeder-install', (id, options) => service.installFeeder(id, options));
@@ -541,14 +540,14 @@ function registerIpc() {
   });
   call('fg-components-prepare', async (id, options) => {
     const result = await fgWorkflow.prepare(id, options);
-    return service.refreshAfterMutation(result);
+    return service.refreshAfterMutation(result, id);
   });
-  call('fg-components-recover', async id => service.refreshAfterMutation(await fgWorkflow.recover(id)));
+  call('fg-components-recover', async id => service.refreshAfterMutation(await fgWorkflow.recover(id), id));
   call('fg-components-restore', async id => {
     await launchSettings.assertReady(id);
     await launchSettings.restore(id, 'fg');
     const result = await fgComponents.restore(id);
-    return service.refreshAfterMutation(result);
+    return service.refreshAfterMutation(result, id);
   });
   call('game-hotkeys-read', id => service.readGameHotkeys(id));
   call('game-reframework-inspect', id => service.readReframework(id));
