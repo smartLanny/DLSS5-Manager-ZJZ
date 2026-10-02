@@ -116,6 +116,28 @@ async function mapLimit(items, limit, worker) {
   return result;
 }
 
+// One row per executable (installed copies first), sorted for display. Shared
+// by the full scan and by merging a single rescanned game into the list.
+function finalizeRows(rows) {
+  const samePath = (left, right) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
+  const unique = new Map();
+  for (const row of rows.filter(Boolean)) {
+    const key = row.chosen?.path ? path.resolve(row.chosen.path).toLowerCase() : path.resolve(row.dir).toLowerCase();
+    const previous = unique.get(key);
+    // Never hide two distinct recovery receipts for the same executable.
+    if (previous?.installed && row.installed && !samePath(previous.dir, row.dir)) { unique.set(`${key}:${row.dir}`, row); continue; }
+    if (!previous) { unique.set(key, row); continue; }
+    const preferred = row.installed && !previous.installed ? row : previous;
+    preferred.rootAliases = [...new Set([...(previous.rootAliases || [previous.dir]), ...(row.rootAliases || [row.dir])])];
+    unique.set(key, preferred);
+  }
+  return [...unique.values()].sort((a, b) =>
+    Number(b.installed) - Number(a.installed) ||
+    Number(b.supported) - Number(a.supported) ||
+    a.name.localeCompare(b.name, 'zh-CN', { numeric: true })
+  );
+}
+
 function createLibraryService(overrides = {}) {
   const library = overrides.library || require('../library');
   const scanModule = overrides.scan || require('../core/scan');
@@ -413,19 +435,8 @@ function createLibraryService(overrides = {}) {
     };
   }
 
-  async function scanAll(state) {
-    const launchContext = createLaunchContext(overrides.launchEvidence);
-    const scans = new Map();
-    const scanAt = dir => {
-      const key = path.resolve(dir).toLowerCase();
-      if (!scans.has(key)) scans.set(key, Promise.resolve().then(() => scanModule.scanGame(dir)));
-      return scans.get(key);
-    };
-    const discovered = library.discover(
-      state.scanFolders || [],
-      state.scanDrives === true,
-      state.excludedRoots || []
-    );
+  // Manual folders and executables saved in settings, keyed by resolved root.
+  function manualCandidates(state) {
     const manualByRoot = new Map((state.manualGames || []).map(dir => [path.resolve(dir).toLowerCase(), {
       launcher: '手动添加', id: null, name: defaultGameName(dir), dir, poster: null, preferredExecutable: null
     }]));
@@ -438,186 +449,215 @@ function createLibraryService(overrides = {}) {
       manualByRoot.set(key, existing);
     }
     const manual = [...manualByRoot.values()];
-    const artworkDirectories = new Map();
-    const discoveredGames = (discovered.games || []).map(game => steamArtworkFor(game, artworkDirectories));
-    const candidates = library.dedupe([...discoveredGames, ...manual]).filter(game => !isExcludedGame(game, state));
-    const rows = await mapLimit(candidates, 2, async game => {
-      const sourceRoot = game.dir;
-      const savedSelection = manualByRoot.get(path.resolve(game.dir).toLowerCase());
-      if (savedSelection?.preferredExecutable) game = { ...game, preferredExecutable: savedSelection.preferredExecutable };
-      let scan;
-      try {
-        const baseScan = normalizeUnityDynamicApi(await scanAt(game.dir), game.dir);
-        if (game.launcher === '手动添加') {
-          // Manual folders may be launcher roots. Broaden only these scans so
-          // a nested real executable (for example Endfield.exe) can outrank
-          // CefView/QtWebEngine helpers without slowing every library refresh.
-          const rawCandidates = await collectCandidates(game.dir, baseScan);
-          scan = chooseBest(baseScan, game.dir, rawCandidates, game.preferredExecutable);
-        } else {
-          scan = choosePreferred(baseScan, game.preferredExecutable);
-        }
-        // Repair aliases only when the exact selected EXE reaches a verified
-        // native-SR tree through the bounded binary layout walk. Existing
-        // receipts (including damaged ones) keep their original recovery root.
-        const binaryRoot = /^(?:binaries|bin|win(?:32|64)(?:[._ -].*)?|x64|x86|client|windowsnoeditor|shipping)$/i.test(path.basename(game.dir));
-        const unrealLayout = /[\\/]Engine[\\/]/i.test(scan.primaryDlss?.path || '') ||
-          fs.existsSync(path.join(path.dirname(game.dir), 'Engine', 'Plugins'));
-        if (game.launcher === '手动添加' && scan.chosen && (binaryRoot || unrealLayout) && !fs.existsSync(manifestPath(game.dir))) {
-          const selected = scan.chosen;
-          const inferred = await findGameRoot(selected.path, scanAt);
-          const native = inferred.scan?.primaryDlss;
-          let canNormalize = native && /^nvngx_dlss\.dll$/i.test(native.name || '') && typeof native.path === 'string' &&
-            isInside(native.path, inferred.root) &&
-            !samePath(inferred.root, game.dir) && (isInside(inferred.root, game.dir) || isInside(game.dir, inferred.root));
-          if (canNormalize && fs.existsSync(manifestPath(inferred.root))) {
-            try { canNormalize = samePath(manifestExecutable(inferred.root, readManifest(inferred.root)), selected.path); }
-            catch { canNormalize = false; }
-          }
-          if (canNormalize) {
-            game = { ...game, dir: inferred.root, name: defaultGameName(inferred.root) };
-            const normalized = normalizeUnityDynamicApi(inferred.scan, inferred.root);
-            const matching = normalized.exeCandidates?.find(row => samePath(row.path, selected.path)) ||
-              { ...selected, rel: path.relative(inferred.root, selected.path) };
-            scan = applyChosen(normalized, matching);
-          }
-        }
-      } catch (error) {
-        return {
-          id: idFor(game.dir),
-          name: game.name || path.basename(game.dir),
-          launcher: game.launcher || '本地游戏',
-          dir: game.dir,
-          poster: posterUrl(game.poster),
-          banner: posterUrl(game.banner),
-          cover: posterUrl(game.cover),
-          backdrop: posterUrl(game.backdrop),
-          chosen: null,
-          supported: false,
-          supportCode: 'ERR_INTERNAL',
-          supportText: '扫描失败，请检查目录权限后重试。',
-          installed: false,
-          scan: null,
-          scanError: error && error.message ? error.message : 'scan failed'
-        };
+    return { manualByRoot, manual };
+  }
+
+  // Scans one discovered or manual game and returns its library row.
+  async function scanCandidate(game, { state, scanAt, manualByRoot, launchContext, discoveredGames }) {
+    const sourceRoot = game.dir;
+    const savedSelection = manualByRoot.get(path.resolve(game.dir).toLowerCase());
+    if (savedSelection?.preferredExecutable) game = { ...game, preferredExecutable: savedSelection.preferredExecutable };
+    let scan;
+    try {
+      const baseScan = normalizeUnityDynamicApi(await scanAt(game.dir), game.dir);
+      if (game.launcher === '手动添加') {
+        // Manual folders may be launcher roots. Broaden only these scans so
+        // a nested real executable (for example Endfield.exe) can outrank
+        // CefView/QtWebEngine helpers without slowing every library refresh.
+        const rawCandidates = await collectCandidates(game.dir, baseScan);
+        scan = chooseBest(baseScan, game.dir, rawCandidates, game.preferredExecutable);
+      } else {
+        scan = choosePreferred(baseScan, game.preferredExecutable);
       }
-      const gameOverrides = state.gameOverrides || {};
-      const override = { ...gameOverrides[path.resolve(sourceRoot).toLowerCase()], ...gameOverrides[path.resolve(game.dir).toLowerCase()] };
-      // Root aliases must not erase an API choice bound to this exact EXE.
-      // The canonical root wins explicit newer choices, including auto.
-      const boundOverrides = [gameOverrides[path.resolve(game.dir).toLowerCase()], gameOverrides[path.resolve(sourceRoot).toLowerCase()],
-        ...Object.entries(gameOverrides).filter(([dir, value]) => value?.apiExecutable && scan.chosen &&
-          isInside(scan.chosen.path, dir) && (isInside(dir, game.dir) || isInside(game.dir, dir))).map(([, value]) => value)]
-        .filter(value => value?.apiExecutable && scan.chosen && samePath(value.apiExecutable, scan.chosen.path) && value.api !== undefined);
-      const apiOverride = boundOverrides[0]?.api || 'auto';
-      const entryContext = steamEntryContext(scan.chosen?.path, discoveredGames);
-      const steamIdentity = steamLaunchIdentity(scan.chosen?.path, discoveredGames);
-      const launchOverrides = [gameOverrides[path.resolve(game.dir).toLowerCase()], gameOverrides[path.resolve(sourceRoot).toLowerCase()],
-        ...Object.entries(gameOverrides).filter(([dir, value]) => value?.launchExecutable && scan.chosen &&
-          isInside(scan.chosen.path, dir) && (isInside(dir, game.dir) || isInside(game.dir, dir))).map(([, value]) => value)]
-        .filter(value => value?.launchExecutable && scan.chosen && samePath(value.launchExecutable, scan.chosen.path) && ['auto', 'steam', 'exe'].includes(value.launchMode));
-      const launchModeOverride = launchOverrides[0]?.launchMode || 'auto';
-      const launchMode = steamIdentity.steamIdentityVerified && (launchModeOverride === 'steam' || (launchModeOverride === 'auto' && game.launcher === 'Steam')) ? 'steam' : 'exe';
-      const launch = launchContext(steamIdentity.steamIdentityVerified
-        ? { ...game, launcher: 'Steam', id: steamIdentity.steamAppId, steamRoot: steamIdentity.steamRoot, launchMode } : { launchMode });
-      let runtimeEvidence = {};
-      if (typeof overrides.runtimeEvidence === 'function' && scan.chosen) {
-        try { runtimeEvidence = await overrides.runtimeEvidence({ game, exe: scan.chosen.path }) || {}; } catch { /* No bound evidence remains unobserved. */ }
+      // Repair aliases only when the exact selected EXE reaches a verified
+      // native-SR tree through the bounded binary layout walk. Existing
+      // receipts (including damaged ones) keep their original recovery root.
+      const binaryRoot = /^(?:binaries|bin|win(?:32|64)(?:[._ -].*)?|x64|x86|client|windowsnoeditor|shipping)$/i.test(path.basename(game.dir));
+      const unrealLayout = /[\\/]Engine[\\/]/i.test(scan.primaryDlss?.path || '') ||
+        fs.existsSync(path.join(path.dirname(game.dir), 'Engine', 'Plugins'));
+      if (game.launcher === '手动添加' && scan.chosen && (binaryRoot || unrealLayout) && !fs.existsSync(manifestPath(game.dir))) {
+        const selected = scan.chosen;
+        const inferred = await findGameRoot(selected.path, scanAt);
+        const native = inferred.scan?.primaryDlss;
+        let canNormalize = native && /^nvngx_dlss\.dll$/i.test(native.name || '') && typeof native.path === 'string' &&
+          isInside(native.path, inferred.root) &&
+          !samePath(inferred.root, game.dir) && (isInside(inferred.root, game.dir) || isInside(game.dir, inferred.root));
+        if (canNormalize && fs.existsSync(manifestPath(inferred.root))) {
+          try { canNormalize = samePath(manifestExecutable(inferred.root, readManifest(inferred.root)), selected.path); }
+          catch { canNormalize = false; }
+        }
+        if (canNormalize) {
+          game = { ...game, dir: inferred.root, name: defaultGameName(inferred.root) };
+          const normalized = normalizeUnityDynamicApi(inferred.scan, inferred.root);
+          const matching = normalized.exeCandidates?.find(row => samePath(row.path, selected.path)) ||
+            { ...selected, rel: path.relative(inferred.root, selected.path) };
+          scan = applyChosen(normalized, matching);
+        }
       }
-      scan = annotateApi(scan, game.dir, { ...runtimeEvidence, ...launch, pe: peReader,
-        steamAppId: steamIdentity.steamAppId || null, ...entryContext, documentsDir: overrides.documentsDir, apiOverride });
-      let manifest = null;
-      try { manifest = readManifest(game.dir); } catch {}
-      const existingInstallation = inspectExistingInstallation({
-        executable: scan.chosen?.path,
-        managed: Boolean(manifest)
-      });
-      const carrierEnabled = isDx11Only(scan.chosen);
-      scan.componentSelection = { dx11Carrier: carrierEnabled };
-      // Pure DX11 uses the unified 0.4.5 compatibility payload. A remembered
-      // historical selection must not hide an otherwise eligible DX11 game;
-      // the actual payload choice is normalized per game in app-service.
-      const allowDx11 = isDx11Only(scan.chosen) ||
-        !state.addonVersion || state.addonVersion === DX11_COMPAT_VERSION;
-      const support = assess(scan, { allowDx11 });
-      const engine = scan.chosen ? detectReEngine({ gameDir: game.dir, exe: scan.chosen.path,
-        metadata: { steamAppId: game.launcher === 'Steam' ? String(game.id) : null } }) : null;
+    } catch (error) {
       return {
         id: idFor(game.dir),
-        name: (override && override.name) || game.name || scan.gameName || path.basename(game.dir),
+        name: game.name || path.basename(game.dir),
         launcher: game.launcher || '本地游戏',
-        appid: game.id || null,
-        steamAppId: steamIdentity.steamAppId || null,
-        verifiedSteamAppId: steamIdentity.steamAppId || null,
-        steamRoot: steamIdentity.steamRoot || null,
-        steamEntryRoot: steamIdentity.steamEntryRoot || null,
-        steamIdentityVerified: steamIdentity.steamIdentityVerified === true,
-        steamAccountVerified: launch.steamAccountVerified === true,
-        launchMode,
-        launchModeOverride,
-        launchExecutable: scan.chosen?.path || null,
-        launchUnavailableReason: launchModeOverride === 'steam' && !steamIdentity.steamIdentityVerified ? 'STEAM_IDENTITY_UNVERIFIED' : null,
-        engine,
         dir: game.dir,
-        rootAliases: [...new Set([sourceRoot, game.dir])],
         poster: posterUrl(game.poster),
         banner: posterUrl(game.banner),
         cover: posterUrl(game.cover),
         backdrop: posterUrl(game.backdrop),
-        // Only an icon the player chose; the EXE icon is read later, and Steam's
-        // title logo is kept apart because it is wide text, not an icon.
-        icon: override && override.icon ? override.icon : null,
-        steamLogo: game.steamIcon || null,
-        chosen: scan.chosen ? {
-          path: scan.chosen.path,
-          rel: scan.chosen.rel,
-          api: scan.chosen.api,
-          apiLabel: scan.chosen.apiLabel,
-          apiResolution: scan.chosen.apiResolution,
-          apiAssessment: scan.chosen.apiAssessment,
-          detectedApi: scan.chosen.detectedApi,
-          detectedApiResolution: scan.chosen.detectedApiResolution,
-          supportedApis: scan.chosen.supportedApis,
-          apiSettings: scan.chosen.apiSettings,
-          via: scan.chosen.via || null,
-          bitness: scan.chosen.bitness
-        } : null,
-        supported: support.supported,
-        supportCode: support.code,
-        supportText: support.code ? MESSAGES[support.code] : '支持安装',
-        installed: Boolean(manifest),
-        existingInstallation,
-        apiOverride: ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan', 'opengl'].includes(apiOverride) ? apiOverride : 'auto',
-        components: { dx11Carrier: carrierEnabled },
-        addonVersion: manifest && manifest.payloadVersion ? manifest.payloadVersion : null,
-        recommendedAddonVersion: !manifest && !state.addonVersion && isDx11Only(scan.chosen) ? DX11_COMPAT_VERSION : null,
-        d3d12Route: Boolean(manifest && manifest.reshadeRoute === 'd3d12'),
-        scan
+        chosen: null,
+        supported: false,
+        supportCode: 'ERR_INTERNAL',
+        supportText: '扫描失败，请检查目录权限后重试。',
+        installed: false,
+        scan: null,
+        scanError: error && error.message ? error.message : 'scan failed'
       };
-    });
-
-    const unique = new Map();
-    for (const row of rows.filter(Boolean)) {
-      const key = row.chosen?.path ? path.resolve(row.chosen.path).toLowerCase() : path.resolve(row.dir).toLowerCase();
-      const previous = unique.get(key);
-      // Never hide two distinct recovery receipts for the same executable.
-      if (previous?.installed && row.installed && !samePath(previous.dir, row.dir)) { unique.set(`${key}:${row.dir}`, row); continue; }
-      if (!previous) { unique.set(key, row); continue; }
-      const preferred = row.installed && !previous.installed ? row : previous;
-      preferred.rootAliases = [...new Set([...(previous.rootAliases || [previous.dir]), ...(row.rootAliases || [row.dir])])];
-      unique.set(key, preferred);
     }
-    const sorted = [...unique.values()].sort((a, b) =>
-      Number(b.installed) - Number(a.installed) ||
-      Number(b.supported) - Number(a.supported) ||
-      a.name.localeCompare(b.name, 'zh-CN', { numeric: true })
+    const gameOverrides = state.gameOverrides || {};
+    const override = { ...gameOverrides[path.resolve(sourceRoot).toLowerCase()], ...gameOverrides[path.resolve(game.dir).toLowerCase()] };
+    // Root aliases must not erase an API choice bound to this exact EXE.
+    // The canonical root wins explicit newer choices, including auto.
+    const boundOverrides = [gameOverrides[path.resolve(game.dir).toLowerCase()], gameOverrides[path.resolve(sourceRoot).toLowerCase()],
+      ...Object.entries(gameOverrides).filter(([dir, value]) => value?.apiExecutable && scan.chosen &&
+        isInside(scan.chosen.path, dir) && (isInside(dir, game.dir) || isInside(game.dir, dir))).map(([, value]) => value)]
+      .filter(value => value?.apiExecutable && scan.chosen && samePath(value.apiExecutable, scan.chosen.path) && value.api !== undefined);
+    const apiOverride = boundOverrides[0]?.api || 'auto';
+    const entryContext = steamEntryContext(scan.chosen?.path, discoveredGames);
+    const steamIdentity = steamLaunchIdentity(scan.chosen?.path, discoveredGames);
+    const launchOverrides = [gameOverrides[path.resolve(game.dir).toLowerCase()], gameOverrides[path.resolve(sourceRoot).toLowerCase()],
+      ...Object.entries(gameOverrides).filter(([dir, value]) => value?.launchExecutable && scan.chosen &&
+        isInside(scan.chosen.path, dir) && (isInside(dir, game.dir) || isInside(game.dir, dir))).map(([, value]) => value)]
+      .filter(value => value?.launchExecutable && scan.chosen && samePath(value.launchExecutable, scan.chosen.path) && ['auto', 'steam', 'exe'].includes(value.launchMode));
+    const launchModeOverride = launchOverrides[0]?.launchMode || 'auto';
+    const launchMode = steamIdentity.steamIdentityVerified && (launchModeOverride === 'steam' || (launchModeOverride === 'auto' && game.launcher === 'Steam')) ? 'steam' : 'exe';
+    const launch = launchContext(steamIdentity.steamIdentityVerified
+      ? { ...game, launcher: 'Steam', id: steamIdentity.steamAppId, steamRoot: steamIdentity.steamRoot, launchMode } : { launchMode });
+    let runtimeEvidence = {};
+    if (typeof overrides.runtimeEvidence === 'function' && scan.chosen) {
+      try { runtimeEvidence = await overrides.runtimeEvidence({ game, exe: scan.chosen.path }) || {}; } catch { /* No bound evidence remains unobserved. */ }
+    }
+    scan = annotateApi(scan, game.dir, { ...runtimeEvidence, ...launch, pe: peReader,
+      steamAppId: steamIdentity.steamAppId || null, ...entryContext, documentsDir: overrides.documentsDir, apiOverride });
+    let manifest = null;
+    try { manifest = readManifest(game.dir); } catch {}
+    const existingInstallation = inspectExistingInstallation({
+      executable: scan.chosen?.path,
+      managed: Boolean(manifest)
+    });
+    const carrierEnabled = isDx11Only(scan.chosen);
+    scan.componentSelection = { dx11Carrier: carrierEnabled };
+    // Pure DX11 uses the unified 0.4.5 compatibility payload. A remembered
+    // historical selection must not hide an otherwise eligible DX11 game;
+    // the actual payload choice is normalized per game in app-service.
+    const allowDx11 = isDx11Only(scan.chosen) ||
+      !state.addonVersion || state.addonVersion === DX11_COMPAT_VERSION;
+    const support = assess(scan, { allowDx11 });
+    const engine = scan.chosen ? detectReEngine({ gameDir: game.dir, exe: scan.chosen.path,
+      metadata: { steamAppId: game.launcher === 'Steam' ? String(game.id) : null } }) : null;
+    return {
+      id: idFor(game.dir),
+      name: (override && override.name) || game.name || scan.gameName || path.basename(game.dir),
+      launcher: game.launcher || '本地游戏',
+      appid: game.id || null,
+      steamAppId: steamIdentity.steamAppId || null,
+      verifiedSteamAppId: steamIdentity.steamAppId || null,
+      steamRoot: steamIdentity.steamRoot || null,
+      steamEntryRoot: steamIdentity.steamEntryRoot || null,
+      steamIdentityVerified: steamIdentity.steamIdentityVerified === true,
+      steamAccountVerified: launch.steamAccountVerified === true,
+      launchMode,
+      launchModeOverride,
+      launchExecutable: scan.chosen?.path || null,
+      launchUnavailableReason: launchModeOverride === 'steam' && !steamIdentity.steamIdentityVerified ? 'STEAM_IDENTITY_UNVERIFIED' : null,
+      engine,
+      dir: game.dir,
+      rootAliases: [...new Set([sourceRoot, game.dir])],
+      poster: posterUrl(game.poster),
+      banner: posterUrl(game.banner),
+      cover: posterUrl(game.cover),
+      backdrop: posterUrl(game.backdrop),
+      // Only an icon the player chose; the EXE icon is read later, and Steam's
+      // title logo is kept apart because it is wide text, not an icon.
+      icon: override && override.icon ? override.icon : null,
+      steamLogo: game.steamIcon || null,
+      chosen: scan.chosen ? {
+        path: scan.chosen.path,
+        rel: scan.chosen.rel,
+        api: scan.chosen.api,
+        apiLabel: scan.chosen.apiLabel,
+        apiResolution: scan.chosen.apiResolution,
+        apiAssessment: scan.chosen.apiAssessment,
+        detectedApi: scan.chosen.detectedApi,
+        detectedApiResolution: scan.chosen.detectedApiResolution,
+        supportedApis: scan.chosen.supportedApis,
+        apiSettings: scan.chosen.apiSettings,
+        via: scan.chosen.via || null,
+        bitness: scan.chosen.bitness
+      } : null,
+      supported: support.supported,
+      supportCode: support.code,
+      supportText: support.code ? MESSAGES[support.code] : '支持安装',
+      installed: Boolean(manifest),
+      existingInstallation,
+      apiOverride: ['dx9', 'dx10', 'dx11', 'dx12', 'vulkan', 'opengl'].includes(apiOverride) ? apiOverride : 'auto',
+      components: { dx11Carrier: carrierEnabled },
+      addonVersion: manifest && manifest.payloadVersion ? manifest.payloadVersion : null,
+      recommendedAddonVersion: !manifest && !state.addonVersion && isDx11Only(scan.chosen) ? DX11_COMPAT_VERSION : null,
+      d3d12Route: Boolean(manifest && manifest.reshadeRoute === 'd3d12'),
+      scan
+    };
+  }
+
+  function scanContext(state, discoveredGames) {
+    const launchContext = createLaunchContext(overrides.launchEvidence);
+    const scans = new Map();
+    const scanAt = dir => {
+      const key = path.resolve(dir).toLowerCase();
+      if (!scans.has(key)) scans.set(key, Promise.resolve().then(() => scanModule.scanGame(dir)));
+      return scans.get(key);
+    };
+    return { state, scanAt, manualByRoot: manualCandidates(state).manualByRoot, launchContext, discoveredGames };
+  }
+
+  // Discovery from the last full scan. A single-game refresh after a change
+  // reuses it instead of asking every launcher again.
+  let lastDiscovered = null;
+
+  async function scanAll(state) {
+    const discovered = library.discover(
+      state.scanFolders || [],
+      state.scanDrives === true,
+      state.excludedRoots || []
     );
+    const { manual } = manualCandidates(state);
+    const artworkDirectories = new Map();
+    const discoveredGames = (discovered.games || []).map(game => steamArtworkFor(game, artworkDirectories));
+    lastDiscovered = discoveredGames;
+    const candidates = library.dedupe([...discoveredGames, ...manual]).filter(game => !isExcludedGame(game, state));
+    const context = scanContext(state, discoveredGames);
+    const rows = await mapLimit(candidates, 2, game => scanCandidate(game, context));
+    const sorted = finalizeRows(rows);
     if (discovered.warnings?.length) sorted.discoveryWarnings = discovered.warnings.slice(0, 8)
       .map(row => ({ code: String(row.code || 'LAUNCHER_DISCOVERY_FAILED').slice(0, 80), message: String(row.message || '自动扫描部分来源失败').slice(0, 300) }));
     return sorted;
   }
 
-  return { scanAll, idFor, prepareSelection, findGameRoot, choosePreferred };
+  // Rescans only the games rooted at `dirs` (the folders of one changed game).
+  // Returns null when the last discovery is unknown or the folders no longer
+  // match a candidate, so the caller falls back to a full scan.
+  async function scanGames(state, dirs) {
+    if (!lastDiscovered || !Array.isArray(dirs) || !dirs.length || !dirs.every(dir => typeof dir === 'string' && path.isAbsolute(dir))) return null;
+    const wanted = new Set(dirs.map(dir => path.resolve(dir).toLowerCase()));
+    const { manual } = manualCandidates(state);
+    const candidates = library.dedupe([...lastDiscovered, ...manual]).filter(game => !isExcludedGame(game, state))
+      .filter(game => wanted.has(path.resolve(game.dir).toLowerCase()));
+    if (!candidates.length) return null;
+    const context = scanContext(state, lastDiscovered);
+    const rows = await mapLimit(candidates, 2, game => scanCandidate(game, context));
+    return rows.every(row => row && typeof row.id === 'string' && !row.error) ? rows : null;
+  }
+
+  return { scanAll, scanGames, idFor, prepareSelection, findGameRoot, choosePreferred };
 }
 
-module.exports = { createLibraryService, idFor, mapLimit, steamArtworkFor, normalizeUnityDynamicApi };
+module.exports = { createLibraryService, finalizeRows, idFor, mapLimit, steamArtworkFor, normalizeUnityDynamicApi };

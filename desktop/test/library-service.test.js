@@ -331,3 +331,25 @@ test('Unity games with native DLSS are not misclassified as OpenGL', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('a single-game rescan reuses the last discovery and scans only that game', async () => {
+  const first = absRoot('First Game'), second = absRoot('Second Game'), scanned = [];
+  let discoveries = 0;
+  const library = createLibraryService({
+    library: { discover: () => { discoveries++; return { games: [first, second].map(dir => ({ launcher: 'Steam', id: path.basename(dir), dir, name: path.basename(dir) })) }; },
+      dedupe: rows => rows },
+    scan: { async scanGame(dir) { scanned.push(dir); return scanFixture(dir, true); } }
+  });
+  const state = { manualGames: [], manualExecutables: [], gameOverrides: {} };
+  assert.equal(await library.scanGames(state, [first]), null, 'without an earlier full scan the caller must scan everything');
+  const all = await library.scanAll(state);
+  assert.equal(all.length, 2); assert.equal(discoveries, 1);
+  scanned.length = 0;
+  const rows = await library.scanGames(state, [first]);
+  assert.deepEqual(scanned, [first], 'only the changed game folder is walked again');
+  assert.equal(discoveries, 1, 'launchers are not asked again');
+  assert.deepEqual(rows.map(row => row.dir), [first]);
+  assert.equal(rows[0].id, all.find(row => row.dir === first).id);
+  assert.equal(await library.scanGames(state, [absRoot('Gone')]), null, 'an unknown folder falls back to a full scan');
+  assert.equal(await library.scanGames(state, ['relative']), null);
+});

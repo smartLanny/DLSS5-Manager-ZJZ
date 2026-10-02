@@ -56,7 +56,7 @@ function createLibraryWorkerClient(options = {}) {
   }
 
   function request(method, args) {
-    if (!['scanAll', 'prepareSelection'].includes(method)) return Promise.reject(workerError('不支持的扫描工作请求。', 'ERR_LIBRARY_WORKER_METHOD'));
+    if (!['scanAll', 'scanGames', 'prepareSelection'].includes(method)) return Promise.reject(workerError('不支持的扫描工作请求。', 'ERR_LIBRARY_WORKER_METHOD'));
     let instance;
     try { instance = ensureWorker(); } catch (error) { return Promise.reject(error); }
     const id = ++nextId;
@@ -87,7 +87,14 @@ function createLibraryWorkerClient(options = {}) {
     if (instance) await instance.terminate();
   }
 
-  return Object.freeze({ scanAll,
+  // One changed game; never coalesced with a full scan.
+  function scanGames(state, dirs) {
+    let snapshot;
+    try { snapshot = structuredClone([state, dirs]); } catch (error) { return Promise.reject(error); }
+    return request('scanGames', snapshot);
+  }
+
+  return Object.freeze({ scanAll, scanGames,
     prepareSelection: (source, preferredExecutable = null) => request('prepareSelection', [source, preferredExecutable]),
     dispose });
 }

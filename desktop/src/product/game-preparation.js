@@ -86,7 +86,7 @@ function createGamePreparation({ userData, service, settings, components, fgWork
       }
       await service.refresh();
     }
-    return service.refreshAfterMutation(await compensate(t, record));
+    return service.refreshAfterMutation(await compensate(t, record), id);
   }
   async function prepare(id, options = {}) {
     if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => !['api', 'version', 'allowAntiCheat', 'route'].includes(key)) ||
@@ -149,7 +149,7 @@ function createGamePreparation({ userData, service, settings, components, fgWork
         } else row('fg', 'unavailable', (current.blockers || []).join('；') || '当前显卡或补帧配套不满足准备条件。');
       }
       await write(t, record); await remove(t);
-      return service.refreshAfterMutation({ prepared: true, stages: record.stages, requiresRestart: true, runtimeVerified: false });
+      return service.refreshAfterMutation({ prepared: true, stages: record.stages, requiresRestart: true, runtimeVerified: false }, id);
     } catch (cause) {
       record.failure = { code: cause.code || 'PREPARATION_FAILED', message: cause.message };
       try { await write(t, record); await compensate(t, record); }

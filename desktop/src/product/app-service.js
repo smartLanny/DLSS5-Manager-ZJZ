@@ -10,6 +10,7 @@ const { PRODUCT, DX11_COMPAT_VERSION, INSTALLED_NAMES } = require('./constants')
 const { isDx11Only, classifyApi, assess } = require('./game-support');
 const { createStore } = require('./state-store');
 const { createLibraryWorkerClient } = require('./library-worker-client');
+const { finalizeRows } = require('./library-service');
 const { createPayloadInspectionCache } = require('./payload-inspection-cache');
 const { createInstaller } = require('./installer');
 const { payloadRoot, readBundle, requirePayload, safePayloadPath, sha256 } = require('./payload');
@@ -766,7 +767,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       const profile = await hoyo.apply(plan.profile.planId, consent);
       if (plan.legacy) await feeder.install(plan.routed, { version: plan.legacy.packageId, expectedPlanId: plan.legacy.planId, api: plan.api, loadingBackend: 'hoyoshade',
         layout: hoyo.profile(game), allowAntiCheat: consent.allowAntiCheat === true });
-      return refreshAfterMutation({ ...profile, applied: true, runtimeVerified: false });
+      return refreshAfterMutation({ ...profile, applied: true, runtimeVerified: false }, plan.id);
     } catch (error) {
       if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, state, key, settingChange, preferenceWritten);
       throw error;
@@ -1277,7 +1278,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     }
     internal.onAppliedState?.({ state, key, settingChange, preferenceWritten });
     return refreshAfterMutation({ ...result, appliedRoute: { api: nextApi, version: nextApi === 'vulkan' ? options.version : payload?.version || imported?.id,
-      gameSettingsSynced: settingChange?.applied === true } });
+      gameSettingsSynced: settingChange?.applied === true } }, id);
   }
 
   function installedExecutable(game) {
@@ -1308,13 +1309,30 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     try { return await refresh(); } catch { return fallback; }
   }
 
-  async function refreshAfterMutation(value) {
+  async function refreshAfterMutation(value, gameId = null) {
     // The journal transaction has already committed. A transient scan failure
     // must not turn that successful mutation into an IPC error; the renderer
     // retries the cache refresh separately.
     collectionFresh = false; scanEpoch++;
-    try { await refresh(); } catch {}
+    try { if (!await refreshGame(gameId)) await refresh(); } catch {}
     return value;
+  }
+
+  // A change to one game rescans only that game's folders and merges the row
+  // into the current list, instead of walking every game in the library again.
+  // Any doubt (unknown game, no earlier full scan, a newer refresh started)
+  // returns false so the caller runs the full scan.
+  async function refreshGame(id) {
+    const before = typeof id === 'string' ? games.find(row => row.id === id) : null;
+    if (!before || typeof library.scanGames !== 'function') return false;
+    const dirs = [...new Set([before.dir, ...(before.rootAliases || [])])];
+    const generation = ++refreshGeneration; activeRefresh = null;
+    const rows = await library.scanGames(store.read(), dirs);
+    if (generation !== refreshGeneration || !Array.isArray(rows) || !rows.length) return false;
+    const keys = new Set(dirs.map(pathKey));
+    const kept = games.filter(row => row.id !== id && ![row.dir, ...(row.rootAliases || [])].some(dir => keys.has(pathKey(dir))));
+    games = finalizeRows([...kept, ...rows]); collectionFresh = true;
+    return true;
   }
 
   async function withError(work, context = {}) {
@@ -1689,7 +1707,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   async function applyRepair(planId, consent = {}) {
     const plan = repairPlans.get(planId); repairPlans.delete(planId);
     if (!plan || plan.expires < Date.now()) throw Object.assign(new Error('修复预览已过期，请重新检查。'), { code: 'DEPLOYMENT_PLAN_EXPIRED' });
-    if (plan.owner === 'external') return refreshAfterMutation(await externalDeployment.apply(plan.nested, consent));
+    if (plan.owner === 'external') return refreshAfterMutation(await externalDeployment.apply(plan.nested, consent), plan.id);
     if (plan.owner === 'hoyoshade') return applyHoYoDeployment(plan.nested, consent);
     if (plan.owner === 'special') return applySpecialDeployment(plan.nested, consent);
     const game = findGame(plan.id);
@@ -1698,7 +1716,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     if (JSON.stringify(fresh) !== JSON.stringify(plan.result)) throw Object.assign(new Error('修复预览后的文件或来源已改变。'), { code: 'DEPLOYMENT_PLAN_CHANGED' });
     if (fresh.blockers.length) throw Object.assign(new Error(fresh.blockers.join('；')), { code: 'DEPLOYMENT_BLOCKED' });
     return refreshAfterMutation(await installer.repairInstalled({ gameDir: game.dir, scan: game.scan,
-      entries: fresh.entries, manifestHash: fresh.manifestHash, addonPolicy: plan.addonPolicy, allowAntiCheat: consent.allowAntiCheat === true }));
+      entries: fresh.entries, manifestHash: fresh.manifestHash, addonPolicy: plan.addonPolicy, allowAntiCheat: consent.allowAntiCheat === true }), plan.id);
   }
   async function applyDeployment(planId, consent = {}) {
     if (specialDeploymentPlans.has(planId)) return applySpecialDeployment(planId, consent);
@@ -1738,7 +1756,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         }
       }
       return refreshAfterMutation({ ...result, applied: true, completedPhases: completed,
-        appliedRoute: { api: plan.api, version: plan.request.version, mode: plan.request.mode }, runtimeVerified: false });
+        appliedRoute: { api: plan.api, version: plan.request.version, mode: plan.request.mode }, runtimeVerified: false }, plan.id);
     } catch (error) {
       if (preferenceWritten || settingChange?.changed) await rollbackApiChoice(error, preferenceBefore, preferenceKey, settingChange, preferenceWritten);
       const pending = fs.existsSync(path.join(game.dir, EXTERNAL_PENDING));
@@ -1866,7 +1884,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       throw error;
     }
     return refreshAfterMutation({ ...result, applied: true, appliedRoute: { api: classifyApi(routed.scan.chosen), version: result.coreVersion, mode: 'local' },
-      completedPhases: ['feeder-install'], runtimeVerified: false });
+      completedPhases: ['feeder-install'], runtimeVerified: false }, plan.id);
   }
   async function inspectDeployment(id) {
     const game = findGame(id), feed = feeder.summary(game), vk = vulkan.summary(game);
@@ -1913,9 +1931,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       return refreshAfterMutation({ ...result, source: before.source, recovered: true, runtimeVerified: false,
         notice: before.source === 'vulkan'
           ? '未完成的 Vulkan 部署已由原绑定恢复，运行配置已归档；此前已完成的其他设置仍保留。'
-          : 'Feeder 的未完成文件事务已由固定配套恢复；此前已完成的其他设置仍保留。' });
+          : 'Feeder 的未完成文件事务已由固定配套恢复；此前已完成的其他设置仍保留。' }, id);
     }
-    return refreshAfterMutation(native);
+    return refreshAfterMutation(native, id);
   }
   async function gameModuleManifest(id) {
     try {
@@ -2188,7 +2206,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     deploymentRescueState: id => { const game = findGame(id); return hasExternalRecord(game)
       ? externalDeployment.rescueState(game) : { available: false, pending: false }; },
     previewDeploymentRescue: (id, mode) => externalDeployment.previewRescue(findGame(id), mode),
-    applyDeploymentRescue: async (id, planId, consent) => refreshAfterMutation(await externalDeployment.applyRescue(findGame(id), planId, consent)),
+    applyDeploymentRescue: async (id, planId, consent) => refreshAfterMutation(await externalDeployment.applyRescue(findGame(id), planId, consent), id),
     previewDeployment,
     componentChoices,
     knownComponentCatalog,
@@ -2199,7 +2217,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     applyDeployment,
     previewSpecialDeployment,
     applySpecialDeployment,
-    restoreDeployment: async (id, consent = {}) => refreshAfterMutation(await externalDeployment.restore(findGame(id), consent)),
+    restoreDeployment: async (id, consent = {}) => refreshAfterMutation(await externalDeployment.restore(findGame(id), consent), id),
     recoverDeployment,
     assertDeploymentReady: id => externalDeployment.assertReady(findGame(id)),
     previewUninstall,
@@ -2490,43 +2508,43 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     install: async (id, options = {}) => {
       const game = findGame(id);
       if (await inspectInstallationAdoption(id)) throw Object.assign(new Error('已有未受管安装，请先预览并确认具体备份接管清单。'), { code: 'ADOPTION_CONFIRM_REQUIRED' });
-      if (externalOwned(game)) return refreshAfterMutation(await repairGame(game, options));
+      if (externalOwned(game)) return refreshAfterMutation(await repairGame(game, options), id);
       if (hasExternalRecord(game)) await externalDeployment.assertReady(game);
-      if (feederOwned(game)) return refreshAfterMutation(await feeder.install(game, options));
+      if (feederOwned(game)) return refreshAfterMutation(await feeder.install(game, options), id);
       requireNoFeeder(game);
       requireKnownVulkanOwnership(game);
-      if (vulkanOwned(game)) return refreshAfterMutation(await vulkan.install(game, options));
+      if (vulkanOwned(game)) return refreshAfterMutation(await vulkan.install(game, options), id);
       if (vulkanRoute(game)) {
         const provider = externalVulkanProviderRoute(game);
         const result = provider.matched && provider.transportOwner === 'legacy-feeder'
           ? await feeder.install(game, { ...options, api: 'vulkan', loadingBackend: provider.loadingBackend })
           : await vulkan.install(game, options);
-        return refreshAfterMutation(result);
+        return refreshAfterMutation(result, id);
       }
       const payload = selectedPayload(game, options && typeof options.version === 'string' ? options.version : null);
       await prepareExistingReframework(game, options);
       const result = await installer.install({ gameDir: game.dir, payload, scan: game.scan, addonPolicy: await nativeAddonPolicy(game, payload, options.addonKeep), allowAntiCheat: options && options.allowAntiCheat === true });
-      return refreshAfterMutation(await prepareDetectedReframework(game, payload.replacement ? { ...result, payloadReplacement: payload.replacement } : result));
+      return refreshAfterMutation(await prepareDetectedReframework(game, payload.replacement ? { ...result, payloadReplacement: payload.replacement } : result), id);
     },
-    repair: async (id, options = {}) => refreshAfterMutation(await repairGame(findGame(id), options)),
+    repair: async (id, options = {}) => refreshAfterMutation(await repairGame(findGame(id), options), id),
     upgradeAddon: async (id, version, options = {}) => {
       const game = findGame(id);
-      if (externalOwned(game)) return refreshAfterMutation(await repairGame(game, { ...options, version }));
+      if (externalOwned(game)) return refreshAfterMutation(await repairGame(game, { ...options, version }), id);
       requireNoFeeder(game);
-      if (vulkanOwned(game)) return refreshAfterMutation(await vulkan.install(game, { ...options, version }));
+      if (vulkanOwned(game)) return refreshAfterMutation(await vulkan.install(game, { ...options, version }), id);
       if (vulkanRoute(game)) {
         const provider = externalVulkanProviderRoute(game);
         const result = provider.matched && provider.transportOwner === 'legacy-feeder'
           ? await feeder.install(game, { ...options, version, api: 'vulkan', loadingBackend: provider.loadingBackend })
           : await vulkan.install(game, { ...options, version });
-        return refreshAfterMutation(result);
+        return refreshAfterMutation(result, id);
       }
       const imported = addonUpdate(version);
       if (!imported) throw appError('ERR_ADDON_NOT_FOUND');
       assertCoreUpdateTarget(game, imported);
       await prepareExistingReframework(game, options);
       const result = await installer.upgradeAddon({ gameDir: game.dir, addon: imported, version: imported.id, scan: game.scan, addonPolicy: await nativeAddonPolicy(game, null, options.addonKeep), allowAntiCheat: options && options.allowAntiCheat === true });
-      return refreshAfterMutation(await prepareDetectedReframework(game, result));
+      return refreshAfterMutation(await prepareDetectedReframework(game, result), id);
     },
     toggleD3D12: async (id, enabled, options = {}) => {
       const game = findGame(id);
@@ -2534,7 +2552,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       requireNoFeeder(game);
       if (vulkanOwned(game) || vulkanRoute(game)) routeRestoreFirst();
       const result = await installer.toggleD3D12({ gameDir: game.dir, enabled: enabled === true, scan: game.scan, allowAntiCheat: options && options.allowAntiCheat === true });
-      return refreshAfterMutation(result);
+      return refreshAfterMutation(result, id);
     },
     launch: async id => {
       const exe = await validateLaunch(id);
@@ -2558,18 +2576,18 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       await userAddons.removeAll(game);
       if (gameLayout(game).loadingBackend === 'hoyoshade' && feederOwned(game)) await feeder.restore(game);
       if (hasExternalRecord(game)) await externalDeployment.recover(game);
-      if (externalDeployment.direct?.(game)) return refreshAfterMutation(await externalDeployment.remove(game, mode, { allowAntiCheat: true }));
+      if (externalDeployment.direct?.(game)) return refreshAfterMutation(await externalDeployment.remove(game, mode, { allowAntiCheat: true }), id);
       if (externalOwned(game)) await externalDeployment.restore(game, { allowAntiCheat: true });
-      if (feederOwned(game)) return refreshAfterMutation(await feeder.restore(game));
+      if (feederOwned(game)) return refreshAfterMutation(await feeder.restore(game), id);
       requireNoFeeder(game);
-      if (vulkanOwned(game)) return refreshAfterMutation(await vulkan.restore(game));
+      if (vulkanOwned(game)) return refreshAfterMutation(await vulkan.restore(game), id);
       const result = await installer.uninstall({ gameDir: game.dir, mode, removeSettings, scan: game.scan });
       if (result?.removed !== true) {
         const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
         const warning = warnings.find(row => row && typeof row.code === 'string' && Object.hasOwn(MESSAGES, row.code));
         throw appError(warning?.code || 'ERR_BACKUP_INVALID', { ...warning, operation: 'uninstall', removed: false, warnings });
       }
-      return refreshAfterMutation(result);
+      return refreshAfterMutation(result, id);
     },
     restoreManagedForCleanup: async id => {
       const game = findGame(id);
@@ -2586,7 +2604,7 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       }
       const input = reframeworkInput(game);
       if (input) await reframework.restore(input);
-      return refreshAfterMutation(result);
+      return refreshAfterMutation(result, id);
     },
     diagnose: async id => (await diagnoseGame(findGame(id))).diagnostic,
     inspectFeeder: async id => feeder.inspect(findGame(id)),
@@ -2599,14 +2617,14 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
       if (vk.installed || vk.needsRecovery) routeRestoreFirst();
       if (readManifest(game.dir)) throw Object.assign(new Error('先恢复原生 DLSS 配套，再准备 Feeder。'), { code: 'FEEDER_ROUTE_CONFLICT' });
       const installOptions = { allowAntiCheat: options.allowAntiCheat === true };
-      if (options.api === undefined) return refreshAfterMutation(await feeder.install(game, installOptions));
+      if (options.api === undefined) return refreshAfterMutation(await feeder.install(game, installOptions), id);
       const routed = feederRouteSelection(game, options.api), current = feeder.summary(game);
       if (current.installed || current.needsRecovery) {
         // Repairs keep the original EXE/API binding. A same-API request may
         // repair files, but cannot silently turn an existing route into another.
         if (classifyApi(game.scan.chosen) !== classifyApi(routed.scan.chosen))
           throw Object.assign(new Error('请先恢复已有 Feeder 配套，再更改其 API 绑定。'), { code: 'FEEDER_RESTORE_FIRST' });
-        return refreshAfterMutation(await feeder.install(game, installOptions));
+        return refreshAfterMutation(await feeder.install(game, installOptions), id);
       }
       const state = store.read(), key = pathKey(game.dir);
       let settingChange, preferenceWritten = false, result;
@@ -2622,9 +2640,9 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
         throw error;
       }
       return refreshAfterMutation({ ...result, appliedRoute: { api: classifyApi(routed.scan.chosen), version: result.coreVersion,
-        gameSettingsSynced: settingChange?.applied === true } });
+        gameSettingsSynced: settingChange?.applied === true } }, id);
     },
-    restoreFeeder: async id => refreshAfterMutation(await feeder.restore(findGame(id))),
+    restoreFeeder: async id => refreshAfterMutation(await feeder.restore(findGame(id)), id),
     readReframework: async id => {
       const input = reframeworkInput(findGame(id));
       if (!input) return { matched: false, ready: false, canPrepare: false, blockers: [] };

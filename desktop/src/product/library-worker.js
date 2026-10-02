@@ -10,6 +10,7 @@ if (!parentPort) throw new Error('Library worker requires a worker thread.');
 const library = createLibraryService({ documentsDir: workerData?.documentsDir });
 const methods = Object.freeze({
   scanAll: state => library.scanAll(state),
+  scanGames: (state, dirs) => library.scanGames(state, dirs),
   prepareSelection: (source, preferredExecutable) => library.prepareSelection(source, preferredExecutable)
 });
 let queue = Promise.resolve();
