@@ -33,7 +33,7 @@ contextBridge.exposeInMainWorld('manager', Object.freeze({
     return () => ipcRenderer.removeListener('manager-update-progress', listener);
   },
   applyBridgeComponent: (id, bridge) => invoke('game-component-apply', id, bridge),
-  refresh: () => invoke('games-refresh'),
+  refresh: options => invoke('games-refresh', options?.fresh === true ? { fresh: true } : undefined),
   listGames: () => invoke('games-list'),
   assessGame: (id, options) => invoke('game-assessment', id, options),
   recordVisualComparison: (id, input) => invoke('game-visual-record', id, input),

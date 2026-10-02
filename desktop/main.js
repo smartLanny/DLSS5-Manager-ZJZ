@@ -374,7 +374,7 @@ function registerIpc() {
     for (const warning of data.discoveryWarnings || []) startup.log('launcher-discovery-warning', { code: warning.code, message: warning.message });
     return data;
   });
-  call('games-refresh', () => service.refresh());
+  call('games-refresh', options => service.refresh({ fresh: options?.fresh === true }));
   call('games-list', () => service.listGames());
   call('game-assessment', (id, options) => gameAssessment.assess(id, options));
   call('hoyo-discover', () => hoyoWorkflow.discover());
