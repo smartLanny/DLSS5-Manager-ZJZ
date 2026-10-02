@@ -125,7 +125,7 @@ async function nativeRunner(request, scriptPath) {
           DLSS5_NVAPI_REQUEST: Buffer.from(JSON.stringify(request), 'utf8').toString('base64') }
       });
       const output = [], errors = []; let outputBytes = 0, errorBytes = 0, settled = false;
-      const timer = setTimeout(() => { child.kill(); }, 30000);
+      const timer = setTimeout(() => { child.kill(); }, 60000); // Add-Type compile on a slow PC; bounds a hang only
       const finish = (error, value) => { if (settled) return; settled = true; clearTimeout(timer); error ? reject(error) : resolve(value); };
       child.once('error', cause => finish(cause));
       child.stdout.on('data', chunk => { outputBytes += chunk.length; if (outputBytes > 4 * 1024 * 1024) child.kill(); else output.push(chunk); });

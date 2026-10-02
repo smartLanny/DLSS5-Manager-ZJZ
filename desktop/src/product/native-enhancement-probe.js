@@ -38,7 +38,7 @@ async function verifyNvidiaSignature(file) {
       stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, DLSS5_COMPONENT_SIGNATURE_PATH: Buffer.from(file, 'utf8').toString('base64') } });
     let output = '', done = false;
     const finish = result => { if (done) return; done = true; clearTimeout(timer); resolve(result); };
-    const timer = setTimeout(() => { child.kill(); finish({ valid: false, reason: 'signature-timeout' }); }, 15000);
+    const timer = setTimeout(() => { child.kill(); finish({ valid: false, reason: 'signature-timeout' }); }, 45000); // an offline revocation lookup alone can take ~15 s
     child.once('error', () => finish({ valid: false, reason: 'signature-helper-unavailable' }));
     child.stdout.on('data', chunk => { output += chunk.toString('utf8'); if (output.length > 16384) child.kill(); });
     child.stderr.resume();

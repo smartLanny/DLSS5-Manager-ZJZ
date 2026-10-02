@@ -7,7 +7,9 @@ const pe = require('../core/pe');
 const { noLinks, assertLaunchNotCancelled } = require('./launch-safety');
 
 const MAX_OUTPUT = 64 * 1024;
-const DEFAULT_TIMEOUT = 8000;
+// The helper compiles C# (Add-Type) on every call, which can take well over
+// 8 s on a busy or freshly booted PC; the bound only stops a hung helper.
+const DEFAULT_TIMEOUT = 30000;
 const ENVIRONMENT_KEYS = new Set([
   'VK_LAYER_PATH', 'VK_ADD_LAYER_PATH', 'VK_IMPLICIT_LAYER_PATH', 'VK_ADD_IMPLICIT_LAYER_PATH',
   'VK_INSTANCE_LAYERS', 'VK_LOADER_LAYERS_ENABLE', 'VK_LOADER_LAYERS_DISABLE', 'VK_LOADER_LAYERS_ALLOW',

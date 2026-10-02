@@ -56,6 +56,7 @@ test('inspect proves a non-elevated shell identity through structured JSON stdin
   assert.deepEqual(invocation.request, { version: 1, op: 'inspect', exe: path.resolve(f.exe) });
   assert.equal(invocation.args.at(-1), scriptPath); assert.equal(invocation.args.join(' ').includes(f.exe), false);
   assert.equal(invocation.options.maxOutputBytes, 64 * 1024);
+  assert.equal(invocation.options.timeoutMs, 30000, 'the helper compiles C# on every call, so the default bound allows a slow compile');
 });
 
 test('cancellation during ordinary-token inspection prevents the later launch request', async t => {

@@ -12,7 +12,7 @@ function readStarwardProtocol() {
   const shell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
   const script = "$ErrorActionPreference='Stop';[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false);$k=Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\\Software\\Classes\\Starward' -ErrorAction SilentlyContinue;if($null -eq $k){'null'}else{$c=Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\\Software\\Classes\\Starward\\Shell\\Open\\Command' -ErrorAction SilentlyContinue;[ordered]@{enabled=($k.GetValueNames() -contains 'URL Protocol');command=if($c){[string]$c.GetValue('')}else{''}}|ConvertTo-Json -Compress}";
   return new Promise((resolve, reject) => execFile(shell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    { encoding: 'utf8', windowsHide: true, timeout: 10000, maxBuffer: 16384 }, (error, stdout) => {
+    { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 16384 }, (error, stdout) => {
       if (error) { reject(error); return; }
       try { resolve(JSON.parse(stdout)); } catch { reject(Error('Starward protocol is unreadable.')); }
     }));
