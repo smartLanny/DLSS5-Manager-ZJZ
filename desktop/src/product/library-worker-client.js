@@ -37,7 +37,8 @@ function createLibraryWorkerClient(options = {}) {
   function ensureWorker() {
     if (disposed) throw workerError('扫描工作线程已关闭。', 'ERR_LIBRARY_WORKER_CLOSED');
     if (worker) return worker;
-    const instance = new Worker(workerFile, { workerData: { documentsDir: options.documentsDir } });
+    const instance = new Worker(workerFile, { workerData: { documentsDir: options.documentsDir,
+      ...(options.markerCache ? { markerCache: options.markerCache } : {}) } });
     worker = instance;
     instance.on('message', result => {
       if (worker !== instance || !result || !pending.has(result.id)) return;
@@ -68,12 +69,13 @@ function createLibraryWorkerClient(options = {}) {
     });
   }
 
-  function scanAll(state, revision = 0) {
+  // A fresh scan (manual refresh) never joins a scan that may reuse marker reads.
+  function scanAll(state, revision = 0, { fresh = false } = {}) {
     let snapshot, key;
-    try { snapshot = structuredClone(state); key = JSON.stringify([scanKey(snapshot), revision]); }
+    try { snapshot = structuredClone(state); key = JSON.stringify([scanKey(snapshot), revision, fresh === true]); }
     catch (error) { return Promise.reject(error); }
     if (scans.has(key)) return scans.get(key);
-    const promise = request('scanAll', [snapshot]);
+    const promise = request('scanAll', fresh === true ? [snapshot, { fresh: true }] : [snapshot]);
     scans.set(key, promise);
     const completed = () => { if (scans.get(key) === promise) scans.delete(key); };
     promise.then(completed, completed);

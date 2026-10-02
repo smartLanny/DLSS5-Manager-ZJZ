@@ -4,12 +4,20 @@
 // event loop. Keep one service and serialize requests; scanAll already bounds
 // its own directory I/O and this worker must not multiply full-library scans.
 const { parentPort, workerData } = require('node:worker_threads');
+const pe = require('../core/pe');
 const { createLibraryService } = require('./library-service');
+const { createMarkerMemo } = require('./marker-memo');
 
 if (!parentPort) throw new Error('Library worker requires a worker thread.');
+// Every reader in this thread (the upstream scanner, API evidence, Unity
+// check) calls pe.findMarkers through the shared module object.
+const memo = createMarkerMemo({ original: pe.findMarkers, file: workerData?.markerCache?.file || null,
+  appVersion: String(workerData?.markerCache?.version || '') });
+pe.findMarkers = memo.findMarkers;
 const library = createLibraryService({ documentsDir: workerData?.documentsDir });
 const methods = Object.freeze({
-  scanAll: state => library.scanAll(state),
+  // A manual refresh reads every file again.
+  scanAll: (state, options) => { if (options?.fresh === true) memo.clear(); return library.scanAll(state); },
   scanGames: (state, dirs) => library.scanGames(state, dirs),
   prepareSelection: (source, preferredExecutable) => library.prepareSelection(source, preferredExecutable)
 });
@@ -24,13 +32,16 @@ function serializedError(error) {
 parentPort.on('message', request => {
   if (!request || !Number.isSafeInteger(request.id) || request.id <= 0) return;
   queue = queue.then(async () => {
+    let reply;
     try {
       if (!Object.hasOwn(methods, request.method) || !Array.isArray(request.args))
         throw Object.assign(new Error('不支持的扫描工作请求。'), { code: 'ERR_LIBRARY_WORKER_METHOD' });
-      const value = await methods[request.method](...request.args);
-      parentPort.postMessage({ id: request.id, ok: true, value });
+      reply = { id: request.id, ok: true, value: await methods[request.method](...request.args) };
     } catch (error) {
-      parentPort.postMessage({ id: request.id, ok: false, error: serializedError(error) });
+      reply = { id: request.id, ok: false, error: serializedError(error) };
     }
+    // Saved before the reply, so a finished scan's reads are already on disk.
+    memo.save();
+    parentPort.postMessage(reply);
   });
 });

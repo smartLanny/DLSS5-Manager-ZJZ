@@ -60,7 +60,8 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
   const storageState = store.read();
   const componentStorage = storageApi.resolveComponentStorage({ userData, configuredRoot:storageState.componentLibraryPath,
     portableExecutable:overrides.portableExecutable, applicationDir:overrides.applicationDir });
-  const library = overrides.library || createLibraryWorkerClient({ documentsDir });
+  const library = overrides.library || createLibraryWorkerClient({ documentsDir,
+    markerCache: { file: path.join(userData, 'library-marker-cache.json'), version } });
   const installer = overrides.installer || createInstaller();
   const hoyoCorePolicy = overrides.hoyoCorePolicy || require('../shared/hoyo-core-policy');
   const externalDeployment = overrides.externalDeployment || createExternalRuntime({ userData,
@@ -1288,11 +1289,13 @@ function createAppService({ userData, resourcesPath, appDir, documentsDir, versi
     return assertManifestExecutable(game.dir, manifest, game.scan?.chosen?.path);
   }
 
-  function refresh() {
+  // fresh: the player pressed refresh; every file is read again.
+  function refresh({ fresh = false } = {}) {
+    if (fresh === true) scanEpoch++;
     const state = store.read(), epoch = scanEpoch, key = JSON.stringify([state, epoch]);
     if (activeRefresh?.key === key) return activeRefresh.promise;
     const generation = ++refreshGeneration;
-    const promise = Promise.resolve().then(() => library.scanAll(state, epoch)).then(rows => {
+    const promise = Promise.resolve().then(() => fresh === true ? library.scanAll(state, epoch, { fresh: true }) : library.scanAll(state, epoch)).then(rows => {
       if (generation !== refreshGeneration) return activeRefresh ? activeRefresh.promise : games.map(publicGame);
       latestScanWarnings = Array.isArray(rows.discoveryWarnings) ? rows.discoveryWarnings : [];
       games = rows; collectionFresh = true;

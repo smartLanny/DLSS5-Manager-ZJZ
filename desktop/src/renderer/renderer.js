@@ -1887,7 +1887,7 @@ $('searchInput').oninput = () => {
   renderGames.searchTimer = setTimeout(() => renderGames({ preserveExpanded: true }), 120);
 };
 $('gameFilter').onchange = () => renderGames({ preserveExpanded: true });
-$('refreshBtn').onclick = () => runAction(async () => { const result = await window.manager.refresh(); state.games = unwrap(result); return result; }, '扫描完成', false).then(() => { selectGamesPage('library'); renderGames(); scheduleArtworkEnrichment(); });
+$('refreshBtn').onclick = () => runAction(async () => { const result = await window.manager.refresh({ fresh: true }); state.games = unwrap(result); return result; }, '扫描完成', false).then(() => { selectGamesPage('library'); renderGames(); scheduleArtworkEnrichment(); });
 async function pickAndRefresh(picker, success) {
   if (state.busy) return;
   setBusy(true);
